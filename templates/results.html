@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analysis Results - Dispatcharr Maid</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; color: #333; }
+        .container { max-width: 1600px; margin: 0 auto; }
+        .header { text-align: center; color: white; margin-bottom: 30px; }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        .nav-buttons { text-align: center; margin-bottom: 20px; }
+        .btn { padding: 12px 30px; border: none; border-radius: 8px; font-size: 1em; font-weight: 600; cursor: pointer; background: white; color: #667eea; margin: 0 10px; transition: all 0.3s; text-decoration: none; display: inline-block; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
+        .card { background: white; border-radius: 15px; padding: 25px; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+        .card h2 { color: #667eea; margin-bottom: 20px; font-size: 1.5em; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+        .stat-box { background: #f7fafc; padding: 20px; border-radius: 10px; border-left: 4px solid #667eea; }
+        .stat-label { color: #718096; font-size: 0.9em; margin-bottom: 5px; }
+        .stat-value { font-size: 2em; font-weight: bold; color: #2d3748; }
+        .stat-value.success { color: #38a169; }
+        .stat-value.failed { color: #e53e3e; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+        th { background: #eef2ff; color: #667eea; font-weight: 600; }
+        tr:hover { background: #f7fafc; }
+        .success-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 0.9em; font-weight: 600; }
+        .success-badge.excellent { background: #c6f6d5; color: #22543d; }
+        .success-badge.good { background: #bee3f8; color: #2c5282; }
+        .success-badge.fair { background: #feebc8; color: #7c2d12; }
+        .success-badge.poor { background: #fed7d7; color: #742a2a; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; }
+        .tab { padding: 12px 24px; cursor: pointer; border: none; background: none; font-size: 1em; font-weight: 600; color: #718096; border-bottom: 3px solid transparent; transition: all 0.3s; }
+        .tab.active { color: #667eea; border-bottom-color: #667eea; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Analysis Results</h1>
+            <p>Detailed Stream Quality Report</p>
+        </div>
+        
+        <div class="nav-buttons">
+            <a href="/" class="btn">← Back to Control Panel</a>
+            <a href="/api/results/csv" class="btn">📥 Export CSV</a>
+        </div>
+        
+        <div class="card">
+            <h2>📈 Overall Summary</h2>
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-label">Total Streams Analyzed</div>
+                    <div class="stat-value" id="stat-total">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Successful</div>
+                    <div class="stat-value success" id="stat-success">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Failed</div>
+                    <div class="stat-value failed" id="stat-failed">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Success Rate</div>
+                    <div class="stat-value" id="stat-rate">0%</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>🔍 Detailed Breakdown</h2>
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('providers')">Providers</button>
+                <button class="tab" onclick="showTab('channels')">Channels</button>
+                <button class="tab" onclick="showTab('errors')">Errors</button>
+            </div>
+            
+            <div id="providers-tab" class="tab-content active">
+                <table id="provider-table">
+                    <thead>
+                        <tr>
+                            <th>Provider</th>
+                            <th>Total Streams</th>
+                            <th>Successful</th>
+                            <th>Failed</th>
+                            <th>Success Rate</th>
+                            <th>Avg Quality</th>
+                        </tr>
+                    </thead>
+                    <tbody id="provider-tbody"></tbody>
+                </table>
+            </div>
+            
+            <div id="channels-tab" class="tab-content">
+                <table id="channel-table">
+                    <thead>
+                        <tr>
+                            <th>Channel</th>
+                            <th>Total Streams</th>
+                            <th>Successful</th>
+                            <th>Failed</th>
+                            <th>Success Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody id="channel-tbody"></tbody>
+                </table>
+            </div>
+            
+            <div id="errors-tab" class="tab-content">
+                <div id="error-list"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        fetch('/api/results/detailed')
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) {
+                    document.body.innerHTML = '<div style="text-align:center;padding:40px;color:white;"><h2>No results available</h2><p>Run an analysis first.</p><a href="/" style="color:white;">Go Back</a></div>';
+                    return;
+                }
+                
+                const r = data.results;
+                
+                // Check if this is a refresh job
+                if (r.job_type === 'refresh') {
+                    // Show refresh-specific results
+                    document.querySelector('.header h1').textContent = '🔄 Channel Refresh Results';
+                    document.querySelector('.header p').textContent = 'Stream Replacement Summary';
+                    
+                    document.getElementById('stat-total').textContent = r.total_matching.toLocaleString();
+                    document.querySelector('#stat-total').previousElementSibling.textContent = 'Total Matching Streams Found';
+                    
+                    document.getElementById('stat-success').textContent = r.new_count.toLocaleString();
+                    document.querySelector('#stat-success').previousElementSibling.textContent = 'Streams Added';
+                    
+                    document.getElementById('stat-failed').textContent = r.previous_count.toLocaleString();
+                    document.querySelector('#stat-failed').previousElementSibling.textContent = 'Streams Removed';
+                    document.querySelector('#stat-failed').classList.remove('failed');
+                    document.querySelector('#stat-failed').style.color = '#718096';
+                    
+                    document.getElementById('stat-rate').textContent = 'Refresh Complete';
+                    document.querySelector('#stat-rate').previousElementSibling.textContent = 'Status';
+                    
+                    // Hide the detailed breakdown section
+                    document.querySelectorAll('.card')[1].style.display = 'none';
+                    
+                    // Add filter info if present
+                    if (r.include_filter || r.exclude_filter) {
+                        const filterCard = document.createElement('div');
+                        filterCard.className = 'card';
+                        filterCard.innerHTML = `
+                            <h2>🔍 Filters Applied</h2>
+                            ${r.include_filter ? `<p><strong>Include:</strong> ${r.include_filter}</p>` : ''}
+                            ${r.exclude_filter ? `<p><strong>Exclude:</strong> ${r.exclude_filter}</p>` : ''}
+                        `;
+                        document.querySelectorAll('.card')[0].after(filterCard);
+                    }
+                    
+                    return;
+                }
+                
+                // Otherwise, show analysis results
+                document.getElementById('stat-total').textContent = r.total.toLocaleString();
+                document.getElementById('stat-success').textContent = r.successful.toLocaleString();
+                document.getElementById('stat-failed').textContent = r.failed.toLocaleString();
+                document.getElementById('stat-rate').textContent = r.success_rate + '%';
+                
+                // Providers
+                const tbody = document.getElementById('provider-tbody');
+                const providers = Object.entries(r.provider_stats || {}).sort((a, b) => a[1].success_rate - b[1].success_rate);
+                
+                tbody.innerHTML = providers.map(([id, stats]) => {
+                    const badgeClass = stats.success_rate >= 90 ? 'excellent' : stats.success_rate >= 70 ? 'good' : stats.success_rate >= 50 ? 'fair' : 'poor';
+                    return `<tr>
+                        <td>Provider ${id}</td>
+                        <td>${stats.total}</td>
+                        <td style="color: #38a169;">${stats.successful}</td>
+                        <td style="color: #e53e3e;">${stats.failed}</td>
+                        <td><span class="success-badge ${badgeClass}">${stats.success_rate}%</span></td>
+                        <td>${stats.avg_quality}</td>
+                    </tr>`;
+                }).join('');
+                
+                // Channels
+                const chanTbody = document.getElementById('channel-tbody');
+                const channels = Object.entries(r.channel_stats || {}).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
+                
+                chanTbody.innerHTML = channels.map(([num, stats]) => {
+                    const badgeClass = stats.success_rate >= 90 ? 'excellent' : stats.success_rate >= 70 ? 'good' : stats.success_rate >= 50 ? 'fair' : 'poor';
+                    return `<tr>
+                        <td><strong>#${num}</strong> ${stats.name}</td>
+                        <td>${stats.total}</td>
+                        <td style="color: #38a169;">${stats.successful}</td>
+                        <td style="color: #e53e3e;">${stats.failed}</td>
+                        <td><span class="success-badge ${badgeClass}">${stats.success_rate}%</span></td>
+                    </tr>`;
+                }).join('');
+                
+                // Errors
+                const errors = Object.entries(r.error_types || {}).sort((a, b) => b[1] - a[1]);
+                const errDiv = document.getElementById('error-list');
+                
+                if (errors.length === 0) {
+                    errDiv.innerHTML = '<p style="color: #38a169;">✅ No errors! All streams working perfectly!</p>';
+                } else {
+                    errDiv.innerHTML = errors.map(([type, count]) => 
+                        `<div style="padding:12px;border-left:3px solid #e53e3e;background:#fff5f5;margin-bottom:10px;border-radius:5px;">
+                            <div style="font-weight:600;color:#742a2a;">${type}</div>
+                            <div style="color:#718096;font-size:0.9em;">${count} occurrence${count > 1 ? 's' : ''}</div>
+                        </div>`
+                    ).join('');
+                }
+            });
+        
+        function showTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tabName + '-tab').classList.add('active');
+        }
+    </script>
+</body>
+</html>

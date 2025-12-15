@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html><head><title>Results</title></head>
+<body style="font-family: Arial; padding: 40px; max-width: 1200px; margin: 0 auto;">
+<h1>Analysis Results</h1>
+<a href="/" style="padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 4px;">← Back</a>
+<div id="data" style="margin-top: 20px;">Loading...</div>
+<script>
+fetch('/api/results/detailed').then(r=>r.json()).then(d=>{
+  if(!d.success){document.getElementById('data').innerHTML='<p>No results. Run an analysis first.</p>';return;}
+  let html='<h2>Summary</h2><p>Total: '+d.results.total+'<br>Success: '+d.results.successful+' ('+d.results.success_rate+'%)<br>Failed: '+d.results.failed+'</p>';
+  html+='<h2>Raw Data</h2><pre>'+JSON.stringify(d.results,null,2)+'</pre>';
+  document.getElementById('data').innerHTML=html;
+});
+</script>
+</body></html>

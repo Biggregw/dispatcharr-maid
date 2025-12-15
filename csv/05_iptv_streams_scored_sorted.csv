@@ -1,0 +1,8 @@
+stream_id,channel_number,channel_id,channel_group_id,stream_name,stream_url,avg_bitrate_kbps,avg_frames_decoded,avg_frames_dropped,dropped_frame_percentage,fps,resolution,video_codec,audio_codec,interlaced_status,status,score,error_penalty
+52250,28.0,31,835,UK| 5STAR SD,http://mzzxzgtd.mexamo.xyz/live/7PGRPWPV/2FEKK9KD/191679.ts,2438.462666666667,1251.0,0.0,0.0,25.0,704x576,mpeg2video,mp2,PROGRESSIVE,OK,100.0,0
+52197,28.0,31,835,UK| 5STAR HD,http://mzzxzgtd.mexamo.xyz/live/7PGRPWPV/2FEKK9KD/153640.ts,2355.6946666666668,1251.0,0.0,0.0,25.0,704x576,mpeg2video,mp2,INTERLACED,OK,96.60573027705433,0
+49501,28.0,31,835,UK: 5Star,http://easyip.xyz/live/g38Stuew/j7jmCpJ/7023.ts,2038.7357333333327,1252.0,0.0,0.0,25.0,704x576,mpeg2video,mp2,PROGRESSIVE,OK,83.60742041297054,0
+52198,28.0,31,835,UK| 5STAR + 1 HD,http://mzzxzgtd.mexamo.xyz/live/7PGRPWPV/2FEKK9KD/153681.ts,1953.740533333333,1252.0,0.0,0.0,25.0,704x576,mpeg2video,mp2,PROGRESSIVE,OK,80.12181445468099,0
+21930,28.0,31,835,UK: 5 STAR ◉,http://cf.business-cdn.me/live/4a17e36d6d/96a721805e/162291.ts,N/A,N/A,N/A,0.0,N/A,N/A,N/A,N/A,UNKNOWN,OK,-1.0,0
+62858,28.0,31,835,|UK|  5STAR,http://125280576791.d4ktv.info/live/z23etr5537/pb6l2eyhpe/77389.ts,N/A,N/A,N/A,0.0,25.0,704x576,mpeg2video,mp2,UNKNOWN,OK,-1.0,0
+110874,28.0,31,835,|UK|  5STAR,http://130980947578.d4ktv.info/live/v3w0cvpz3k/6s9is7pm0i/77389.ts,N/A,N/A,N/A,0.0,25.0,704x576,mpeg2video,mp2,UNKNOWN,OK,-1.0,0

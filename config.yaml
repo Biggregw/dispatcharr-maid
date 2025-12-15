@@ -1,0 +1,27 @@
+analysis:
+  duration: 30
+  idet_frames: 500
+  retries: 1
+  retry_delay: 10
+  timeout: 45
+  workers: 8
+filters:
+  channel_group_ids:
+  - 835
+  remove_duplicates: true
+  specific_channel_ids:
+  - 31
+  stream_last_measured_days: 0
+scoring:
+  dropped_frames_penalty: 50
+  error_penalty: 200
+  fps_bonus_points: 25
+  hevc_boost: 1.2
+  max_bitrate_mbps: 15
+  max_dropped_frame_percent: 2.0
+  max_errors: 0
+  resolution_scores:
+    1280x720: 30
+    1920x1080: 40
+    3840x2160: 5
+    960x540: 10

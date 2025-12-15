@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  # Interactive Web Application (always running)
+  dispatcharr-maid-web:
+    build: .
+    container_name: dispatcharr-maid-web
+    restart: unless-stopped
+    networks:
+      - dispatcharr_default  # Join existing Dispatcharr network
+    ports:
+      - "5000:5000"  # Web application port
+    volumes:
+      - ./csv:/app/csv           # CSV data files
+      - ./logs:/app/logs         # Logs and checkpoints
+      - ./config.yaml:/app/config.yaml  # Configuration
+      - ./.env:/app/.env         # Credentials
+      - ./dispatcharr_web_app.py:/app/dispatcharr_web_app.py  # Main web app
+      - ./stream_analysis.py:/app/stream_analysis.py          # Stream analysis library
+      - ./api_utils.py:/app/api_utils.py                      # API utilities
+      - ./interactive_maid.py:/app/interactive_maid.py        # Interactive CLI
+      - ./web_monitor.py:/app/web_monitor.py                  # Web monitor
+      - ./templates:/app/templates                            # HTML templates
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python3 dispatcharr_web_app.py
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  dispatcharr_default:
+    external: true  # Use the existing network created by Dispatcharr
