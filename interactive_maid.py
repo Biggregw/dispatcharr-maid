@@ -14,6 +14,7 @@ from datetime import datetime
 import pandas as pd
 
 from api_utils import DispatcharrAPI
+from job_workspace import create_job_workspace
 from stream_analysis import (
     Config,
     fetch_streams,
@@ -209,9 +210,9 @@ def cleanup_streams_by_provider(api, selected_group_ids):
     print("="*70 + "\n")
 
 
-def generate_summary_report():
+def generate_summary_report(config):
     """Generate and display analysis summary"""
-    measurements_file = 'csv/03_iptv_stream_measurements.csv'
+    measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
     
     if not os.path.exists(measurements_file):
         print("\nNo measurements file found - skipping summary")
@@ -295,7 +296,7 @@ def run_full_pipeline(api, config, selected_ids, with_cleanup=False):
             cleanup_streams_by_provider(api, selected_ids)
         
         # Summary
-        generate_summary_report()
+        generate_summary_report(config)
         
         # Final stats
         elapsed = time.time() - start_time
@@ -329,8 +330,12 @@ def main():
         print("  DISPATCHARR_TOKEN=")
         sys.exit(1)
     
+    # Create isolated workspace
+    job_id = datetime.now().strftime('cli-%Y%m%d-%H%M%S')
+    workspace, config_path = create_job_workspace(job_id)
+
     # Load configuration
-    config = Config('config.yaml')
+    config = Config(config_path, working_dir=workspace)
     
     # Initialize API
     print("\nConnecting to Dispatcharr...")
@@ -431,7 +436,7 @@ def main():
             try:
                 analyze_streams(config)
                 print("\n✓ Analysis complete!")
-                generate_summary_report()
+                generate_summary_report(config)
             except Exception as e:
                 print(f"\n✗ Analysis failed: {e}")
         
@@ -459,7 +464,7 @@ def main():
             cleanup_streams_by_provider(api, selected_ids)
         
         elif choice == '8':
-            generate_summary_report()
+            generate_summary_report(config)
         
         elif choice == '9':
             # Re-select groups
