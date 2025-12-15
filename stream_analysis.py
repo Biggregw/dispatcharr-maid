@@ -27,8 +27,8 @@ from api_utils import DispatcharrAPI
 # Progress tracking
 class ProgressTracker:
     """Track analysis progress with ETA and resumability"""
-    
-    def __init__(self, total_streams, checkpoint_file='logs/checkpoint.json'):
+
+    def __init__(self, total_streams, checkpoint_file):
         self.total = total_streams
         self.processed = 0
         self.failed = 0
@@ -111,9 +111,10 @@ class ProgressTracker:
 # Configuration
 class Config:
     """Configuration management"""
-    
-    def __init__(self, config_file='config.yaml'):
-        self.config_file = config_file
+
+    def __init__(self, config_file='config.yaml', working_dir=None):
+        self.working_dir = Path(working_dir) if working_dir else Path(config_file).parent
+        self.config_file = Path(self.working_dir, Path(config_file).name)
         self.config = self._load_config()
     
     def _load_config(self):
@@ -177,6 +178,10 @@ class Config:
         """Save configuration to file"""
         with open(self.config_file, 'w') as f:
             yaml.dump(self.config, f, default_flow_style=False)
+
+    def resolve_path(self, relative_path):
+        """Resolve a path within the working directory"""
+        return str(Path(self.working_dir, relative_path))
 
 
 # Provider rate limiting
@@ -467,9 +472,13 @@ def _analyze_stream_task(row, config, progress_tracker=None):
 
 # Main functions
 
-def fetch_streams(api, config, output_file='csv/02_grouped_channel_streams.csv'):
+def fetch_streams(api, config, output_file=None):
     """Fetch streams for channels based on filters"""
     logging.info("Fetching streams from Dispatcharr...")
+
+    output_file = output_file or config.resolve_path('csv/02_grouped_channel_streams.csv')
+    groups_file = config.resolve_path('csv/00_channel_groups.csv')
+    metadata_file = config.resolve_path('csv/01_channels_metadata.csv')
     
     filters = config.get('filters') or {}
     group_ids_list = filters.get('channel_group_ids', [])
@@ -482,8 +491,8 @@ def fetch_streams(api, config, output_file='csv/02_grouped_channel_streams.csv')
     logging.info(f"Found {len(groups)} channel groups")
     
     # Save groups
-    Path('csv').mkdir(exist_ok=True)
-    with open("csv/00_channel_groups.csv", mode="w", newline="", encoding="utf-8") as f:
+    Path(config.resolve_path('csv')).mkdir(parents=True, exist_ok=True)
+    with open(groups_file, mode="w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["id", "name"])
         for group in groups:
@@ -527,9 +536,9 @@ def fetch_streams(api, config, output_file='csv/02_grouped_channel_streams.csv')
     logging.info(f"Processing {len(final_channels)} channels after filters")
     
     # Save channel metadata
-    with open("csv/01_channels_metadata.csv", mode="w", newline="", encoding="utf-8") as f:
+    with open(metadata_file, mode="w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        headers = ["id", "channel_number", "name", "channel_group_id", "tvg_id", 
+        headers = ["id", "channel_number", "name", "channel_group_id", "tvg_id",
                    "tvc_guide_stationid", "epg_data_id", "logo_id"]
         writer.writerow(headers)
         for ch in final_channels:
@@ -569,15 +578,19 @@ def fetch_streams(api, config, output_file='csv/02_grouped_channel_streams.csv')
     logging.info(f"Done! Streams saved to {output_file}")
 
 
-def analyze_streams(config, input_csv='csv/02_grouped_channel_streams.csv',
-                   output_csv='csv/03_iptv_stream_measurements.csv',
-                   fails_csv='csv/04_fails.csv', progress_callback=None):
+def analyze_streams(config, input_csv=None,
+                   output_csv=None,
+                   fails_csv=None, progress_callback=None):
     """Analyze streams with progress tracking and checkpointing"""
-    
+
     if not _check_ffmpeg_installed():
         raise Exception("ffmpeg and ffprobe are required but not found")
-    
+
     logging.info("Loading streams to analyze...")
+
+    input_csv = input_csv or config.resolve_path('csv/02_grouped_channel_streams.csv')
+    output_csv = output_csv or config.resolve_path('csv/03_iptv_stream_measurements.csv')
+    fails_csv = fails_csv or config.resolve_path('csv/04_fails.csv')
     
     # Load streams
     try:
@@ -638,7 +651,7 @@ def analyze_streams(config, input_csv='csv/02_grouped_channel_streams.csv',
     streams_to_analyze = df.to_dict('records')
     
     # Initialize progress tracker
-    progress_tracker = ProgressTracker(len(streams_to_analyze))
+    progress_tracker = ProgressTracker(len(streams_to_analyze), config.resolve_path('logs/checkpoint.json'))
     
     # Check for existing checkpoint
     if len(progress_tracker.processed_ids) > 0:
@@ -730,12 +743,15 @@ def analyze_streams(config, input_csv='csv/02_grouped_channel_streams.csv',
         raise
 
 
-def score_streams(api, config, input_csv='csv/03_iptv_stream_measurements.csv',
-                 output_csv='csv/05_iptv_streams_scored_sorted.csv', 
+def score_streams(api, config, input_csv=None,
+                 output_csv=None,
                  update_stats=False):
     """Calculate scores and sort streams"""
-    
+
     logging.info("Scoring streams...")
+
+    input_csv = input_csv or config.resolve_path('csv/03_iptv_stream_measurements.csv')
+    output_csv = output_csv or config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
     
     try:
         df = pd.read_csv(input_csv)
@@ -880,10 +896,12 @@ def score_streams(api, config, input_csv='csv/03_iptv_stream_measurements.csv',
                     logging.warning(f"Could not update stats for stream {stream_id}: {e}")
 
 
-def reorder_streams(api, config, input_csv='csv/05_iptv_streams_scored_sorted.csv'):
+def reorder_streams(api, config, input_csv=None):
     """Reorder streams in Dispatcharr based on scores"""
-    
+
     logging.info("Reordering streams in Dispatcharr...")
+
+    input_csv = input_csv or config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
     
     try:
         df = pd.read_csv(input_csv)

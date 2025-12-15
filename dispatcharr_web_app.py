@@ -29,6 +29,7 @@ from stream_analysis import (
     score_streams,
     reorder_streams
 )
+from job_workspace import create_job_workspace
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # For session management
@@ -39,10 +40,27 @@ jobs = {}  # {job_id: Job}
 job_lock = threading.Lock()
 
 
+def _get_latest_job_with_workspace():
+    """Return the most recent job that has an assigned workspace"""
+    with job_lock:
+        jobs_with_workspace = [j for j in jobs.values() if j.workspace]
+        if not jobs_with_workspace:
+            return None
+        return max(jobs_with_workspace, key=lambda j: j.started_at)
+
+
+def _build_config_from_job(job):
+    """Create a Config instance scoped to a job workspace"""
+    if job and job.workspace:
+        workspace_path = Path(job.workspace)
+        return Config(workspace_path / 'config.yaml', working_dir=workspace_path)
+    return Config('config.yaml')
+
+
 class Job:
     """Represents a running or completed job"""
-    
-    def __init__(self, job_id, job_type, groups, channels=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, group_names=None, channel_names=None):
+
+    def __init__(self, job_id, job_type, groups, channels=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, group_names=None, channel_names=None, workspace=None):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -64,6 +82,7 @@ class Job:
         self.cancel_requested = False
         self.thread = None
         self.result_summary = None
+        self.workspace = workspace
     
     def to_dict(self):
         """Convert to dictionary for JSON serialization"""
@@ -199,7 +218,7 @@ def run_job_worker(job, api, config):
                     return
                 
                 job.current_step = f'Cleaning up (keeping top {job.streams_per_provider} per provider)...'
-                cleanup_stats = cleanup_streams_by_provider(api, job.groups, job.streams_per_provider, job.channels)
+                cleanup_stats = cleanup_streams_by_provider(api, job.groups, config, job.streams_per_provider, job.channels)
                 
                 # Add cleanup stats to result summary
                 if not job.result_summary:
@@ -277,7 +296,7 @@ def run_job_worker(job, api, config):
         
         elif job.job_type == 'cleanup':
             job.current_step = f'Cleaning up (keeping top {job.streams_per_provider} per provider)...'
-            cleanup_stats = cleanup_streams_by_provider(api, job.groups, job.streams_per_provider, job.channels)
+            cleanup_stats = cleanup_streams_by_provider(api, job.groups, config, job.streams_per_provider, job.channels)
             
             # Store cleanup stats for history
             job.result_summary = {
@@ -293,7 +312,7 @@ def run_job_worker(job, api, config):
         # Generate summary (skip for refresh jobs - they set their own)
         if job.job_type != 'refresh_optimize' and not job.result_summary:
             # Pass channel filter to summary so it only shows what we just processed
-            job.result_summary = generate_job_summary(specific_channel_ids=job.channels)
+            job.result_summary = generate_job_summary(config, specific_channel_ids=job.channels)
         
     except Exception as e:
         job.status = 'failed'
@@ -305,7 +324,7 @@ def run_job_worker(job, api, config):
         save_job_to_history(job)
 
 
-def cleanup_streams_by_provider(api, selected_group_ids, streams_per_provider=1, specific_channel_ids=None):
+def cleanup_streams_by_provider(api, selected_group_ids, config, streams_per_provider=1, specific_channel_ids=None):
     """Keep only the top N streams from each provider for each channel, sorted by quality score"""
     
     # Track stats
@@ -316,7 +335,7 @@ def cleanup_streams_by_provider(api, selected_group_ids, streams_per_provider=1,
     }
     
     # Load scored streams to get quality rankings
-    scored_file = 'csv/05_iptv_streams_scored_sorted.csv'
+    scored_file = config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
     stream_scores = {}
     
     if os.path.exists(scored_file):
@@ -408,9 +427,9 @@ def cleanup_streams_by_provider(api, selected_group_ids, streams_per_provider=1,
     return stats
 
 
-def generate_job_summary(specific_channel_ids=None):
+def generate_job_summary(config, specific_channel_ids=None):
     """Generate comprehensive summary of last analysis, optionally filtered by channel IDs"""
-    measurements_file = 'csv/03_iptv_stream_measurements.csv'
+    measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
     
     if not os.path.exists(measurements_file):
         return None
@@ -640,12 +659,13 @@ def api_start_job():
         
         # Create job
         job_id = str(uuid.uuid4())
-        job = Job(job_id, job_type, groups, channels, include_filter, exclude_filter, streams_per_provider, exclude_4k, group_names, channel_names)
-        
+        workspace, config_path = create_job_workspace(job_id)
+        job = Job(job_id, job_type, groups, channels, include_filter, exclude_filter, streams_per_provider, exclude_4k, group_names, channel_names, str(workspace))
+
         # Initialize API and config
         api = DispatcharrAPI()
         api.login()
-        config = Config('config.yaml')
+        config = Config(config_path, working_dir=workspace)
         
         # Start job in background thread
         job.thread = threading.Thread(
@@ -724,7 +744,8 @@ def api_detailed_results():
                 return jsonify({'success': True, 'results': latest_job.result_summary})
         
         # Fall back to CSV-based summary if no recent jobs
-        summary = generate_job_summary()
+        latest_job = _get_latest_job_with_workspace()
+        summary = generate_job_summary(_build_config_from_job(latest_job))
         
         if not summary:
             return jsonify({'success': False, 'error': 'No results available'}), 404
@@ -737,7 +758,9 @@ def api_detailed_results():
 @app.route('/api/results/csv')
 def api_export_csv():
     """Export results as CSV"""
-    measurements_file = 'csv/03_iptv_stream_measurements.csv'
+    latest_job = _get_latest_job_with_workspace()
+    config = _build_config_from_job(latest_job)
+    measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
     
     if not os.path.exists(measurements_file):
         return jsonify({'success': False, 'error': 'No results available'}), 404
