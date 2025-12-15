@@ -13,14 +13,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+
 # Copy application files
-COPY api_utils.py .
-COPY stream_analysis.py .
-COPY interactive_maid.py .
-COPY web_monitor.py .
-COPY dispatcharr_web_app.py .
-COPY templates ./templates/
-COPY config.yaml .
+COPY . .
 
 # Create directories for data
 RUN mkdir -p /app/csv /app/logs
