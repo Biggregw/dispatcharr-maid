@@ -450,6 +450,85 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        /* Refresh preview modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.45);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            padding: 20px;
+        }
+
+        .modal {
+            background: #fff;
+            border-radius: 12px;
+            max-width: 700px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+
+        .modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-body {
+            padding: 16px 20px;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 16px 20px;
+            border-top: 1px solid #e5e7eb;
+            background: #f9fafb;
+        }
+
+        .preview-list {
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 10px;
+            margin-top: 12px;
+        }
+
+        .preview-item {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            padding: 10px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .preview-item:last-child {
+            border-bottom: none;
+        }
+
+        .preview-name {
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .preview-meta {
+            color: #6b7280;
+            font-size: 0.9em;
+        }
+
+        .modal-title {
+            font-size: 1.2em;
+            font-weight: 700;
+            color: #1f2937;
+        }
         
         /* Selection summary */
         .selection-summary {
@@ -682,7 +761,7 @@
             <h3 style="margin: 25px 0 15px 0; color: #2d3748;">Choose Action:</h3>
             
             <div class="action-grid">
-                <button class="action-btn primary" onclick="startJob('refresh_optimize')" 
+                <button class="action-btn primary" onclick="showRefreshPreview()"
                         style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
                     <span>🔄</span>
                     <span>Refresh Channel Streams</span>
@@ -721,7 +800,27 @@
             </div>
         </div>
     </div>
-    
+
+    <div id="refresh-preview-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <div>
+                    <div class="modal-title">Preview matching streams</div>
+                    <div class="preview-meta" id="refresh-preview-summary"></div>
+                </div>
+                <button class="btn btn-back" onclick="closeRefreshPreview()">✖</button>
+            </div>
+            <div class="modal-body">
+                <div class="preview-meta" id="refresh-preview-description"></div>
+                <div class="preview-list" id="refresh-preview-list"></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-back" onclick="closeRefreshPreview()">Cancel</button>
+                <button class="btn btn-next" onclick="submitRefreshJob()">Add Selected Streams</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Global state
         let selectedGroups = [];
@@ -730,6 +829,8 @@
         let allChannels = {};
         let currentJobId = null;
         let jobCheckInterval = null;
+        let refreshPreviewStreams = [];
+        let refreshPreviewMeta = null;
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
@@ -994,9 +1095,90 @@
             document.getElementById('step-2').classList.add('hidden');
             document.getElementById('step-3').classList.add('hidden');
         }
-        
+
+        // Refresh preview helpers
+        function closeRefreshPreview() {
+            document.getElementById('refresh-preview-modal').classList.add('hidden');
+            refreshPreviewStreams = [];
+            refreshPreviewMeta = null;
+        }
+
+        function renderRefreshPreview(preview) {
+            refreshPreviewStreams = preview.streams || [];
+            refreshPreviewMeta = preview;
+
+            const list = document.getElementById('refresh-preview-list');
+            const description = document.getElementById('refresh-preview-description');
+            const summary = document.getElementById('refresh-preview-summary');
+
+            description.textContent = preview.channel_name
+                ? `Streams found for ${preview.channel_name}. Uncheck any you don't want to add.`
+                : 'Streams found for the selected channel.';
+            summary.textContent = `${preview.new_count} stream(s) ready to add from ${preview.total_matching} matches.`;
+
+            if (!refreshPreviewStreams.length) {
+                list.innerHTML = '<div class="alert alert-warning">No streams matched your filters. Proceeding will clear current streams for this channel.</div>';
+                return;
+            }
+
+            list.innerHTML = refreshPreviewStreams.map(stream => `
+                <label class="preview-item">
+                    <input type="checkbox" class="refresh-stream-checkbox" value="${stream.id}" checked>
+                    <div>
+                        <div class="preview-name">${stream.name}</div>
+                        <div class="preview-meta">ID: ${stream.id}${stream.resolution ? ` • ${stream.resolution}` : ''}</div>
+                    </div>
+                </label>
+            `).join('');
+        }
+
+        async function showRefreshPreview() {
+            if (!selectedChannels || selectedChannels.length !== 1) {
+                alert('Please select exactly 1 channel to refresh.');
+                return;
+            }
+
+            document.getElementById('refresh-preview-modal').classList.remove('hidden');
+            document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-info">Searching for matching streams...</div>';
+            document.getElementById('refresh-preview-summary').textContent = 'Looking up matching streams...';
+            document.getElementById('refresh-preview-description').textContent = '';
+
+            try {
+                const payload = {
+                    channel_id: selectedChannels[0],
+                    include_filter: document.getElementById('includeFilter')?.value || null,
+                    exclude_filter: document.getElementById('excludeFilter')?.value || null,
+                    exclude_4k: document.getElementById('exclude4K')?.checked || false
+                };
+
+                const response = await fetch('/api/refresh-preview', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    renderRefreshPreview(data.preview);
+                } else {
+                    document.getElementById('refresh-preview-list').innerHTML = `<div class="alert alert-error">${data.error || 'Unable to preview streams.'}</div>`;
+                    document.getElementById('refresh-preview-summary').textContent = '';
+                }
+            } catch (error) {
+                document.getElementById('refresh-preview-list').innerHTML = `<div class="alert alert-error">Failed to preview streams: ${error.message}</div>`;
+                document.getElementById('refresh-preview-summary').textContent = '';
+            }
+        }
+
+        function submitRefreshJob() {
+            const selected = Array.from(document.querySelectorAll('.refresh-stream-checkbox:checked')).map(cb => parseInt(cb.value));
+            closeRefreshPreview();
+            startJob('refresh_optimize', selected);
+        }
+
         // Start a job
-        async function startJob(jobType) {
+        async function startJob(jobType, selectedStreamIds = null) {
             try {
                 // Get group names
                 const groupNames = selectedGroups.map(id => {
@@ -1032,7 +1214,8 @@
                     streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 1,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
-                    exclude_4k: document.getElementById('exclude4K')?.checked || false
+                    exclude_4k: document.getElementById('exclude4K')?.checked || false,
+                    selected_stream_ids: selectedStreamIds
                 };
                 
                 const response = await fetch('/api/start-job', {
