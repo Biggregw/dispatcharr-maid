@@ -638,7 +638,18 @@
                 <label style="display: block; margin-bottom: 15px; font-weight: 600; color: #2d3748; font-size: 1.1em;">
                     🔍 Channel Refresh Filters (for "Refresh & Optimize" only)
                 </label>
-                
+
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
+                        Base Search Text
+                    </label>
+                    <input type="text" id="baseSearchText" placeholder="Exact search text used to find matching streams"
+                           style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
+                    <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
+                        This is the exact channel search text currently used internally. Edit to override before refreshing.
+                    </span>
+                </div>
+
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
                         Include Filter (optional)
@@ -878,7 +889,7 @@
                     </div>
                     <div class="channel-list" id="channel-list-${groupId}">
                         ${channels.map(ch => `
-                            <div class="channel-item" data-channel-id="${ch.id}" data-channel-name="${ch.name.toLowerCase()}" data-channel-number="${ch.channel_number}">
+                            <div class="channel-item" data-channel-id="${ch.id}" data-channel-name="${ch.name.toLowerCase()}" data-channel-number="${ch.channel_number}" data-base-search-text="${ch.base_search_text || ch.name}">
                                 <input type="checkbox" id="channel-${ch.id}" onchange="updateChannelSelection()">
                                 <span class="channel-number">${ch.channel_number}</span>
                                 <span class="channel-name">${ch.name}</span>
@@ -936,7 +947,19 @@
                     return parseInt(cb.closest('.channel-item').dataset.channelId);
                 });
                 document.getElementById('selected-channels-count').textContent = count;
-            
+            }
+
+            const baseSearchInput = document.getElementById('baseSearchText');
+            if (baseSearchInput) {
+                if (selectedChannels && selectedChannels.length === 1) {
+                    const selectedChannelId = selectedChannels[0];
+                    const channelElement = document.querySelector(`.channel-item[data-channel-id="${selectedChannelId}"]`);
+                    baseSearchInput.value = channelElement?.dataset.baseSearchText || '';
+                } else {
+                    baseSearchInput.value = '';
+                }
+            }
+
             // Show/hide refresh filters based on selection
             const refreshFiltersDiv = document.getElementById('refreshFilters');
             if (refreshFiltersDiv) {
@@ -945,7 +968,6 @@
                 } else {
                     refreshFiltersDiv.style.display = 'none';
                 }
-            }
             }
         }
         
@@ -1030,6 +1052,7 @@
                     group_names: groupNames,
                     channel_names: channelNames,
                     streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 1,
+                    base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
                     exclude_4k: document.getElementById('exclude4K')?.checked || false
@@ -1174,6 +1197,11 @@
                             </div>
                         </div>
                     `;
+                    if (job.result_summary.base_search_text) {
+                        html += `<div style="margin-top: 15px; padding: 10px; background: #f0f4ff; border-radius: 5px;">
+                            <strong>Base Search Text:</strong> ${job.result_summary.base_search_text}
+                        </div>`;
+                    }
                     if (job.result_summary.include_filter || job.result_summary.exclude_filter) {
                         html += `<div style="margin-top: 15px; padding: 10px; background: #f7fafc; border-radius: 5px;">`;
                         if (job.result_summary.include_filter) {
