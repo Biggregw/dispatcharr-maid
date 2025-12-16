@@ -14,7 +14,7 @@ Dispatcharr Maid provides housekeeping tools for the Dispatcharr IPTV stream pro
    ```
 
 2. **Configure environment**
-   - Copy any required secrets (API keys, tokens) into a `.env` file if you use `api_utils.py`.
+   - Set `DISPATCHARR_BASE_URL` and `DISPATCHARR_TOKEN` in a server-side `.env` file. The web UI no longer prompts for tokens, so these values must be present before you start the app.
    - Adjust `config.yaml` to point at your Dispatcharr endpoints and data directories.
 
 3. **Run the interactive CLI**

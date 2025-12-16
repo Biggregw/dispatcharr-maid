@@ -502,8 +502,7 @@ docker exec dispatcharr-maid-web cat .env
 Should show:
 ```
 DISPATCHARR_BASE_URL=http://dispatcharr:9191
-DISPATCHARR_USER=your-username
-DISPATCHARR_PASS=your-password
+DISPATCHARR_TOKEN=your-dispatcharr-token
 ```
 
 **Test connection:**

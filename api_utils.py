@@ -24,22 +24,28 @@ class DispatcharrAPI:
     def __init__(self):
         load_dotenv()
         self.base_url = os.getenv('DISPATCHARR_BASE_URL', '').rstrip('/')
-        self.token = os.getenv('DISPATCHARR_TOKEN')
 
         if not self.base_url:
             raise ValueError("Missing DISPATCHARR_BASE_URL in environment")
 
-    def _ensure_token(self):
-        if self.token:
-            return
+    def _get_token(self):
+        token = os.getenv('DISPATCHARR_TOKEN')
+        if token:
+            return token
 
-        raise DispatcharrAuthError("DISPATCHARR_TOKEN is required for API calls")
+        raise DispatcharrAuthError(
+            "DISPATCHARR_TOKEN must be set in the server environment (.env)"
+        )
+
+    def _ensure_token(self):
+        # Explicitly call _get_token so any missing token surfaces as an auth error
+        self._get_token()
 
     def _get_headers(self):
         """Get authorization headers"""
-        self._ensure_token()
+        token = self._get_token()
         return {
-            'Authorization': f'Bearer {self.token}',
+            'Authorization': f'Bearer {token}',
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         }

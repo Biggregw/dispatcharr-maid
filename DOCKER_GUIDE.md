@@ -58,9 +58,8 @@ nano .env
 ```ini
 # Since we're on the same Docker network, use container name!
 DISPATCHARR_BASE_URL=http://dispatcharr:9191
-DISPATCHARR_USER=admin
-DISPATCHARR_PASS=your_actual_password
-DISPATCHARR_TOKEN=
+# Required: pre-issued Dispatcharr access token saved on the server
+DISPATCHARR_TOKEN=your_dispatcharr_token
 ```
 
 **Key point:** Use `http://dispatcharr:9191` (the container name), not `localhost` or an IP!

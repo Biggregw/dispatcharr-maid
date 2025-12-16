@@ -17,7 +17,7 @@ from queue import Queue
 
 import pandas as pd
 import yaml
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 
 from api_utils import (
@@ -36,7 +36,6 @@ from stream_analysis import (
 from job_workspace import create_job_workspace
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)  # For session management
 CORS(app)
 
 # Job management

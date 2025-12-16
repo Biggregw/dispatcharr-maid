@@ -932,7 +932,7 @@
                 if (response.status === 503 || data.reachable === false) {
                     updateStatusOverlay('Dispatcharr must be installed and running', data.error || 'Start Dispatcharr and try again.', true);
                 } else if (response.status === 401 || data.authenticated === false) {
-                    updateStatusOverlay('Authentication failed', data.error || 'Set a valid DISPATCHARR_TOKEN on the server and reload.', true);
+                    updateStatusOverlay('Authentication failed', data.error || 'Set DISPATCHARR_TOKEN in the server .env file, restart the app, and reload.', true);
                 } else {
                     updateStatusOverlay('Unable to verify Dispatcharr', data.error || 'Unexpected error occurred.', true);
                 }
