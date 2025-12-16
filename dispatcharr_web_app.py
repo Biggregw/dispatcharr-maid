@@ -60,7 +60,7 @@ def _build_config_from_job(job):
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, group_names=None, channel_names=None, workspace=None):
+    def __init__(self, job_id, job_type, groups, channels=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -71,6 +71,7 @@ class Job:
         self.exclude_filter = exclude_filter
         self.streams_per_provider = streams_per_provider  # Specific channel IDs if selected
         self.exclude_4k = exclude_4k  # Exclude 4K/UHD streams during refresh
+        self.selected_stream_ids = selected_stream_ids
         self.status = 'queued'  # queued, running, completed, failed, cancelled
         self.progress = 0
         self.total = 0
@@ -93,6 +94,7 @@ class Job:
             'channels': self.channels,
             'group_names': self.group_names,
             'channel_names': self.channel_names,
+            'selected_stream_ids': self.selected_stream_ids,
             'status': self.status,
             'progress': self.progress,
             'total': self.total,
@@ -263,10 +265,11 @@ def run_job_worker(job, api, config):
             
             job.current_step = 'Searching all providers for matching streams...'
             refresh_result = refresh_channel_streams(
-                api, config, channel_id, 
-                job.include_filter, 
+                api, config, channel_id,
+                job.include_filter,
                 job.exclude_filter,
-                job.exclude_4k
+                job.exclude_4k,
+                job.selected_stream_ids
             )
             
             if 'error' in refresh_result:
@@ -631,7 +634,42 @@ def api_channels():
             })
         
         return jsonify({'success': True, 'channels': channels_by_group})
-    
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/refresh-preview', methods=['POST'])
+def api_refresh_preview():
+    """Preview matching streams for a channel before refreshing"""
+    try:
+        data = request.get_json()
+        channel_id = data.get('channel_id')
+        include_filter = data.get('include_filter')
+        exclude_filter = data.get('exclude_filter')
+        exclude_4k = data.get('exclude_4k', False)
+
+        if not channel_id:
+            return jsonify({'success': False, 'error': 'Channel ID is required'}), 400
+
+        api = DispatcharrAPI()
+        api.login()
+        config = Config('config.yaml')
+
+        preview = refresh_channel_streams(
+            api,
+            config,
+            int(channel_id),
+            include_filter,
+            exclude_filter,
+            exclude_4k,
+            preview=True
+        )
+
+        if 'error' in preview:
+            return jsonify({'success': False, 'error': preview.get('error')}), 400
+
+        return jsonify({'success': True, 'preview': preview})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -653,6 +691,7 @@ def api_start_job():
         exclude_filter = data.get('exclude_filter')
         streams_per_provider = data.get('streams_per_provider', 1)
         exclude_4k = data.get('exclude_4k', False)
+        selected_stream_ids = data.get('selected_stream_ids')
         
         if not job_type or not groups:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
@@ -660,7 +699,7 @@ def api_start_job():
         # Create job
         job_id = str(uuid.uuid4())
         workspace, config_path = create_job_workspace(job_id)
-        job = Job(job_id, job_type, groups, channels, include_filter, exclude_filter, streams_per_provider, exclude_4k, group_names, channel_names, str(workspace))
+        job = Job(job_id, job_type, groups, channels, include_filter, exclude_filter, streams_per_provider, exclude_4k, group_names, channel_names, str(workspace), selected_stream_ids)
 
         # Initialize API and config
         api = DispatcharrAPI()

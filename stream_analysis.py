@@ -970,7 +970,7 @@ def reorder_streams(api, config, input_csv=None):
     
     logging.info("Reordering complete!")
 
-def refresh_channel_streams(api, config, channel_id, include_filter=None, exclude_filter=None, exclude_4k=False):
+def refresh_channel_streams(api, config, channel_id, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False):
     """
     Find and add all matching streams from all providers for a specific channel
     
@@ -1127,44 +1127,70 @@ def refresh_channel_streams(api, config, channel_id, include_filter=None, exclud
         logging.info("Checking stream resolutions to exclude 4K/UHD...")
         filtered_streams = []
         excluded_4k = 0
-        
+
         for stream in matching_streams:
             resolution = check_stream_resolution(stream['url'])
-            
+
+            detailed_stream = {
+                'id': stream['id'],
+                'name': stream['name'],
+                'url': stream.get('url', ''),
+                'resolution': resolution
+            }
+
             if resolution:
                 # Exclude 4K/UHD (3840x2160 or 4096x2160)
                 if resolution in ['3840x2160', '4096x2160']:
                     logging.info(f"Excluding 4K stream: {stream['name']} ({resolution})")
                     excluded_4k += 1
                 else:
-                    filtered_streams.append(stream['id'])
+                    filtered_streams.append(detailed_stream)
             else:
                 # If we can't determine resolution, include it (safer than excluding)
-                filtered_streams.append(stream['id'])
-        
+                filtered_streams.append(detailed_stream)
+
         logging.info(f"Excluded {excluded_4k} 4K/UHD streams")
-        final_stream_ids = filtered_streams
     else:
         # No filtering, use all matching streams
-        final_stream_ids = [s['id'] for s in matching_streams]
+        filtered_streams = [
+            {
+                'id': s['id'],
+                'name': s['name'],
+                'url': s.get('url', ''),
+                'resolution': None
+            }
+            for s in matching_streams
+        ]
+
+    if allowed_stream_ids is not None:
+        allowed_set = {int(sid) for sid in allowed_stream_ids}
+        filtered_streams = [s for s in filtered_streams if s['id'] in allowed_set]
+
+    final_stream_ids = [s['id'] for s in filtered_streams]
     
     if not final_stream_ids:
         logging.info("No streams remaining after filtering - channel will be emptied")
     else:
         logging.info(f"Replacing channel streams with {len(final_stream_ids)} matching streams...")
     
+    result = {
+        'total_matching': len([s for s in matching_streams]),
+        'previous_count': len(current_stream_ids),
+        'new_count': len(final_stream_ids),
+        'removed': len(current_stream_ids),
+        'added': len(final_stream_ids),
+        'streams': filtered_streams,
+        'channel_name': channel_name
+    }
+
+    if preview:
+        return result
+
     # Update channel with new stream list
     try:
         api.update_channel_streams(channel_id, final_stream_ids)
         logging.info(f"✓ Successfully replaced channel streams")
-        
-        return {
-            'total_matching': len([s for s in matching_streams]),  # Total found before filtering
-            'previous_count': len(current_stream_ids),
-            'new_count': len(final_stream_ids),
-            'removed': len(current_stream_ids),
-            'added': len(final_stream_ids)
-        }
+        return result
     except Exception as e:
         logging.error(f"Failed to update channel: {e}")
         return {'error': str(e)}
