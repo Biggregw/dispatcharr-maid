@@ -604,6 +604,19 @@ def api_status():
         return jsonify({'reachable': False, 'authenticated': False, 'error': str(error)}), 500
 
 
+@app.route('/api/token', methods=['POST'])
+def api_set_token():
+    """Update the Dispatcharr token at runtime without restarting the app."""
+    payload = request.get_json(silent=True) or {}
+    token = payload.get('token', '').strip()
+
+    if not token:
+        return jsonify({'success': False, 'error': 'Token is required'}), 400
+
+    os.environ['DISPATCHARR_TOKEN'] = token
+    return jsonify({'success': True})
+
+
 @app.route('/api/groups')
 def api_groups():
     """Get all channel groups with channel counts"""

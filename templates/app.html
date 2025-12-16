@@ -627,6 +627,29 @@
         .text-btn:hover {
             color: #764ba2;
         }
+
+        .token-input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-size: 15px;
+            box-sizing: border-box;
+        }
+
+        .token-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .small-note {
+            font-size: 13px;
+            color: #4a5568;
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
@@ -634,6 +657,14 @@
         <div class="status-modal">
             <h2 id="status-message">Checking Dispatcharr status...</h2>
             <p id="status-detail">Please wait while we verify connectivity.</p>
+            <div id="token-form" class="hidden">
+                <label for="status-token-input" style="display: block; margin-top: 10px;">Provide your Dispatcharr token:</label>
+                <input id="status-token-input" class="token-input" type="text" placeholder="Paste your DISPATCHARR_TOKEN" autocomplete="off">
+                <div class="token-actions">
+                    <button class="btn btn-next" onclick="submitToken()">Save token</button>
+                    <span class="small-note">Token is stored for this session only.</span>
+                </div>
+            </div>
             <button class="btn btn-next" id="status-retry" onclick="retryStatus()" disabled>Retry</button>
         </div>
     </div>
@@ -902,11 +933,49 @@
             document.getElementById('status-detail').textContent = detail;
             const retryBtn = document.getElementById('status-retry');
             retryBtn.disabled = !allowRetry;
+            document.getElementById('token-form').classList.add('hidden');
             document.getElementById('status-overlay').classList.remove('hidden');
         }
 
         function hideStatusOverlay() {
             document.getElementById('status-overlay').classList.add('hidden');
+        }
+
+        function showTokenEntry() {
+            const tokenForm = document.getElementById('token-form');
+            tokenForm.classList.remove('hidden');
+            document.getElementById('status-token-input').focus();
+        }
+
+        async function submitToken() {
+            const tokenInput = document.getElementById('status-token-input');
+            const token = tokenInput.value.trim();
+
+            if (!token) {
+                document.getElementById('status-detail').textContent = 'Token cannot be empty.';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    document.getElementById('status-detail').textContent = data.error || 'Failed to save token';
+                    return;
+                }
+
+                tokenInput.value = '';
+                updateStatusOverlay('Token saved', 'Retrying Dispatcharr connection...', false);
+                await checkAppStatus();
+            } catch (error) {
+                document.getElementById('status-detail').textContent = error.message;
+            }
         }
 
         async function checkAppStatus() {
@@ -932,6 +1001,7 @@
                     updateStatusOverlay('Dispatcharr must be installed and running', data.error || 'Start Dispatcharr and try again.', true);
                 } else if (response.status === 401 || data.authenticated === false) {
                     updateStatusOverlay('Authentication required, provide a valid token', data.error || 'Set a valid DISPATCHARR_TOKEN and reload.', true);
+                    showTokenEntry();
                 } else {
                     updateStatusOverlay('Unable to verify Dispatcharr', data.error || 'Unexpected error occurred.', true);
                 }
