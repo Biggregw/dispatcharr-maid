@@ -970,7 +970,7 @@ def reorder_streams(api, config, input_csv=None):
     
     logging.info("Reordering complete!")
 
-def refresh_channel_streams(api, config, channel_id, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False):
+def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False):
     """
     Find and add all matching streams from all providers for a specific channel
     
@@ -978,6 +978,7 @@ def refresh_channel_streams(api, config, channel_id, include_filter=None, exclud
         api: DispatcharrAPI instance
         config: Config instance
         channel_id: ID of the channel to refresh
+        base_search_text: Optional override for the channel name used when matching streams
         include_filter: Optional comma-separated wildcards (e.g., "york*,lond*")
         exclude_filter: Optional comma-separated exclusions (e.g., "lincoln*")
         exclude_4k: If True, check resolution and exclude 4K/UHD (3840x2160) streams
@@ -1079,7 +1080,10 @@ def refresh_channel_streams(api, config, channel_id, include_filter=None, exclud
         return {'error': 'Channel not found'}
     
     channel_name = target_channel.get('name', '')
+    search_name = channel_name if base_search_text is None else base_search_text
     logging.info(f"Channel: {channel_name}")
+    if base_search_text is not None:
+        logging.info(f"Using custom base search text: {search_name}")
     
     if include_filter:
         logging.info(f"Include filter: {include_filter}")
@@ -1117,7 +1121,7 @@ def refresh_channel_streams(api, config, channel_id, include_filter=None, exclud
         stream_name = stream.get('name', '')
         stream_id = stream.get('id')
         
-        if matches_channel(channel_name, stream_name, include_filter, exclude_filter):
+        if matches_channel(search_name, stream_name, include_filter, exclude_filter):
             matching_streams.append({'id': stream_id, 'url': stream.get('url', ''), 'name': stream_name})
     
     logging.info(f"Found {len(matching_streams)} matching streams")
@@ -1180,7 +1184,8 @@ def refresh_channel_streams(api, config, channel_id, include_filter=None, exclud
         'removed': len(current_stream_ids),
         'added': len(final_stream_ids),
         'streams': filtered_streams,
-        'channel_name': channel_name
+        'channel_name': channel_name,
+        'base_search_text': search_name
     }
 
     if preview:

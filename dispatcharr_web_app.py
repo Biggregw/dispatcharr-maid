@@ -60,13 +60,14 @@ def _build_config_from_job(job):
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None):
+    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
         self.channels = channels
         self.group_names = group_names or "Unknown"
         self.channel_names = channel_names or "All channels"
+        self.base_search_text = base_search_text
         self.include_filter = include_filter
         self.exclude_filter = exclude_filter
         self.streams_per_provider = streams_per_provider  # Specific channel IDs if selected
@@ -94,6 +95,7 @@ class Job:
             'channels': self.channels,
             'group_names': self.group_names,
             'channel_names': self.channel_names,
+            'base_search_text': self.base_search_text,
             'selected_stream_ids': self.selected_stream_ids,
             'status': self.status,
             'progress': self.progress,
@@ -265,7 +267,10 @@ def run_job_worker(job, api, config):
             
             job.current_step = 'Searching all providers for matching streams...'
             refresh_result = refresh_channel_streams(
-                api, config, channel_id,
+                api,
+                config,
+                channel_id,
+                job.base_search_text,
                 job.include_filter,
                 job.exclude_filter,
                 job.exclude_4k,
@@ -290,7 +295,8 @@ def run_job_worker(job, api, config):
                 'new_count': added,
                 'total_matching': refresh_result.get('total_matching', 0),
                 'include_filter': job.include_filter,
-                'exclude_filter': job.exclude_filter
+                'exclude_filter': job.exclude_filter,
+                'base_search_text': refresh_result.get('base_search_text')
             }
             
             # Small delay to ensure frontend polling catches the final status
@@ -625,12 +631,13 @@ def api_channels():
             group_id = channel.get('channel_group_id')
             if group_id not in channels_by_group:
                 channels_by_group[group_id] = []
-            
+
             channels_by_group[group_id].append({
                 'id': channel['id'],
                 'channel_number': channel.get('channel_number'),
                 'name': channel.get('name', 'Unknown'),
-                'channel_group_id': group_id
+                'channel_group_id': group_id,
+                'base_search_text': channel.get('name', 'Unknown')
             })
         
         return jsonify({'success': True, 'channels': channels_by_group})
@@ -645,6 +652,7 @@ def api_refresh_preview():
     try:
         data = request.get_json()
         channel_id = data.get('channel_id')
+        base_search_text = data.get('base_search_text')
         include_filter = data.get('include_filter')
         exclude_filter = data.get('exclude_filter')
         exclude_4k = data.get('exclude_4k', False)
@@ -660,6 +668,7 @@ def api_refresh_preview():
             api,
             config,
             int(channel_id),
+            base_search_text,
             include_filter,
             exclude_filter,
             exclude_4k,
@@ -687,6 +696,7 @@ def api_start_job():
         channels = data.get('channels')  # Optional: specific channel IDs
         group_names = data.get('group_names', 'Unknown')
         channel_names = data.get('channel_names', 'All channels')
+        base_search_text = data.get('base_search_text')
         include_filter = data.get('include_filter')
         exclude_filter = data.get('exclude_filter')
         streams_per_provider = data.get('streams_per_provider', 1)
@@ -699,7 +709,7 @@ def api_start_job():
         # Create job
         job_id = str(uuid.uuid4())
         workspace, config_path = create_job_workspace(job_id)
-        job = Job(job_id, job_type, groups, channels, include_filter, exclude_filter, streams_per_provider, exclude_4k, group_names, channel_names, str(workspace), selected_stream_ids)
+        job = Job(job_id, job_type, groups, channels, base_search_text, include_filter, exclude_filter, streams_per_provider, exclude_4k, group_names, channel_names, str(workspace), selected_stream_ids)
 
         # Initialize API and config
         api = DispatcharrAPI()
