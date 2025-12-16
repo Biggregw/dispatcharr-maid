@@ -322,12 +322,10 @@ def main():
     # Check for .env file
     if not Path('.env').exists():
         print("\n✗ Error: .env file not found!")
-        print("Please create a .env file with your Dispatcharr credentials.")
+        print("Please create a .env file with your Dispatcharr configuration.")
         print("\nExample:")
         print("  DISPATCHARR_BASE_URL=http://your-server:9191")
-        print("  DISPATCHARR_USER=your-username")
-        print("  DISPATCHARR_PASS=your-password")
-        print("  DISPATCHARR_TOKEN=")
+        print("  DISPATCHARR_TOKEN=your-preissued-access-token")
         sys.exit(1)
     
     # Create isolated workspace
@@ -341,10 +339,10 @@ def main():
     print("\nConnecting to Dispatcharr...")
     try:
         api = DispatcharrAPI()
-        api.login()
-        print("✓ Login successful")
+        api.check_status()
+        print("✓ Token accepted and Dispatcharr reachable")
     except Exception as e:
-        print(f"✗ Login failed: {e}")
+        print(f"✗ Authentication failed: {e}")
         sys.exit(1)
     
     # Fetch channel groups
