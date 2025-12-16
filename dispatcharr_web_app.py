@@ -17,10 +17,14 @@ from queue import Queue
 
 import pandas as pd
 import yaml
-from flask import Flask, render_template, jsonify, request, session
+from flask import Flask, jsonify, render_template, request, session
 from flask_cors import CORS
 
-from api_utils import DispatcharrAPI
+from api_utils import (
+    DispatcharrAPI,
+    DispatcharrAuthError,
+    DispatcharrConnectionError,
+)
 from stream_analysis import (
     refresh_channel_streams,
     Config,
@@ -55,6 +59,21 @@ def _build_config_from_job(job):
         workspace_path = Path(job.workspace)
         return Config(workspace_path / 'config.yaml', working_dir=workspace_path)
     return Config('config.yaml')
+
+
+def ensure_authenticated():
+    """Return an API client that has passed availability and auth checks."""
+    api = DispatcharrAPI()
+    api.check_status()
+    return api
+
+
+def handle_api_error(error):
+    if isinstance(error, DispatcharrAuthError):
+        return jsonify({'success': False, 'error': str(error)}), 401
+    if isinstance(error, DispatcharrConnectionError):
+        return jsonify({'success': False, 'error': str(error)}), 503
+    return jsonify({'success': False, 'error': str(error)}), 500
 
 
 class Job:
@@ -570,12 +589,26 @@ def results():
     return render_template('results.html')
 
 
+@app.route('/api/status')
+def api_status():
+    """Check Dispatcharr availability and authentication"""
+    try:
+        api = DispatcharrAPI()
+        api.check_status()
+        return jsonify({'reachable': True, 'authenticated': True})
+    except DispatcharrConnectionError as error:
+        return jsonify({'reachable': False, 'authenticated': False, 'error': str(error)}), 503
+    except DispatcharrAuthError as error:
+        return jsonify({'reachable': True, 'authenticated': False, 'error': str(error)}), 401
+    except Exception as error:  # noqa: BLE001
+        return jsonify({'reachable': False, 'authenticated': False, 'error': str(error)}), 500
+
+
 @app.route('/api/groups')
 def api_groups():
     """Get all channel groups with channel counts"""
     try:
-        api = DispatcharrAPI()
-        api.login()
+        api = ensure_authenticated()
         
         groups = api.fetch_channel_groups()
         channels = api.fetch_channels()
@@ -596,8 +629,8 @@ def api_groups():
         
         return jsonify({'success': True, 'groups': groups})
     
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as error:  # noqa: BLE001
+        return handle_api_error(error)
 
 
 @app.route('/api/channels')
@@ -611,8 +644,7 @@ def api_channels():
         
         group_ids = [int(x.strip()) for x in group_ids_str.split(',') if x.strip()]
         
-        api = DispatcharrAPI()
-        api.login()
+        api = ensure_authenticated()
         
         all_channels = api.fetch_channels()
         
@@ -642,8 +674,8 @@ def api_channels():
         
         return jsonify({'success': True, 'channels': channels_by_group})
 
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as error:  # noqa: BLE001
+        return handle_api_error(error)
 
 
 @app.route('/api/refresh-preview', methods=['POST'])
@@ -660,8 +692,7 @@ def api_refresh_preview():
         if not channel_id:
             return jsonify({'success': False, 'error': 'Channel ID is required'}), 400
 
-        api = DispatcharrAPI()
-        api.login()
+        api = ensure_authenticated()
         config = Config('config.yaml')
 
         preview = refresh_channel_streams(
@@ -679,8 +710,8 @@ def api_refresh_preview():
             return jsonify({'success': False, 'error': preview.get('error')}), 400
 
         return jsonify({'success': True, 'preview': preview})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as error:  # noqa: BLE001
+        return handle_api_error(error)
 
 
 @app.route('/api/start-job', methods=['POST'])
@@ -706,14 +737,14 @@ def api_start_job():
         if not job_type or not groups:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
         
+        api = ensure_authenticated()
+
         # Create job
         job_id = str(uuid.uuid4())
         workspace, config_path = create_job_workspace(job_id)
         job = Job(job_id, job_type, groups, channels, base_search_text, include_filter, exclude_filter, streams_per_provider, exclude_4k, group_names, channel_names, str(workspace), selected_stream_ids)
 
-        # Initialize API and config
-        api = DispatcharrAPI()
-        api.login()
+        # Initialize config
         config = Config(config_path, working_dir=workspace)
         
         # Start job in background thread
@@ -732,8 +763,8 @@ def api_start_job():
         
         return jsonify({'success': True, 'job_id': job_id, 'job': job.to_dict()})
     
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as error:  # noqa: BLE001
+        return handle_api_error(error)
 
 
 @app.route('/api/job/<job_id>')
