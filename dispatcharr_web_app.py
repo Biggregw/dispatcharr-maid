@@ -12,13 +12,15 @@ import threading
 import time
 import uuid
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 from queue import Queue
 
 import pandas as pd
 import yaml
-from flask import Flask, render_template, jsonify, request, session
+from flask import Flask, render_template, jsonify, redirect, request, session, url_for
 from flask_cors import CORS
+from werkzeug.security import check_password_hash
 
 from api_utils import DispatcharrAPI
 from stream_analysis import (
@@ -32,7 +34,18 @@ from stream_analysis import (
 from job_workspace import create_job_workspace
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)  # For session management
+
+
+def _env_flag_true(value):
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+AUTH_ENABLED = _env_flag_true(os.getenv('DISPATCHARR_AUTH_ENABLED'))
+AUTH_USERNAME = os.getenv('DISPATCHARR_USERNAME')
+AUTH_PASSWORD_HASH = os.getenv('DISPATCHARR_PASSWORD_HASH')
+
+# Use provided secret key for session auth if available; fall back to random key otherwise.
+app.secret_key = os.getenv('DISPATCHARR_SECRET_KEY') or os.urandom(24)
 CORS(app)
 
 # Job management
@@ -556,15 +569,62 @@ def generate_job_summary(config, specific_channel_ids=None):
         return None
 
 
+def login_required(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        if not AUTH_ENABLED:
+            # Auth disabled; skip login checks to preserve existing behavior.
+            return view_func(*args, **kwargs)
+
+        if session.get('authenticated'):
+            return view_func(*args, **kwargs)
+
+        return redirect(url_for('login', next=request.url))
+
+    return wrapped
+
+
+# Authentication routes
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if not AUTH_ENABLED:
+        # Auth disabled; redirect as no login is required.
+        return redirect(url_for('index'))
+
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username', '')
+        password = request.form.get('password', '')
+
+        if username == AUTH_USERNAME and AUTH_PASSWORD_HASH and check_password_hash(AUTH_PASSWORD_HASH, password):
+            session['authenticated'] = True
+            return redirect(request.args.get('next') or url_for('index'))
+
+        error = 'Invalid username or password'
+
+    return render_template('login.html', error=error)
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    if not AUTH_ENABLED:
+        # Auth disabled; nothing to log out from, return home.
+        return redirect(url_for('index'))
+    return redirect(url_for('login'))
+
+
 # API Endpoints
 
 @app.route('/')
+@login_required
 def index():
     """Main application page"""
     return render_template('app.html')
 
 
 @app.route('/results')
+@login_required
 def results():
     """Results dashboard page"""
     return render_template('results.html')
