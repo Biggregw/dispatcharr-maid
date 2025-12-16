@@ -35,22 +35,45 @@ app = Flask(__name__)
 
 CORS(app)
 
+_dispatcharr_auth_state = {
+    'authenticated': False,
+    'last_error': None
+}
 
-def verify_dispatcharr_connection():
-    """Ensure Dispatcharr credentials are valid before starting the app."""
+
+# Check authentication lazily on first UI request to avoid crashing when Dispatcharr is temporarily unavailable.
+def _ensure_dispatcharr_ready():
+    """Lazily validate Dispatcharr auth on first UI request to avoid startup crashes."""
+    if _dispatcharr_auth_state['authenticated']:
+        return True, None
+
     try:
         api = DispatcharrAPI()
         api.login()
-        api.get('/api/health')
-        logging.info("Dispatcharr API credentials verified via /api/health")
+        api.fetch_channel_groups()
+        _dispatcharr_auth_state['authenticated'] = True
+        _dispatcharr_auth_state['last_error'] = None
+        return True, None
     except Exception as exc:
-        message = f"Failed to verify Dispatcharr API credentials or connectivity: {exc}"
-        logging.error(message)
-        raise SystemExit(message)
+        _dispatcharr_auth_state['last_error'] = str(exc)
+        logging.error("Dispatcharr authentication check failed: %s", exc)
+        return False, _dispatcharr_auth_state['last_error']
 
 
-# Validate credentials immediately on startup
-verify_dispatcharr_connection()
+def _render_auth_error(error_message):
+    message = error_message or 'Dispatcharr credentials are invalid or unavailable.'
+    return (
+        """<!DOCTYPE html>
+        <html lang='en'>
+        <head><meta charset='utf-8'><title>Dispatcharr Authentication Required</title></head>
+        <body>
+            <h1>Dispatcharr Authentication Required</h1>
+            <p>{message}</p>
+            <p>Please update the Dispatcharr connection details and reload this page.</p>
+        </body>
+        </html>""",
+        503
+    )
 
 # Job management
 jobs = {}  # {job_id: Job}
@@ -578,12 +601,18 @@ def generate_job_summary(config, specific_channel_ids=None):
 @app.route('/')
 def index():
     """Main application page"""
+    auth_ok, auth_error = _ensure_dispatcharr_ready()
+    if not auth_ok:
+        return _render_auth_error(auth_error)
     return render_template('app.html')
 
 
 @app.route('/results')
 def results():
     """Results dashboard page"""
+    auth_ok, auth_error = _ensure_dispatcharr_ready()
+    if not auth_ok:
+        return _render_auth_error(auth_error)
     return render_template('results.html')
 
 
