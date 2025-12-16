@@ -607,6 +607,12 @@ def index():
     return render_template('app.html')
 
 
+@app.route('/health')
+def health_check():
+    """Lightweight health endpoint that does not require Dispatcharr connectivity."""
+    return jsonify({'status': 'ok'}), 200
+
+
 @app.route('/results')
 def results():
     """Results dashboard page"""
