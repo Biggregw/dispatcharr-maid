@@ -56,15 +56,22 @@ class DispatcharrAPI:
                 raise DispatcharrAuthError("No access token found in response")
 
             self.token = token
+            os.environ['DISPATCHARR_TOKEN'] = token
             logging.info("Login successful - token obtained")
             return True
 
         except requests.exceptions.RequestException as exc:
             raise DispatcharrConnectionError(f"Login failed: {exc}") from exc
 
-    def _ensure_token(self):
-        if not self.token:
-            raise DispatcharrAuthError("DISPATCHARR_TOKEN is required for API calls")
+    def _ensure_token(self, allow_login=True):
+        if self.token:
+            return
+
+        if allow_login and self.username and self.password:
+            self.login()
+            return
+
+        raise DispatcharrAuthError("DISPATCHARR_TOKEN is required for API calls")
 
     def _get_headers(self):
         """Get authorization headers"""
@@ -76,29 +83,37 @@ class DispatcharrAPI:
         }
 
     def _request(self, method, endpoint, payload=None, timeout=30):
-        self._ensure_token()
         url = f"{self.base_url}{endpoint}"
+        tried_relogin = False
 
-        try:
-            response = requests.request(
-                method,
-                url,
-                headers=self._get_headers(),
-                json=payload,
-                timeout=timeout
-            )
-        except requests.exceptions.RequestException as exc:
-            raise DispatcharrConnectionError(f"{method.upper()} {url} failed: {exc}") from exc
+        while True:
+            self._ensure_token(allow_login=True)
 
-        if response.status_code in (401, 403):
-            raise DispatcharrAuthError(f"Authentication failed for {method.upper()} {url}")
+            try:
+                response = requests.request(
+                    method,
+                    url,
+                    headers=self._get_headers(),
+                    json=payload,
+                    timeout=timeout
+                )
+            except requests.exceptions.RequestException as exc:
+                raise DispatcharrConnectionError(f"{method.upper()} {url} failed: {exc}") from exc
 
-        try:
-            response.raise_for_status()
-        except requests.exceptions.RequestException as exc:
-            raise DispatcharrConnectionError(f"{method.upper()} {url} failed: {exc}") from exc
+            if response.status_code in (401, 403):
+                if not tried_relogin and self.username and self.password:
+                    logging.info("Authentication failed, attempting to re-login")
+                    tried_relogin = True
+                    self.login()
+                    continue
+                raise DispatcharrAuthError(f"Authentication failed for {method.upper()} {url}")
 
-        return response.json()
+            try:
+                response.raise_for_status()
+            except requests.exceptions.RequestException as exc:
+                raise DispatcharrConnectionError(f"{method.upper()} {url} failed: {exc}") from exc
+
+            return response.json()
 
     def check_status(self):
         """Verify Dispatcharr availability and token validity."""
@@ -109,21 +124,13 @@ class DispatcharrAPI:
         except requests.exceptions.RequestException as exc:
             raise DispatcharrConnectionError(f"Cannot reach Dispatcharr at {self.base_url}: {exc}") from exc
 
-        self._ensure_token()
-
-        auth_url = f"{self.base_url}/api/channels/groups/"
+        # Validate authentication by fetching channel groups (with token auto-refresh)
         try:
-            response = requests.get(auth_url, headers=self._get_headers(), timeout=10)
-        except requests.exceptions.RequestException as exc:
-            raise DispatcharrConnectionError(f"Authenticated check failed: {exc}") from exc
-
-        if response.status_code in (401, 403):
+            self.fetch_channel_groups()
+        except DispatcharrAuthError:
             raise DispatcharrAuthError("Dispatcharr token rejected")
-
-        try:
-            response.raise_for_status()
-        except requests.exceptions.RequestException as exc:
-            raise DispatcharrConnectionError(f"Authenticated check failed: {exc}") from exc
+        except DispatcharrConnectionError:
+            raise
 
         return {'reachable': True, 'authenticated': True}
 
