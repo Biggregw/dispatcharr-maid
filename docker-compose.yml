@@ -5,8 +5,6 @@ services:
     build: .
     container_name: dispatcharr-maid-web
     restart: unless-stopped
-    networks:
-      - dispatcharr_default  # Join existing Dispatcharr network
     ports:
       - "5000:5000"  # Web application port
     volumes:
@@ -24,12 +22,8 @@ services:
       - PYTHONUNBUFFERED=1
     command: python3 dispatcharr_web_app.py
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-
-networks:
-  dispatcharr_default:
-    external: true  # Use the existing network created by Dispatcharr
