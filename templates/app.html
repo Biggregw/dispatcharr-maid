@@ -696,23 +696,6 @@
                 </div>
             </div>
             
-            <div style="margin: 20px 0; padding: 20px; background: #f7fafc; border-radius: 8px; border-left: 4px solid #667eea;">
-                <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #2d3748; font-size: 1.1em;">
-                    🔄 Streams Per Provider
-                </label>
-                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
-                    <input type="number" id="streamsPerProvider" min="1" max="10" value="1" 
-                           style="width: 80px; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1.1em;">
-                    <span style="color: #718096; font-size: 0.95em;">
-                        How many streams to keep per provider (1 = best only, 2 = top 2 from each, etc.)
-                    </span>
-                </div>
-                <div style="padding: 12px; background: #eef2ff; border-left: 3px solid #667eea; border-radius: 4px; font-size: 0.9em; color: #4338ca;">
-                    <strong>Example with 3 providers and value = 2:</strong><br>
-                    Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
-                </div>
-            </div>
-
             <div id="refreshFilters" style="display: none; margin: 20px 0; padding: 20px; background: #fff5f0; border-radius: 8px; border-left: 4px solid #f97316;">
                 <label style="display: block; margin-bottom: 15px; font-weight: 600; color: #2d3748; font-size: 1.1em;">
                     🔍 Channel Refresh Filters (for "Refresh Channel Streams" only)
@@ -777,13 +760,30 @@
                     <span>🔄</span>
                     <span>Refresh Channel Streams</span>
                 </button>
-                
+
                 <button class="action-btn primary" onclick="startJob('full_cleanup')">
                     <span>🚀</span>
                     <span>Quality Check & Cleanup</span>
                 </button>
             </div>
-            
+
+            <div style="margin: 20px 0; padding: 20px; background: #f7fafc; border-radius: 8px; border-left: 4px solid #667eea;">
+                <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #2d3748; font-size: 1.1em;">
+                    🔄 Streams Per Provider
+                </label>
+                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
+                    <input type="number" id="streamsPerProvider" min="1" max="10" value="2"
+                           style="width: 80px; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1.1em;">
+                    <span style="color: #718096; font-size: 0.95em;">
+                        How many streams to keep per provider (1 = best only, 2 = top 2 from each, etc.)
+                    </span>
+                </div>
+                <div style="padding: 12px; background: #eef2ff; border-left: 3px solid #667eea; border-radius: 4px; font-size: 0.9em; color: #4338ca;">
+                    <strong>Example with 3 providers and value = 2:</strong><br>
+                    Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
+                </div>
+            </div>
+
             <div class="nav-buttons">
                 <button class="btn btn-back" onclick="goToStep2()">
                     ← Back to Channels
@@ -1235,7 +1235,7 @@
                     channels: selectedChannels,
                     group_names: groupNames,
                     channel_names: channelNames,
-                    streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 1,
+                    streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
