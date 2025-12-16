@@ -23,6 +23,42 @@
             max-width: 1400px;
             margin: 0 auto;
         }
+
+        .status-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .status-modal {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            max-width: 520px;
+            text-align: center;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+        }
+
+        .status-modal h2 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .status-modal p {
+            color: #4a5568;
+            margin-bottom: 15px;
+        }
+
+        .status-modal .btn {
+            margin-top: 10px;
+        }
         
         .header {
             text-align: center;
@@ -594,6 +630,13 @@
     </style>
 </head>
 <body>
+    <div id="status-overlay" class="status-overlay">
+        <div class="status-modal">
+            <h2 id="status-message">Checking Dispatcharr status...</h2>
+            <p id="status-detail">Please wait while we verify connectivity.</p>
+            <button class="btn btn-next" id="status-retry" onclick="retryStatus()" disabled>Retry</button>
+        </div>
+    </div>
     <div class="container">
         <div class="header">
             <h1>🧹 Dispatcharr Maid</h1>
@@ -842,27 +885,85 @@
         let jobCheckInterval = null;
         let refreshPreviewStreams = [];
         let refreshPreviewMeta = null;
+        let appReady = false;
+        let groupsLoaded = false;
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
-            loadGroups();
+            checkAppStatus();
             loadJobHistory();
-            
+
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
         });
-        
+
+        function updateStatusOverlay(message, detail = '', allowRetry = true) {
+            document.getElementById('status-message').textContent = message;
+            document.getElementById('status-detail').textContent = detail;
+            const retryBtn = document.getElementById('status-retry');
+            retryBtn.disabled = !allowRetry;
+            document.getElementById('status-overlay').classList.remove('hidden');
+        }
+
+        function hideStatusOverlay() {
+            document.getElementById('status-overlay').classList.add('hidden');
+        }
+
+        async function checkAppStatus() {
+            updateStatusOverlay('Checking Dispatcharr status...', 'Please wait while we verify connectivity.', false);
+
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+
+                if (response.status === 200 && data.reachable && data.authenticated) {
+                    appReady = true;
+                    hideStatusOverlay();
+
+                    if (!groupsLoaded) {
+                        await loadGroups();
+                        groupsLoaded = true;
+                    }
+                    return;
+                }
+
+                appReady = false;
+                if (response.status === 503 || data.reachable === false) {
+                    updateStatusOverlay('Dispatcharr must be installed and running', data.error || 'Start Dispatcharr and try again.', true);
+                } else if (response.status === 401 || data.authenticated === false) {
+                    updateStatusOverlay('Authentication required, provide a valid token', data.error || 'Set a valid DISPATCHARR_TOKEN and reload.', true);
+                } else {
+                    updateStatusOverlay('Unable to verify Dispatcharr', data.error || 'Unexpected error occurred.', true);
+                }
+            } catch (error) {
+                appReady = false;
+                updateStatusOverlay('Dispatcharr must be installed and running', error.message, true);
+            }
+        }
+
+        function retryStatus() {
+            checkAppStatus();
+        }
+
+        function requireAppReady() {
+            if (appReady) return true;
+            checkAppStatus();
+            return false;
+        }
+
         // Load channel groups
         async function loadGroups() {
+            if (!requireAppReady()) return;
             try {
                 const response = await fetch('/api/groups');
                 const data = await response.json();
-                
+
                 if (data.success) {
                     allGroups = data.groups;
                     renderGroups();
                     document.getElementById('group-loading').classList.add('hidden');
                     document.getElementById('group-container').classList.remove('hidden');
+                    groupsLoaded = true;
                 } else {
                     showError('group-error', data.error);
                 }
@@ -921,7 +1022,7 @@
         // Go to step 2
         async function goToStep2() {
             if (selectedGroups.length === 0) return;
-            
+
             // Update step indicators
             document.getElementById('step-indicator-1').classList.remove('active');
             document.getElementById('step-indicator-1').classList.add('completed');
@@ -941,9 +1042,10 @@
             // Load channels
             await loadChannels();
         }
-        
+
         // Load channels for selected groups
         async function loadChannels() {
+            if (!requireAppReady()) return;
             try {
                 document.getElementById('channel-loading').classList.remove('hidden');
                 document.getElementById('channel-container').classList.add('hidden');
@@ -1156,6 +1258,7 @@
         }
 
         async function showRefreshPreview() {
+            if (!requireAppReady()) return;
             if (!selectedChannels || selectedChannels.length !== 1) {
                 alert('Please select exactly 1 channel to refresh.');
                 return;
@@ -1203,6 +1306,7 @@
 
         // Start a job
         async function startJob(jobType, selectedStreamIds = null) {
+            if (!requireAppReady()) return;
             try {
                 // Get group names
                 const groupNames = selectedGroups.map(id => {
