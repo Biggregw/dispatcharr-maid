@@ -115,21 +115,19 @@ You should see the Dispatcharr Maid dashboard!
 
 ### Run Analysis Jobs
 
-#### It's recommended you select one Group and one Channel below as this allows a refresh from your providers in a later step
+#### It's recommended you select one Group and one Channel to work on each time
 
-Navigate to:
+#### Navigate to:
 http://YOUR-SERVER-IP:5000
 
-Select your groups:
+#### Select your groups:
 
 A check has been made to list all Groups that exist in the channels within Dispatcharr.
-
 You will be presented with each of these groups and can tick a single group or multiples.
-
 It's recommended to select a single group to make best use of functionality.
 
 
-Then click Select Channels
+#### Then click Select Channels
 
 All channels that exist in the groups selected will now be displayed.
 
@@ -137,7 +135,7 @@ Select the channel(s) you want - for example BBC One
 
 Again it's recommended you select a single channel.
 
-Then click Run Jobs
+#### Then click Run Jobs
 
 If you are running for a single channel eg BBC 1 you now will see at the top of the screen an option to apply filters.
 
@@ -149,7 +147,7 @@ You have the option to force inclide or exclude certain strings - so for example
 
 There's a tick box that can be used to exclude 3840 x 2160 streams which may struggle on some hardware. By default it's ticked but you can untick.
 
-Then click Refresh Channel Streams
+#### Then click Refresh Channel Streams
 
 A box will appear where matching streams are queried and shown
 
@@ -168,7 +166,7 @@ At this point these streams have all been added to your channel in Dispatcharr.
 
 Alter the streams per provider box to represent how many streams from each provider you want to remain in your channel. It defaults to 2.
 
-You can now click the Quality Check & Cleanup button.
+#### You can now click the Quality Check & Cleanup button.
 
 This will do a full probe of each stream and score them before leaving the best quality ones in your channel.
 
