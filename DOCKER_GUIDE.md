@@ -161,10 +161,10 @@ A preview box will be presented where you can untick any streams you dont want a
 
 Leave the streams you want adding selected and click **Add Selected Streams**
 
-1. You will see the Current Job section lower down give a message to say it's searching for the streams.
-2. Wait for this to display results which will show you how many matching streams were found.
-3. At this point these streams have all been added to your channel in Dispatcharr.
-4. Alter the streams per provider box to represent how many streams from each provider you want to remain in your channel (default 2).
+- You will see the Current Job section lower down give a message to say it's searching for the streams.
+- Wait for this to display results which will show you how many matching streams were found.
+- At this point these streams have all been added to your channel in Dispatcharr.
+- Alter the streams per provider box to represent how many streams from each provider you want to remain in your channel (default 2).
 
 
 #### Click the Quality Check & Cleanup button (optional but recommended)
@@ -173,8 +173,8 @@ This will do a full probe of each stream and score them before leaving the best 
 
 Your channel will be cleansed and ranked to allow Dispatchrr to work with your best stream first and move to fallbacks in the sequence below:
 
-1. Example with 3 providers and value = 2:
-2. Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
+- Example with 3 providers and value = 2:
+-  Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
 
 The web dashboard updates every 2 seconds with:
 - Live progress bar
@@ -187,13 +187,10 @@ You have now added all streams from all providers to the channel you selected, r
 
 Each of these streams has then been tested for quality and speed, then based on your selection your channel should now contain the optimal streams in the optimal order:
 
-Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
-
-When streaming now dispatcharr will start with Provider A #1 which is your preferred stream, if this fails it will fallback to your next best ranked provider B #1 stream.
-
-When all of the top streams from each provider have been exhausted it will select the best ranking 2nd place provider first etc.
-
-The theory is you can quickly optimize your setup.
+- Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
+- When streaming now dispatcharr will start with Provider A #1 which is your preferred stream, if this fails it will fallback to your next best ranked provider B #1 stream.
+- When all of the top streams from each provider have been exhausted it will select the best ranking 2nd place provider first etc.
+- The theory is you can quickly optimize your setup.
 
 
 ### View Logs
