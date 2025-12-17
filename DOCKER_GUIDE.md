@@ -39,7 +39,7 @@ unzip Dispatcharr_Maid.zip
 mv dispatcharr-maid-main dispatcharr-maid
 cd dispatcharr-maid
 ls
-
+```
 # You should now see files such as
 Dockerfile
 docker-compose.yml
