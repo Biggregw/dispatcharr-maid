@@ -2,6 +2,8 @@
 services:
   # Interactive Web Application (always running)
   dispatcharr-maid-web:
+    networks:
+      - dispatcharr_default
     build: .
     container_name: dispatcharr-maid-web
     restart: unless-stopped
@@ -27,3 +29,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+
+networks:
+  dispatcharr_default:
+    external: true
