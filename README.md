@@ -42,3 +42,5 @@ Installation
 Dispatcharr-Maid is designed to run as a self-hosted Docker service.
 
 Refer to DOCKER_GUIDE.md for installation and startup instructions.
+[Docker Deployment Guide](DOCKER_GUIDE.md)
+
