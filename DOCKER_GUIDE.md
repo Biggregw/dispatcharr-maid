@@ -54,8 +54,6 @@ requirements.txt
 
 
 ### Step 2: Configure Credentials
-
-```bash
 # Copy template
 cp .env.template .env
 
