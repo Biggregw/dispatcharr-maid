@@ -1,285 +1,484 @@
-Dispatcharr-Maid
+# Dispatcharr Maid - Docker Deployment Guide
 
-Docker Deployment Guide (GitHub Clone, First-Time User)
+## 🐳 What This Does
 
-What this does
+Runs Dispatcharr Maid in Docker containers that:
+- ✅ **Connect to your existing Dispatcharr** on the same network
+- ✅ **Persist data** (CSV files, logs, config)
+- ✅ **Web monitor always available** on port 5000
+- ✅ **Run CLI on-demand** when you need to analyze
+- ✅ **Auto-restart** with your server
+- ✅ **Managed via Portainer** (you already have it!)
 
-Dispatcharr-Maid runs as Docker containers that:
+---
 
-• Connect to an existing Dispatcharr instance on the same Docker network
-• Persist data such as CSV files, logs, and config on the host
-• Expose a web monitor on port 5000
-• Provide a CLI container for on-demand analysis
-• Automatically restart unless manually stopped
+## 📋 Prerequisites
 
-Dispatcharr-Maid does not provide streams or content. It operates only on data already configured in Dispatcharr.
+- Docker and docker-compose installed ✅ (you have this)
+- Dispatcharr running ✅ (you have this)
+- Your Dispatcharr credentials
 
-Prerequisites
+---
 
-Before starting, you must have:
+## 🚀 Quick Start
 
-• Docker installed
-• Docker Compose available (docker compose or docker-compose)
-• Dispatcharr already running in Docker
-• Dispatcharr credentials
+### Step 1: Setup Files
 
-Important assumptions used by this guide:
+```bash
+# Create directory
+mkdir -p ~/dispatcharr-maid
+cd ~/dispatcharr-maid
 
-• Dispatcharr is reachable on the Docker network by the container name dispatcharr
-• Dispatcharr listens on port 9191 inside Docker
+# Extract the Dispatcharr_Maid.zip here
+# You should have these files:
+# - Dockerfile
+# - docker-compose.yml
+# - api_utils.py
+# - stream_analysis.py
+# - interactive_maid.py
+# - web_monitor.py
+# - templates/
+# - config.yaml
+# - .env.template
+# - requirements.txt
+```
 
-If your Dispatcharr container uses a different name or port, you must adjust the .env file accordingly.
+### Step 2: Configure Credentials
 
-Step 1. Clone the repository
-
-On the machine where Docker is running:
-
-git clone https://github.com/Biggregw/dispatcharr-maid.git
-cd dispatcharr-maid
-
-Correct behaviour
-
-• The repository clones without errors
-• You are now in the project root directory
-
-You should see files such as:
-
-• Dockerfile
-• docker-compose.yml
-• api_utils.py
-• interactive_maid.py
-• web_monitor.py
-• config.yaml
-• .env.template
-• requirements.txt
-• csv/ (may be empty or created later)
-• logs/ (may be empty or created later)
-
-Screenshot worth capturing
-
-• Terminal showing the successful clone
-• ls output in the repo root
-
-Step 2. Configure Dispatcharr credentials
-
-Copy the environment template:
-
+```bash
+# Copy template
 cp .env.template .env
 
-
-Edit the file:
-
+# Edit with your Dispatcharr credentials
 nano .env
+```
 
+**Important:** The `.env` file should look like this:
 
-The file should look like this:
-
+```ini
+# Since we're on the same Docker network, use container name!
 DISPATCHARR_BASE_URL=http://dispatcharr:9191
 DISPATCHARR_USER=admin
 DISPATCHARR_PASS=your_actual_password
 DISPATCHARR_TOKEN=
+```
 
+**Key point:** Use `http://dispatcharr:9191` (the container name), not `localhost` or an IP!
 
-Key points:
+### Step 3: Build and Start
 
-• Use the container name dispatcharr, not localhost
-• Port 9191 must match your Dispatcharr container
-• DISPATCHARR_TOKEN is optional and may be left empty
-
-Save and exit nano.
-
-Correct behaviour
-
-• .env file exists in the repo root
-• Credentials are set correctly
-
-Screenshot worth capturing
-
-• .env file open in nano, with secrets redacted
-
-Step 3. Build and start the containers
-
-From the repository root:
-
+```bash
+# Build the containers
 docker-compose build
+
+# Start everything
 docker-compose up -d
 
-
-Check container status:
-
+# Check they're running
 docker-compose ps
+```
 
-
-You should see output similar to:
-
+You should see:
+```
 NAME                    STATUS              PORTS
-dispatcharr-maid        Up
+dispatcharr-maid        Up                  
 dispatcharr-maid-web    Up (healthy)        0.0.0.0:5000->5000/tcp
+```
 
-Correct behaviour
+### Step 4: Access Web Monitor
 
-• Both containers start
-• dispatcharr-maid-web reports healthy
-• No immediate errors in logs
-
-If docker-compose is not available, use docker compose instead.
-
-Screenshot worth capturing
-
-• docker-compose ps output showing both containers running
-
-Step 4. Access the web monitor
-
-Open a browser and navigate to:
-
+Open in your browser:
+```
 http://YOUR-SERVER-IP:5000
+```
 
+You should see the Dispatcharr Maid dashboard!
 
-Replace YOUR-SERVER-IP with the IP or hostname of your Docker host.
+---
 
-Correct behaviour
+## 🎯 How to Use
 
-• The Dispatcharr-Maid dashboard loads
-• The page refreshes automatically
-• No authentication prompt appears
+### Run Analysis Jobs
 
-Screenshot worth capturing
+**Method 1: Interactive Mode (Recommended)**
 
-• First successful dashboard load
-
-Step 5. Run analysis jobs
-Method 1. Interactive mode (recommended)
-
-Start an interactive session:
-
+```bash
+# Start interactive session
 docker-compose exec dispatcharr-maid python3 interactive_maid.py
 
+# You'll see the menu:
+# 1. Full pipeline + cleanup
+# 2. Full pipeline
+# etc...
 
-You should see a menu similar to:
+# Select your groups and run!
+```
 
-1. Full pipeline + cleanup
-2. Full pipeline
-...
+**Method 2: Direct Commands**
 
+```bash
+# Fetch only
+docker-compose exec dispatcharr-maid python3 interactive_maid.py
 
-Follow the prompts to select groups and run analysis.
-
-Method 2. Direct execution
-
-You can also exec directly:
-
+# Or use docker exec directly
 docker exec -it dispatcharr-maid python3 interactive_maid.py
+```
 
-Correct behaviour
+### Monitor Progress
 
-• Menu appears immediately
-• No authentication errors
-• Group selection works
-
-Screenshot worth capturing
-
-• Interactive menu in the terminal
-
-Monitoring progress
-
-While analysis is running, open:
-
+While analysis is running, just open:
+```
 http://YOUR-SERVER-IP:5000
+```
 
+The web dashboard updates every 2 seconds with:
+- Live progress bar
+- Streams processed/failed
+- ETA
+- Last run statistics
 
-The dashboard updates automatically and shows:
+### View Logs
 
-• Progress bar
-• Streams processed and failed
-• Estimated time remaining
-• Last run statistics
-
-Viewing logs
+```bash
+# Web monitor logs
 docker-compose logs -f dispatcharr-maid-web
+
+# Main container logs
 docker-compose logs -f dispatcharr-maid
+
+# All logs
 docker-compose logs -f
+```
 
-Correct behaviour
+### Access Data Files
 
-• Logs stream without errors
-• Activity appears during analysis runs
+All your CSV files and logs are in the local folders:
 
-Accessing data files
+```bash
+cd ~/dispatcharr-maid
 
-All persistent data lives in the cloned repository directory.
-
+# CSV files
 ls -lh csv/
+
+# Logs and checkpoints
 ls -lh logs/
+
+# Config
 cat config.yaml
+```
 
+These folders are **mounted into the containers**, so data persists even if you recreate containers.
 
-These directories are bind-mounted into the containers.
+---
 
-Correct behaviour
+## 🔧 Container Management
 
-• Files appear after analysis runs
-• Files remain after container restarts
+### Start/Stop
 
-Container management
+```bash
+# Start all services
 docker-compose up -d
+
+# Stop all services
 docker-compose down
+
+# Restart all services
 docker-compose restart
+
+# Stop just the CLI (keep web monitor running)
 docker-compose stop dispatcharr-maid
+
+# Start just the CLI
 docker-compose start dispatcharr-maid
+```
 
-Updating Dispatcharr-Maid
+### Update
 
-From the repo root:
+```bash
+# Pull latest code
+cd ~/dispatcharr-maid
+# (extract new Dispatcharr_Maid.zip)
 
-git pull
+# Rebuild containers
 docker-compose build
-docker-compose up -d
 
-Troubleshooting
-Containers will not start
+# Restart with new version
+docker-compose up -d
+```
+
+### View Status
+
+```bash
+# Check container status
+docker-compose ps
+
+# Check resource usage
+docker stats dispatcharr-maid dispatcharr-maid-web
+
+# Check network connectivity
+docker exec dispatcharr-maid ping -c 3 dispatcharr
+```
+
+---
+
+## 🌐 Network Architecture
+
+```
+dispatcharr_default network (172.18.0.0/16)
+├── dispatcharr (172.18.0.3:9191)
+├── dispatcharr-redis (172.18.0.2:6379)
+├── dispatcharr-maid (auto-assigned IP)
+└── dispatcharr-maid-web (auto-assigned IP)
+    └── Exposed on host: 0.0.0.0:5000
+```
+
+All containers can communicate by name:
+- `dispatcharr-maid` → `http://dispatcharr:9191` ✅
+- `dispatcharr` → `dispatcharr-redis:6379` ✅
+
+---
+
+## 📦 Using Portainer
+
+You already have Portainer running! Here's how to manage Dispatcharr Maid through it:
+
+1. **Open Portainer:** `http://YOUR-SERVER-IP:9000`
+2. **Go to Containers**
+3. **Find:**
+   - `dispatcharr-maid` (CLI container)
+   - `dispatcharr-maid-web` (Web monitor)
+
+**From Portainer you can:**
+- ✅ Start/stop containers
+- ✅ View logs in real-time
+- ✅ Access console (exec into container)
+- ✅ Check resource usage
+- ✅ Restart containers
+
+**To run analysis from Portainer:**
+1. Click on `dispatcharr-maid` container
+2. Click "Console"
+3. Select "Custom" → enter `/bin/bash`
+4. Click "Connect"
+5. Run: `python3 interactive_maid.py`
+
+---
+
+## 🔍 Troubleshooting
+
+### Container won't start
+
+```bash
+# Check logs
 docker-compose logs dispatcharr-maid
 
+# Common issues:
+# - .env file missing
+# - Wrong network name
+# - Port conflict
+```
 
-Common causes:
+### Can't connect to Dispatcharr
 
-• Missing .env file
-• Incorrect Dispatcharr URL
-• Network name mismatch
-
-Cannot connect to Dispatcharr
+```bash
+# Test network connectivity
 docker exec dispatcharr-maid ping dispatcharr
+
+# Check .env has correct URL
 docker exec dispatcharr-maid cat .env
 
-Web monitor not accessible
+# Should show: DISPATCHARR_BASE_URL=http://dispatcharr:9191
+```
+
+### Web monitor not accessible
+
+```bash
+# Check if it's running
 docker-compose ps dispatcharr-maid-web
+
+# Check if port 5000 is available
 sudo netstat -tlnp | grep 5000
+
+# View web monitor logs
 docker-compose logs dispatcharr-maid-web
+```
 
-Data persistence
+### Data not persisting
 
-The following host paths are mounted into containers:
+```bash
+# Check volumes are mounted
+docker inspect dispatcharr-maid | grep -A 10 Mounts
 
-Host path	Container path	Purpose
-./csv/	/app/csv/	CSV output
-./logs/	/app/logs/	Logs and checkpoints
-./config.yaml	/app/config.yaml	Configuration
-./.env	/app/.env	Credentials
+# Make sure you're in the right directory
+pwd  # Should be ~/dispatcharr-maid
 
-Data persists across container restarts and rebuilds.
+# Check local folders exist
+ls -la csv/ logs/
+```
 
-Auto-start behaviour
+---
 
-Containers use restart: unless-stopped:
+## 💾 Data Persistence
 
-• Restart on reboot
-• Restart on crash
-• Do not restart if manually stopped
+The following folders are **bind-mounted** from your host to the containers:
 
-End of first-time setup
+| Host Path | Container Path | Purpose |
+|-----------|----------------|---------|
+| `./csv/` | `/app/csv/` | All CSV data files |
+| `./logs/` | `/app/logs/` | Logs and checkpoints |
+| `./config.yaml` | `/app/config.yaml` | Configuration |
+| `./.env` | `/app/.env` | Credentials |
 
-At this point:
+**This means:**
+- ✅ Data survives container restarts
+- ✅ You can view files directly on host
+- ✅ Easy to backup (just backup these folders)
+- ✅ Easy to edit config (edit local file, restart container)
 
-• Containers are running
-• Web monitor is accessible
-• Interactive analysis works
-• Data persists correctly
+---
+
+## 🔄 Auto-Start on Boot
+
+The `restart: unless-stopped` policy means:
+- ✅ Containers auto-start when server reboots
+- ✅ Auto-restart if they crash
+- ✅ Won't restart if you manually stop them
+
+To prevent auto-start:
+```bash
+# Change restart policy
+docker update --restart=no dispatcharr-maid-web
+```
+
+---
+
+## 🎛️ Advanced Configuration
+
+### Change Web Monitor Port
+
+Edit `docker-compose.yml`:
+
+```yaml
+ports:
+  - "8080:5000"  # Access on port 8080 instead of 5000
+```
+
+Then: `docker-compose up -d`
+
+### Resource Limits
+
+Edit `docker-compose.yml`:
+
+```yaml
+services:
+  dispatcharr-maid:
+    # ... existing config ...
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '2.0'
+          memory: 2G
+```
+
+### Run Analysis on a Schedule
+
+Use cron to trigger analysis:
+
+```bash
+# Edit crontab
+crontab -e
+
+# Add this line (run daily at 2am):
+0 2 * * * docker exec dispatcharr-maid python3 -c "from stream_analysis import *; from api_utils import *; config = Config(); api = DispatcharrAPI(); api.login(); fetch_streams(api, config); analyze_streams(config); score_streams(api, config); reorder_streams(api, config)" >> /var/log/dispatcharr-maid-cron.log 2>&1
+```
+
+---
+
+## 🎯 Nginx Proxy Manager Integration
+
+You already have Nginx Proxy Manager! You can add HTTPS access to the web monitor:
+
+1. **Open NPM:** `http://YOUR-SERVER-IP:81`
+2. **Add Proxy Host:**
+   - Domain: `maid.yourdomain.com` (or use local domain)
+   - Forward to: `dispatcharr-maid-web`
+   - Port: `5000`
+3. **Enable SSL** (if you have a domain)
+
+Now access via: `https://maid.yourdomain.com`
+
+---
+
+## 📊 Comparison: Docker vs. Manual
+
+| Aspect | Manual (venv) | Docker |
+|--------|---------------|--------|
+| Setup | `python3 -m venv`, `source activate` | `docker-compose up -d` |
+| Dependencies | Manual pip install | Automatic |
+| Updates | Pull code, reinstall deps | Rebuild image |
+| Persistence | Local files | Mounted volumes |
+| Auto-start | Manual/systemd | Built-in |
+| Isolation | System Python | Containerized |
+| Portability | Environment-dependent | Portable |
+| Management | CLI only | CLI + Portainer |
+
+**Docker wins for:**
+- ✅ Easier management
+- ✅ Better isolation
+- ✅ Auto-restart
+- ✅ Consistent environment
+
+---
+
+## 🚀 Next Steps
+
+1. **Start using it:**
+   ```bash
+   docker-compose up -d
+   docker-compose exec dispatcharr-maid python3 interactive_maid.py
+   ```
+
+2. **Access dashboard:**
+   ```
+   http://YOUR-SERVER-IP:5000
+   ```
+
+3. **Monitor via Portainer:**
+   ```
+   http://YOUR-SERVER-IP:9000
+   ```
+
+4. **Optional: Add to Nginx Proxy Manager** for HTTPS
+
+---
+
+## 🆘 Getting Help
+
+**Check container logs:**
+```bash
+docker-compose logs -f
+```
+
+**Test Dispatcharr connection:**
+```bash
+docker exec dispatcharr-maid python3 -c "from api_utils import *; api = DispatcharrAPI(); api.login(); print('✓ Connected!')"
+```
+
+**Verify files are mounted:**
+```bash
+docker exec dispatcharr-maid ls -la /app/csv /app/logs
+```
+
+**Rebuild from scratch:**
+```bash
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+```
+
+---
+
+Enjoy your Dockerized Dispatcharr Maid! 🎉🐳
