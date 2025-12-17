@@ -52,7 +52,6 @@ config.yaml
 .env.template
 requirements.txt
 
-```
 
 ### Step 2: Configure Credentials
 
