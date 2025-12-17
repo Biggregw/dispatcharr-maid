@@ -40,17 +40,17 @@ mv dispatcharr-maid-main dispatcharr-maid
 cd dispatcharr-maid
 ls
 ```
-#### You should now see files such as
-Dockerfile
-docker-compose.yml
-api_utils.py
-stream_analysis.py
-interactive_maid.py
-web_monitor.py
-templates/
-config.yaml
-.env.template
-requirements.txt
+#### You should now see files such as:
+- Dockerfile
+- docker-compose.yml
+- api_utils.py
+- stream_analysis.py
+- interactive_maid.py
+- web_monitor.py
+- templates/
+- config.yaml
+- .env.template
+- requirements.txt
 
 
 ### Step 2: Configure Credentials
