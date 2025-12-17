@@ -8,14 +8,14 @@ Runs Dispatcharr Maid in Docker containers that:
 - ✅ **Web monitor always available** on port 5000
 - ✅ **Run CLI on-demand** when you need to analyze
 - ✅ **Auto-restart** with your server
-- ✅ **Managed via Portainer** (you already have it!)
+- ✅ **Managed via Portainer**  (optional)
 
 ---
 
 ## 📋 Prerequisites
 
-- Docker and docker-compose installed ✅ (you have this)
-- Dispatcharr running ✅ (you have this)
+- Docker and docker-compose installed ✅ 
+- Dispatcharr running ✅ 
 - Your Dispatcharr credentials
 
 ---
@@ -271,9 +271,9 @@ docker exec dispatcharr-maid ping -c 3 dispatcharr
 ## 🌐 Network Architecture
 
 ```
-dispatcharr_default network (172.18.0.0/16)
-├── dispatcharr (172.18.0.3:9191)
-├── dispatcharr-redis (172.18.0.2:6379)
+dispatcharr_default network 
+├── dispatcharr 
+├── dispatcharr-redis 
 ├── dispatcharr-maid (auto-assigned IP)
 └── dispatcharr-maid-web (auto-assigned IP)
     └── Exposed on host: 0.0.0.0:5000
@@ -446,7 +446,7 @@ crontab -e
 
 ## 🎯 Nginx Proxy Manager Integration
 
-You already have Nginx Proxy Manager! You can add HTTPS access to the web monitor:
+You can add HTTPS access to the web monitor:
 
 1. **Open NPM:** `http://YOUR-SERVER-IP:81`
 2. **Add Proxy Host:**
