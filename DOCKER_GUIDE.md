@@ -124,43 +124,33 @@ http://YOUR-SERVER-IP:5000
 
 A check has been made to list all Groups that exist in the channels within Dispatcharr. This isn't all groups from your provider.
 
-You will be presented with each of these groups and can tick a single group or multiples.
-
-It's recommended to tick a single group to make best use of functionality.
-
-The group(s) you have selected will be examined in the next step.
+- You will be presented with each of these groups and can tick a single group or multiples.
+- It's recommended to tick a single group to make best use of functionality.
+- The group(s) you have selected will be examined in the next step.
 
 
 #### Click Select Channels
 
-All channels that exist in the groups selected will now be displayed.
+- All channels that exist in the groups selected will now be displayed.
+- Select the channel(s) you want - for example BBC One
+- Again it's recommended you select a single channel.
 
-Select the channel(s) you want - for example BBC One
+#### Click Run Jobs 
 
-Again it's recommended you select a single channel.
-
-#### Click Run Jobs
-
-If you are running for a single channel eg BBC 1 you now will see at the top of the screen an option to apply filters.
-
-The base search field is your channel name but can be altered (so for example I could change BBC One to BBC 1)
-
-This is the search term that will be used to look for matching streams from all of your providers.
-
-You have the option to force inclide or exclude certain strings - so for example I may want BBC One Yorkshire but not BBC One Yorkshire and LIncolnshire so I would include york* and exclude linc*
-
-There's a tick box that can be used to exclude 3840 x 2160 streams which may struggle on some hardware. By default it's ticked but you can untick.
+- If you are running for a single channel eg BBC 1 you now will see at the top of the screen an option to apply filters.
+- The base search field is your channel name but can be altered (so for example I could change BBC One to BBC 1)
+- This is the search term that will be used to look for matching streams from all of your providers.
+- You have the option to force inclide or exclude certain strings - so for example I may want BBC One Yorkshire but not BBC One Yorkshire and LIncolnshire so I would include york* and exclude linc*
+- There's a tick box that can be used to exclude 3840 x 2160 streams which may struggle on some hardware. By default it's ticked but you can untick.
 
 #### Click Refresh Channel Streams
 
-A box will appear where matching streams are queried and shown
+- A box will appear where matching streams are queried and shown
+- Allow this time to run and present the results
+- A preview box will be presented where you can untick any streams you dont want adding to your channel in Dispatcharr if your filtering wasn#t quite correct.
 
-Allow this time to run and present the results
-
-A preview box will be presented where you can untick any streams you dont want adding to your channel in Dispatcharr if your filtering wasn#t quite correct.
-
-Leave the streams you want adding selected and click **Add Selected Streams**
-
+#### Leave the streams you want adding selected and click **Add Selected S treams**
+ 
 - You will see the Current Job section lower down give a message to say it's searching for the streams.
 - Wait for this to display results which will show you how many matching streams were found.
 - At this point these streams have all been added to your channel in Dispatcharr.
