@@ -61,8 +61,10 @@ requirements.txt
 ```bash
 cp .env.example .env
 nano .env
+---
 
 **Important:** The `.env` file should look like this:
+
 ```ini
 # Since we're on the same Docker network, use container name!
 DISPATCHARR_BASE_URL=http://dispatcharr:9191
