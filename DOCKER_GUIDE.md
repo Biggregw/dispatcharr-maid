@@ -82,6 +82,11 @@ docker-compose build
 # Start everything
 docker-compose up -d
 
+# Ingore the WARNING - this is a known bug with no impact and will be fixed in a future release
+WARNING: The xxxxxxxxx variable is not set. Defaulting to a blank string.
+WARNING: The xxxxxxxxxxxxxx variable is not set. Defaulting to a blank string.
+# Containers still start successfully
+
 # Check they're running
 docker-compose ps
 ```
