@@ -37,3 +37,8 @@ Dispatcharr-Maid also supports configurable stream depth per provider:
 
 Streams are ordered so the best stream from each provider appears first, followed by the second-best stream from each provider. This ordering aligns with Dispatcharr’s playback behaviour, allowing it to attempt the highest-quality stream from each provider before falling back to lower-ranked alternatives.
 
+Installation
+------------
+Dispatcharr-Maid is designed to run as a self-hosted Docker service.
+
+Refer to DOCKER_GUIDE.md for installation and startup instructions.
