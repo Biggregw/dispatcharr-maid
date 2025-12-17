@@ -70,8 +70,10 @@ DISPATCHARR_USER=admin
 DISPATCHARR_PASS=your_actual_password
 DISPATCHARR_TOKEN=
 ```
+**Key points:** Use `http://dispatcharr:9191` (the container name), not `localhost` or an IP!
+Dispatcharr-Maid must run on the same Docker network as Dispatcharr.
+The provided docker-compose.yml attaches the service to the existing dispatcharr_default network, which must already exist.
 
-**Key point:** Use `http://dispatcharr:9191` (the container name), not `localhost` or an IP!
 
 ### Step 3: Build and Start
 
