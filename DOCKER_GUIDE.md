@@ -35,9 +35,10 @@ wget https://github.com/Biggregw/dispatcharr-maid/archive/refs/heads/main.zip -O
 # Extract the Dispatcharr_Maid.zip
 unzip Dispatcharr_Maid.zip
 
-# Move the extracted files into the current directory
-mv dispatcharr-maid-main/* .
-rmdir dispatcharr-maid-main
+# Move the files to the directory
+mv dispatcharr-maid-main dispatcharr-maid
+cd dispatcharr-maid
+ls
 
 # You should now see files such as
 Dockerfile
