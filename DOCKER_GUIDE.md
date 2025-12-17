@@ -57,6 +57,8 @@ requirements.txt
 ### Step 2: Configure Credentials
 
 #### Edit with your Dispatcharr credentials
+
+```bash
 cp .env.example .env
 nano .env
 
