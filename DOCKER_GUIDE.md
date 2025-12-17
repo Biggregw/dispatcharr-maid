@@ -56,12 +56,12 @@ requirements.txt
 
 ### Step 2: Configure Credentials
 
-#### Edit with your Dispatcharr credentials
+#### Edit the env file with your Dispatcharr credentials
 
 ```bash
 cp .env.example .env
 nano .env
----
+```
 
 **Important:** The `.env` file should look like this:
 
