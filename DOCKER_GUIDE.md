@@ -55,7 +55,7 @@ requirements.txt
 
 ### Step 2: Configure Credentials
 # Copy template
-cp .env.template .env
+cp .env.example .env
 
 # Edit with your Dispatcharr credentials
 nano .env
