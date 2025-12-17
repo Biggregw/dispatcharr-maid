@@ -115,10 +115,15 @@ You should see the Dispatcharr Maid dashboard!
 
 ### Run Analysis Jobs
 # It's recommended you select one Group and one Channel below as this allows a refresh from your providers in a later step
+
 http://YOUR-SERVER-IP:5000
+
 Select your groups:
+
 A check has been made to list all Groups that exist in the channels within Dispatcharr.
+
 You will be presented with each of these groups and can tick a single group or multiples.
+
 It's recommended to select a single group to make best use of functionality.
 
 
@@ -127,32 +132,46 @@ Then click Select Channels
 All channels that exist in the groups selected will now be displayed.
 
 Select the channel(s) you want - for example BBC One
+
 Again it's recommended you select a single channel.
+
 Then click Run Jobs
 
 If you are running for a single channel eg BBC 1 you now will see at the top of the screen an option to apply filters.
+
 The base search field is your channel name but can be altered (so for example I could change BBC One to BBC 1)
+
 This is the search term that will be used to look for matching streams from all of your providers.
+
 You have the option to force inclide or exclude certain strings - so for example I may want BBC One Yorkshire but not BBC One Yorkshire and LIncolnshire so I would include york* and exclude linc*
 
 There's a tick box that can be used to exclude 3840 x 2160 streams which may struggle on some hardware. By default it's ticked but you can untick.
 
 Then click Refresh Channel Streams
-A box will appear where mayching streams are queried and shown
+
+A box will appear where matching streams are queried and shown
+
 Allow this time to run and present the results
+
 A preview box will be presented where you can untick any streams you dont want adding to your channel in Dispatcharr if your filtering wasn#t quite correct.
+
 Leave the streams you want adding selected and click Add Selected Streams
 
 You will see the Current Job section lower down give a message to say it's searching for the streams.
+
 Wait for this to display results which will show you how many matching streams were found.
 
 At this point these streams have all been added to your channel in Dispatcharr.
 
 
 Alter the streams per provider box to represent how many streams from each provider you want to remain in your channel. It defaults to 2.
+
 You can now click the Quality Check & Cleanup button.
+
 This will do a full probe of each stream and score them before leaving the best quality ones in your channel.
+
 Your channel will be cleansed and ranked to allow Dispatchrr to work with your best stream first and move to fallbacks in the sequence below:
+
 Example with 3 providers and value = 2:
 Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
 
