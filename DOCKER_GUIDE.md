@@ -29,19 +29,28 @@ Runs Dispatcharr Maid in Docker containers that:
 mkdir -p ~/dispatcharr-maid
 cd ~/dispatcharr-maid
 
-# Extract the Dispatcharr_Maid.zip here
-# You should have these files:
-# - Dockerfile
-# - docker-compose.yml
-# - api_utils.py
-# - stream_analysis.py
-# - interactive_maid.py
-# - web_monitor.py
-# - templates/
-# - config.yaml
-# - .env.template
-# - requirements.txt
-```
+# Download the latest Dispatcharr-Maid release zip from GitHub
+wget https://github.com/Biggregw/dispatcharr-maid/archive/refs/heads/main.zip -O Dispatcharr_Maid.zip
+
+# Extract the Dispatcharr_Maid.zip
+unzip Dispatcharr_Maid.zip
+
+# Move the extracted files into the current directory
+mv dispatcharr-maid-main/* .
+rmdir dispatcharr-maid-main
+
+# You should now see files such as
+Dockerfile
+docker-compose.yml
+api_utils.py
+stream_analysis.py
+interactive_maid.py
+web_monitor.py
+templates/
+config.yaml
+.env.template
+requirements.txt
+
 
 ### Step 2: Configure Credentials
 
