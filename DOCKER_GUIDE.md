@@ -114,8 +114,10 @@ You should see the Dispatcharr Maid dashboard!
 ## 🎯 How to Use
 
 ### Run Analysis Jobs
-# It's recommended you select one Group and one Channel below as this allows a refresh from your providers in a later step
 
+#### It's recommended you select one Group and one Channel below as this allows a refresh from your providers in a later step
+
+Navigate to:
 http://YOUR-SERVER-IP:5000
 
 Select your groups:
