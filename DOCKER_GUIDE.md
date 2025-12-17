@@ -53,13 +53,14 @@ config.yaml
 requirements.txt
 
 
-### Step 2: Configure Credentials
-# Copy template
-cp .env.example .env
-
 # Edit with your Dispatcharr credentials
 nano .env
 ```
+
+### Step 2: Configure Credentials
+
+# Edit with your Dispatcharr credentials
+nano .env
 
 **Important:** The `.env` file should look like this:
 
@@ -70,6 +71,7 @@ DISPATCHARR_USER=admin
 DISPATCHARR_PASS=your_actual_password
 DISPATCHARR_TOKEN=
 ```
+
 **Key points:** Use `http://dispatcharr:9191` (the container name), not `localhost` or an IP!
 Dispatcharr-Maid must run on the same Docker network as Dispatcharr.
 The provided docker-compose.yml attaches the service to the existing dispatcharr_default network, which must already exist.
