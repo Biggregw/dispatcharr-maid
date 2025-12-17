@@ -182,6 +182,7 @@ Each of these streams has then been tested for quality and speed, then based on 
 - When all of the top streams from each provider have been exhausted it will select the best ranking 2nd place provider first etc.
 - The theory is you can quickly optimize your setup.
 
+## Monitoring
 
 ### View Logs
 
