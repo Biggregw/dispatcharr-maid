@@ -122,7 +122,7 @@ http://YOUR-SERVER-IP:5000
 
 #### Select your groups:
 
-A check has been made to list all Groups that exist in the channels within Dispatcharr.
+A check has been made to list all Groups that exist in the channels within Dispatcharr. This isn't all groups from your provider.
 
 You will be presented with each of these groups and can tick a single group or multiples.
 
@@ -159,15 +159,13 @@ Allow this time to run and present the results
 
 A preview box will be presented where you can untick any streams you dont want adding to your channel in Dispatcharr if your filtering wasn#t quite correct.
 
-Leave the streams you want adding selected and click Add Selected Streams
+Leave the streams you want adding selected and click **Add Selected Streams**
 
-You will see the Current Job section lower down give a message to say it's searching for the streams.
+1. You will see the Current Job section lower down give a message to say it's searching for the streams.
+2. Wait for this to display results which will show you how many matching streams were found.
+3. At this point these streams have all been added to your channel in Dispatcharr.
+4. Alter the streams per provider box to represent how many streams from each provider you want to remain in your channel (default 2).
 
-Wait for this to display results which will show you how many matching streams were found.
-
-At this point these streams have all been added to your channel in Dispatcharr.
-
-Alter the streams per provider box to represent how many streams from each provider you want to remain in your channel. It defaults to 2. This is applicable to the next step.
 
 #### Click the Quality Check & Cleanup button (optional but recommended)
 
@@ -175,8 +173,8 @@ This will do a full probe of each stream and score them before leaving the best 
 
 Your channel will be cleansed and ranked to allow Dispatchrr to work with your best stream first and move to fallbacks in the sequence below:
 
-Example with 3 providers and value = 2:
-Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
+1. Example with 3 providers and value = 2:
+2. Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
 
 The web dashboard updates every 2 seconds with:
 - Live progress bar
