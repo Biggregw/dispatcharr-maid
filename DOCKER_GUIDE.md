@@ -123,11 +123,15 @@ http://YOUR-SERVER-IP:5000
 #### Select your groups:
 
 A check has been made to list all Groups that exist in the channels within Dispatcharr.
+
 You will be presented with each of these groups and can tick a single group or multiples.
-It's recommended to select a single group to make best use of functionality.
+
+It's recommended to tick a single group to make best use of functionality.
+
+The group(s) you have selected will be examined in the next step.
 
 
-#### Then click Select Channels
+#### Click Select Channels
 
 All channels that exist in the groups selected will now be displayed.
 
@@ -135,7 +139,7 @@ Select the channel(s) you want - for example BBC One
 
 Again it's recommended you select a single channel.
 
-#### Then click Run Jobs
+#### Click Run Jobs
 
 If you are running for a single channel eg BBC 1 you now will see at the top of the screen an option to apply filters.
 
@@ -147,7 +151,7 @@ You have the option to force inclide or exclude certain strings - so for example
 
 There's a tick box that can be used to exclude 3840 x 2160 streams which may struggle on some hardware. By default it's ticked but you can untick.
 
-#### Then click Refresh Channel Streams
+#### Click Refresh Channel Streams
 
 A box will appear where matching streams are queried and shown
 
@@ -163,10 +167,9 @@ Wait for this to display results which will show you how many matching streams w
 
 At this point these streams have all been added to your channel in Dispatcharr.
 
+Alter the streams per provider box to represent how many streams from each provider you want to remain in your channel. It defaults to 2. This is applicable to the next step.
 
-Alter the streams per provider box to represent how many streams from each provider you want to remain in your channel. It defaults to 2.
-
-#### You can now click the Quality Check & Cleanup button.
+#### Click the Quality Check & Cleanup button (optional but recommended)
 
 This will do a full probe of each stream and score them before leaving the best quality ones in your channel.
 
@@ -180,6 +183,20 @@ The web dashboard updates every 2 seconds with:
 - Streams processed/failed
 - ETA
 - Last run statistics
+
+## Summary
+You have now added all streams from all providers to the channel you selected, restrcited by the filter logic used.
+
+Each of these streams has then been tested for quality and speed, then based on your selection your channel should now contain the optimal streams in the optimal order:
+
+Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
+
+When streaming now dispatcharr will start with Provider A #1 which is your preferred stream, if this fails it will fallback to your next best ranked provider B #1 stream.
+
+When all of the top streams from each provider have been exhausted it will select the best ranking 2nd place provider first etc.
+
+The theory is you can quickly optimize your setup.
+
 
 ### View Logs
 
