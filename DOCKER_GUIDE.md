@@ -8,7 +8,7 @@ Runs Dispatcharr Maid in Docker containers that:
 - ✅ **Web monitor always available** on port 5000
 - ✅ **Run CLI on-demand** when you need to analyze
 - ✅ **Auto-restart** with your server
-- ✅ **Managed via Portainer**  (optional)
+- ✅ **Managed via Portainer** (optional)
 
 ---
 
@@ -32,30 +32,32 @@ cd ~/dispatcharr-maid
 # Download the latest Dispatcharr-Maid release zip from GitHub
 wget https://github.com/Biggregw/dispatcharr-maid/archive/refs/heads/main.zip -O Dispatcharr_Maid.zip
 
-# Extract the Dispatcharr_Maid.zip
+# Extract the zip file
 unzip Dispatcharr_Maid.zip
 
 # Move the files to the directory
-mv dispatcharr-maid-main dispatcharr-maid
-cd dispatcharr-maid
+mv dispatcharr-maid-main/* .
+rm -rf dispatcharr-maid-main
 ls
 ```
-#### You should now see files such as:
-- Dockerfile
-- docker-compose.yml
-- api_utils.py
-- stream_analysis.py
-- interactive_maid.py
-- web_monitor.py
-- templates/
-- config.yaml
-- .env.template
-- requirements.txt
 
+#### You should now see files such as:
+- `Dockerfile`
+- `docker-compose.yml`
+- `api_utils.py`
+- `stream_analysis.py`
+- `interactive_maid.py`
+- `web_monitor.py`
+- `templates/`
+- `config.yaml`
+- `.env.template`
+- `requirements.txt`
+
+---
 
 ### Step 2: Configure Credentials
 
-#### Edit the env file with your Dispatcharr credentials
+Create and edit the `.env` file with your Dispatcharr credentials:
 
 ```bash
 cp .env.example .env
@@ -72,10 +74,12 @@ DISPATCHARR_PASS=your_actual_password
 DISPATCHARR_TOKEN=
 ```
 
-**Key points:** Use `http://dispatcharr:9191` (the container name), not `localhost` or an IP!
-Dispatcharr-Maid must run on the same Docker network as Dispatcharr.
-The provided docker-compose.yml attaches the service to the existing dispatcharr_default network, which must already exist.
+**Key points:**
+- Use `http://dispatcharr:9191` (the container name), not `localhost` or an IP!
+- Dispatcharr-Maid must run on the same Docker network as Dispatcharr
+- The provided `docker-compose.yml` attaches the service to the existing `dispatcharr_default` network, which must already exist
 
+---
 
 ### Step 3: Build and Start
 
@@ -86,10 +90,9 @@ docker-compose build
 # Start everything
 docker-compose up -d
 
-# Ignore the WARNING - this is a known bug with no impact and will be fixed in a future release
-WARNING: The xxxxxxxxx variable is not set. Defaulting to a blank string.
-WARNING: The xxxxxxxxxxxxxx variable is not set. Defaulting to a blank string.
-# Containers still start successfully
+# Note: You may see warnings about unset variables - this is a known issue and safe to ignore
+# WARNING: The xxxxxxxxx variable is not set. Defaulting to a blank string.
+# Containers will start successfully
 
 # Check they're running
 docker-compose ps
@@ -101,6 +104,8 @@ NAME                    STATUS              PORTS
 dispatcharr-maid        Up                  
 dispatcharr-maid-web    Up (healthy)        0.0.0.0:5000->5000/tcp
 ```
+
+---
 
 ### Step 4: Access Web Monitor
 
@@ -117,56 +122,56 @@ You should see the Dispatcharr Maid dashboard!
 
 ### Run Analysis Jobs
 
-#### It's recommended you select one Group and one Channel to work on each time
+**Recommendation:** Select one Group and one Channel to work on at a time for optimal results.
 
-#### Navigate to:
-http://YOUR-SERVER-IP:5000
+#### 1. Navigate to the Dashboard
+Open `http://YOUR-SERVER-IP:5000` in your browser.
 
-#### Select your groups:
+#### 2. Select Your Groups
+A check has been made to list all Groups that exist in channels within Dispatcharr (not all groups from your provider).
 
-A check has been made to list all Groups that exist in the channels within Dispatcharr. This isn't all groups from your provider.
+- You will be presented with each of these groups and can select single or multiple groups
+- **Recommended:** Select a single group to make best use of functionality
+- The group(s) you select will be examined in the next step
 
-- You will be presented with each of these groups and can tick a single group or multiples.
-- It's recommended to tick a single group to make best use of functionality.
-- The group(s) you have selected will be examined in the next step.
+#### 3. Click "Select Channels"
+All channels that exist in the selected groups will now be displayed.
 
+- Select the channel(s) you want (e.g., "BBC One")
+- **Recommended:** Select a single channel at a time
 
-#### Click Select Channels
+#### 4. Click "Run Jobs"
+If running for a single channel (e.g., "BBC One"), you will see filter options at the top of the screen.
 
-- All channels that exist in the groups selected will now be displayed.
-- Select the channel(s) you want - for example BBC One
-- Again it's recommended you select a single channel.
+**Search Configuration:**
+- The base search field contains your channel name but can be modified (e.g., change "BBC One" to "BBC 1")
+- This search term will be used to find matching streams from all your providers
 
-#### Click Run Jobs 
+**Filter Options:**
+- **Force Include:** Add strings that must be present (e.g., `york*` to include "BBC One Yorkshire")
+- **Force Exclude:** Add strings to exclude (e.g., `linc*` to exclude "Lincolnshire")
+- **Exclude 4K Streams:** Checkbox to exclude 3840x2160 streams which may struggle on some hardware (enabled by default)
 
-- If you are running for a single channel eg BBC 1 you now will see at the top of the screen an option to apply filters.
-- The base search field is your channel name but can be altered (so for example I could change BBC One to BBC 1)
-- This is the search term that will be used to look for matching streams from all of your providers.
-- You have the option to force inclide or exclude certain strings - so for example I may want BBC One Yorkshire but not BBC One Yorkshire and LIncolnshire so I would include york* and exclude linc*
-- There's a tick box that can be used to exclude 3840 x 2160 streams which may struggle on some hardware. By default it's ticked but you can untick.
+#### 5. Click "Refresh Channel Streams"
+- A box will appear showing matching streams as they're queried
+- Allow time for the search to complete and present results
+- A preview box will display where you can unselect any streams you don't want added if your filtering wasn't quite right
 
-#### Click Refresh Channel Streams
+#### 6. Add Selected Streams
+Leave the streams you want selected and click **"Add Selected Streams"**
 
-- A box will appear where matching streams are queried and shown
-- Allow this time to run and present the results
-- A preview box will be presented where you can untick any streams you dont want adding to your channel in Dispatcharr if your filtering wasn#t quite correct.
+- The "Current Job" section will display a message indicating it's searching for streams
+- Wait for results to show how many matching streams were found
+- At this point, all selected streams have been added to your channel in Dispatcharr
+- Adjust the "Streams per Provider" setting to specify how many streams from each provider should remain in your channel (default: 2)
 
-#### Leave the streams you want adding selected and click **Add Selected S treams**
- 
-- You will see the Current Job section lower down give a message to say it's searching for the streams.
-- Wait for this to display results which will show you how many matching streams were found.
-- At this point these streams have all been added to your channel in Dispatcharr.
-- Alter the streams per provider box to represent how many streams from each provider you want to remain in your channel (default 2).
+#### 7. Click "Quality Check & Cleanup" (Optional but Recommended)
+This performs a full probe of each stream and scores them before keeping only the best quality ones in your channel.
 
+Your channel will be cleansed and ranked to allow Dispatcharr to work with your best stream first and move to fallbacks in this sequence:
 
-#### Click the Quality Check & Cleanup button (optional but recommended)
-
-This will do a full probe of each stream and score them before leaving the best quality ones in your channel.
-
-Your channel will be cleansed and ranked to allow Dispatchrr to work with your best stream first and move to fallbacks in the sequence below:
-
-- Example with 3 providers and value = 2:
--  Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
+**Example with 3 providers and value = 2:**
+- Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
 
 The web dashboard updates every 2 seconds with:
 - Live progress bar
@@ -174,17 +179,27 @@ The web dashboard updates every 2 seconds with:
 - ETA
 - Last run statistics
 
-## Summary
-You have now added all streams from all providers to the channel you selected, restrcited by the filter logic used.
+---
 
-Each of these streams has then been tested for quality and speed, then based on your selection your channel should now contain the optimal streams in the optimal order:
+### Summary
 
+You have now:
+1. Added all streams from all providers to your selected channel, filtered by your search criteria
+2. Tested each stream for quality and speed
+3. Kept only the optimal streams in the optimal order based on your "streams per provider" setting
+
+**The result:**
 - Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
-- When streaming now dispatcharr will start with Provider A #1 which is your preferred stream, if this fails it will fallback to your next best ranked provider B #1 stream.
-- When all of the top streams from each provider have been exhausted it will select the best ranking 2nd place provider first etc.
-- The theory is you can quickly optimize your setup.
 
-## Monitoring
+**How it works in practice:**
+- When streaming, Dispatcharr starts with Provider A #1 (your best stream)
+- If this fails, it falls back to Provider B #1 (next best provider)
+- After exhausting all top streams from each provider, it moves to the second-best streams
+- This approach quickly optimizes your setup for maximum reliability
+
+---
+
+## 📊 Monitoring
 
 ### View Logs
 
@@ -246,7 +261,10 @@ docker-compose start dispatcharr-maid
 ```bash
 # Pull latest code
 cd ~/dispatcharr-maid
-# (extract new Dispatcharr_Maid.zip)
+wget https://github.com/Biggregw/dispatcharr-maid/archive/refs/heads/main.zip -O Dispatcharr_Maid.zip
+unzip -o Dispatcharr_Maid.zip
+mv dispatcharr-maid-main/* .
+rm -rf dispatcharr-maid-main Dispatcharr_Maid.zip
 
 # Rebuild containers
 docker-compose build
@@ -289,7 +307,7 @@ All containers can communicate by name:
 
 ## 📦 Using Portainer
 
-You already have Portainer running! Here's how to manage Dispatcharr Maid through it:
+If you have Portainer running, here's how to manage Dispatcharr Maid through it:
 
 1. **Open Portainer:** `http://YOUR-SERVER-IP:9000`
 2. **Go to Containers**
@@ -315,7 +333,7 @@ You already have Portainer running! Here's how to manage Dispatcharr Maid throug
 
 ## 🔍 Troubleshooting
 
-### Container won't start
+### Container Won't Start
 
 ```bash
 # Check logs
@@ -327,7 +345,7 @@ docker-compose logs dispatcharr-maid
 # - Port conflict
 ```
 
-### Can't connect to Dispatcharr
+### Can't Connect to Dispatcharr
 
 ```bash
 # Test network connectivity
@@ -339,7 +357,7 @@ docker exec dispatcharr-maid cat .env
 # Should show: DISPATCHARR_BASE_URL=http://dispatcharr:9191
 ```
 
-### Web monitor not accessible
+### Web Monitor Not Accessible
 
 ```bash
 # Check if it's running
@@ -352,7 +370,7 @@ sudo netstat -tlnp | grep 5000
 docker-compose logs dispatcharr-maid-web
 ```
 
-### Data not persisting
+### Data Not Persisting
 
 ```bash
 # Check volumes are mounted
@@ -474,10 +492,10 @@ Now access via: `https://maid.yourdomain.com`
 | Portability | Environment-dependent | Portable |
 | Management | CLI only | CLI + Portainer |
 
-**Docker wins for:**
+**Docker advantages:**
 - ✅ Easier management
 - ✅ Better isolation
-- ✅ Auto-restart
+- ✅ Auto-restart capability
 - ✅ Consistent environment
 
 ---
@@ -500,7 +518,7 @@ Now access via: `https://maid.yourdomain.com`
    http://YOUR-SERVER-IP:9000
    ```
 
-4. **Optional: Add to Nginx Proxy Manager** for HTTPS
+4. **Optional: Add to Nginx Proxy Manager** for HTTPS access
 
 ---
 
@@ -513,7 +531,7 @@ docker-compose logs -f
 
 **Test Dispatcharr connection:**
 ```bash
-docker exec dispatcharr-maid python3 -c "from api_utils import *; api = DispatcharrAPI(); api.login(); print('✓ Connected!')"
+docker exec dispatcharr-maid python3 -c "from api_utils import *; api = DispatcharrAPI(); api.login(); print('✅ Connected!')"
 ```
 
 **Verify files are mounted:**

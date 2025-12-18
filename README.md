@@ -124,11 +124,6 @@ Before any changes are applied, a **manual review step** allows individual strea
 
 Once streams are added back into the channel, Dispatcharr-Maid performs a **full ffmpeg probe** and analyzes streams based on factors such as:
 
-<<<<<<< HEAD
-Refer to DOCKER_GUIDE.md for installation and startup instructions.
-[Docker Deployment Guide](DOCKER_GUIDE.md)
-
-=======
 - Technical quality (bitrate, codec, resolution)
 - Stream reliability and responsiveness
 - Connection speed and stability
@@ -176,7 +171,7 @@ Complete guides for every aspect of Dispatcharr Maid:
 
 ---
 
-## 🐛 Troubleshooting
+## 🔍 Troubleshooting
 
 Running into issues? Here are some quick tips:
 
@@ -264,4 +259,7 @@ If you find Dispatcharr-Maid useful, please consider giving it a ⭐ on GitHub! 
 ---
 
 **Made with ❤️ for the Dispatcharr community**
+<<<<<<< HEAD
 
+=======
+>>>>>>> 183022f (Update README and Docker guide)
