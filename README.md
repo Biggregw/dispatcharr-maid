@@ -1,4 +1,4 @@
-# Dispatcharr-Maid
+# Dispatcharr-Maid 🧹
 
 A lightweight, self-hosted web interface for Dispatcharr stream management and optimization.
 
