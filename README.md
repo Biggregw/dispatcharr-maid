@@ -252,6 +252,7 @@ Special thanks to the open-source community for the tools and libraries that mak
 ## ☕ Buy Me a Coffee
 
 If Dispatcharr-Maid saves you time or helps keep things running smoothly, you can support development with a coffee.
+
 https://buymeacoffee.com/biggregw
 
 ---
