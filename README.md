@@ -262,4 +262,4 @@ If you find Dispatcharr-Maid useful, please consider giving it a ⭐ on GitHub! 
 <<<<<<< HEAD
 
 =======
->>>>>>> 183022f (Update README and Docker guide)
+
