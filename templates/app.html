@@ -855,7 +855,7 @@
             </div>
             <div class="modal-actions">
                 <button class="btn btn-back" onclick="closeRefreshPreview()">Cancel</button>
-                <button class="btn btn-next" id="refresh-submit-button" onclick="submitRefreshJob()">Add Selected Streams</button>
+                <button type="button" class="btn btn-next" id="refresh-submit-button" onclick="submitRefreshJob(event)">Add Selected Streams</button>
             </div>
         </div>
     </div>
@@ -1256,7 +1256,11 @@
             }
         }
 
-        async function submitRefreshJob() {
+        async function submitRefreshJob(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
             const selected = Array.from(document.querySelectorAll('.refresh-stream-checkbox:checked')).map(cb => parseInt(cb.value));
             const submitButton = document.getElementById('refresh-submit-button');
 
