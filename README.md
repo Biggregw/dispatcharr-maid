@@ -248,6 +248,7 @@ Special thanks to the open-source community for the tools and libraries that mak
 - And many more...
 
 ---
+If Dispatcharr-Maid is useful to you, you can support development via GitHub Sponsors or Buy Me a Coffee.
 
 ## 🌟 Star This Project
 
