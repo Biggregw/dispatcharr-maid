@@ -337,12 +337,26 @@
         .progress-bar {
             background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
             height: 100%;
+            position: absolute;
+            left: 0;
+            top: 0;
             transition: width 0.3s ease;
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
             font-weight: bold;
+        }
+
+        .progress-bar.indeterminate {
+            width: 30%;
+            animation: progressIndeterminate 1.3s infinite;
+        }
+
+        @keyframes progressIndeterminate {
+            0% { transform: translateX(-120%); }
+            50% { transform: translateX(-20%); }
+            100% { transform: translateX(120%); }
         }
         
         .stats-grid {
@@ -824,10 +838,24 @@
             <div class="modal-body">
                 <div class="preview-meta" id="refresh-preview-description"></div>
                 <div class="preview-list" id="refresh-preview-list"></div>
+                <div id="refresh-progress-container" class="alert alert-info hidden" style="margin-top: 15px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span class="spinner"></span>
+                        <div>
+                            <div id="refresh-progress-message" style="font-weight: 600;">Preparing to add streams...</div>
+                            <div id="refresh-progress-detail" style="color: #4a5568; font-size: 0.9em;">This window will stay open until the channel is updated.</div>
+                        </div>
+                    </div>
+                    <div class="progress-container" style="margin-top: 12px; position: relative;">
+                        <div id="refresh-progress-bar" class="progress-bar indeterminate"></div>
+                        <div id="refresh-progress-percentage" style="position: relative; z-index: 1; text-align: center; font-weight: 700; color: #2d3748;">
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-back" onclick="closeRefreshPreview()">Cancel</button>
-                <button class="btn btn-next" onclick="submitRefreshJob()">Add Selected Streams</button>
+                <button class="btn btn-next" id="refresh-submit-button" onclick="submitRefreshJob()">Add Selected Streams</button>
             </div>
         </div>
     </div>
@@ -842,6 +870,7 @@
         let jobCheckInterval = null;
         let refreshPreviewStreams = [];
         let refreshPreviewMeta = null;
+        let refreshJobId = null;
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
@@ -1123,6 +1152,8 @@
             document.getElementById('refresh-preview-modal').classList.add('hidden');
             refreshPreviewStreams = [];
             refreshPreviewMeta = null;
+            refreshJobId = null;
+            resetRefreshProgress();
         }
 
         function renderRefreshPreview(preview) {
@@ -1163,6 +1194,7 @@
 
             document.getElementById('refresh-preview-modal').classList.remove('hidden');
             document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-info">Searching for matching streams...</div>';
+            resetRefreshProgress();
             document.getElementById('refresh-preview-summary').textContent = 'Looking up matching streams...';
             document.getElementById('refresh-preview-description').textContent = '';
 
@@ -1195,10 +1227,56 @@
             }
         }
 
-        function submitRefreshJob() {
+        function showRefreshProgress(message) {
+            const container = document.getElementById('refresh-progress-container');
+            const bar = document.getElementById('refresh-progress-bar');
+            container.classList.remove('hidden');
+            document.getElementById('refresh-progress-message').textContent = message;
+            document.getElementById('refresh-progress-detail').textContent = 'Please wait. This dialog will close once the refresh finishes.';
+            document.getElementById('refresh-progress-percentage').textContent = '';
+            bar.classList.add('indeterminate');
+            bar.style.width = '30%';
+        }
+
+        function resetRefreshProgress() {
+            const container = document.getElementById('refresh-progress-container');
+            const bar = document.getElementById('refresh-progress-bar');
+            const submitButton = document.getElementById('refresh-submit-button');
+
+            container.classList.add('hidden');
+            document.getElementById('refresh-progress-message').textContent = 'Preparing to add streams...';
+            document.getElementById('refresh-progress-detail').textContent = 'This window will stay open until the channel is updated.';
+            document.getElementById('refresh-progress-percentage').textContent = '';
+            bar.classList.add('indeterminate');
+            bar.style.width = '30%';
+
+            if (submitButton) {
+                submitButton.disabled = false;
+                submitButton.textContent = 'Add Selected Streams';
+            }
+        }
+
+        async function submitRefreshJob() {
             const selected = Array.from(document.querySelectorAll('.refresh-stream-checkbox:checked')).map(cb => parseInt(cb.value));
-            closeRefreshPreview();
-            startJob('refresh_optimize', selected);
+            const submitButton = document.getElementById('refresh-submit-button');
+
+            submitButton.disabled = true;
+            submitButton.textContent = 'Adding...';
+            showRefreshProgress('Please wait while we add the selected streams...');
+
+            const jobId = await startJob('refresh_optimize', selected);
+
+            if (!jobId) {
+                submitButton.disabled = false;
+                submitButton.textContent = 'Add Selected Streams';
+                document.getElementById('refresh-progress-message').textContent = 'Failed to start refresh job. Please try again.';
+                document.getElementById('refresh-progress-detail').textContent = '';
+                document.getElementById('refresh-progress-bar').classList.remove('indeterminate');
+                document.getElementById('refresh-progress-bar').style.width = '0%';
+                return;
+            }
+
+            refreshJobId = jobId;
         }
 
         // Start a job
@@ -1250,24 +1328,27 @@
                 });
                 
                 const data = await response.json();
-                
+
                 if (data.success) {
                     currentJobId = data.job_id;
-                    
+
                     // Show current job card
                     document.getElementById('current-job-card').classList.remove('hidden');
                     
                     // Start monitoring
                     if (jobCheckInterval) clearInterval(jobCheckInterval);
                     jobCheckInterval = setInterval(() => checkJob(currentJobId), 2000);
-                    
+
                     // Immediate check
                     checkJob(currentJobId);
+                    return currentJobId;
                 } else {
                     alert('Failed to start job: ' + data.error);
+                    return null;
                 }
             } catch (error) {
                 alert('Failed to start job: ' + error.message);
+                return null;
             }
         }
         
@@ -1276,10 +1357,11 @@
             try {
                 const response = await fetch(`/api/job/${jobId}`);
                 const data = await response.json();
-                
+
                 if (data.success) {
                     renderCurrentJob(data.job);
-                    
+                    updateRefreshProgress(data.job);
+
                     // If completed, stop checking
                     if (['completed', 'failed', 'cancelled'].includes(data.job.status)) {
                         if (jobCheckInterval) {
@@ -1292,6 +1374,61 @@
                 }
             } catch (error) {
                 console.error('Failed to check job:', error);
+            }
+        }
+
+        function updateRefreshProgress(job) {
+            if (!refreshJobId || job.job_id !== refreshJobId) {
+                return;
+            }
+
+            const container = document.getElementById('refresh-progress-container');
+            const messageEl = document.getElementById('refresh-progress-message');
+            const detailEl = document.getElementById('refresh-progress-detail');
+            const bar = document.getElementById('refresh-progress-bar');
+            const percentEl = document.getElementById('refresh-progress-percentage');
+            const submitButton = document.getElementById('refresh-submit-button');
+
+            if (container.classList.contains('hidden')) {
+                showRefreshProgress('Please wait while we add the selected streams...');
+            }
+
+            messageEl.textContent = job.current_step || 'Adding streams to Dispatcharr...';
+            detailEl.textContent = job.status === 'queued' ? 'Job queued and will start shortly.' : 'Updating your channel with the selected streams...';
+
+            if (job.total > 0) {
+                const percent = Math.min(100, (job.progress / job.total) * 100);
+                bar.classList.remove('indeterminate');
+                bar.style.width = `${percent}%`;
+                percentEl.textContent = `${percent.toFixed(1)}%`;
+            } else {
+                bar.classList.add('indeterminate');
+                bar.style.width = '30%';
+                percentEl.textContent = '';
+            }
+
+            if (['completed', 'failed', 'cancelled'].includes(job.status)) {
+                bar.classList.remove('indeterminate');
+                bar.style.width = '100%';
+                percentEl.textContent = job.status === 'completed' ? '100%' : '';
+
+                if (job.status === 'completed') {
+                    detailEl.textContent = 'Streams added successfully. Closing the preview...';
+                    messageEl.textContent = job.current_step || 'Streams added.';
+                    if (submitButton) {
+                        submitButton.textContent = 'Completed';
+                    }
+                    setTimeout(() => {
+                        closeRefreshPreview();
+                    }, 1200);
+                } else {
+                    detailEl.textContent = 'The refresh did not finish. Please review the current job for details.';
+                    if (submitButton) {
+                        submitButton.disabled = false;
+                        submitButton.textContent = 'Retry Add Selected Streams';
+                    }
+                    refreshJobId = null;
+                }
             }
         }
         
