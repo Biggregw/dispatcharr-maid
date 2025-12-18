@@ -257,4 +257,4 @@ If you find Dispatcharr-Maid useful, please consider giving it a ⭐ on GitHub! 
 ---
 
 **Made with ❤️ for the Dispatcharr community**
->>>>>>> 2b31a89 (Update README)
+
