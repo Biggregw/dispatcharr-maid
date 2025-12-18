@@ -258,6 +258,6 @@ If you find Dispatcharr-Maid useful, please consider giving it a ⭐ on GitHub! 
 
 ---
 
-**Made with ❤️ for the Dispatcharr community**
+## Made with ❤️ for the Dispatcharr community
 
 
