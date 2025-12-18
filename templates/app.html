@@ -1413,14 +1413,12 @@
                 percentEl.textContent = job.status === 'completed' ? '100%' : '';
 
                 if (job.status === 'completed') {
-                    detailEl.textContent = 'Streams added successfully. Closing the preview...';
+                    detailEl.textContent = 'Streams added successfully. You can close this window when you are ready.';
                     messageEl.textContent = job.current_step || 'Streams added.';
                     if (submitButton) {
                         submitButton.textContent = 'Completed';
+                        submitButton.disabled = true;
                     }
-                    setTimeout(() => {
-                        closeRefreshPreview();
-                    }, 1200);
                 } else {
                     detailEl.textContent = 'The refresh did not finish. Please review the current job for details.';
                     if (submitButton) {
