@@ -1708,10 +1708,9 @@
         function updateJobPhaseModal(job) {
             const modal = document.getElementById('job-phase-modal');
             const message = document.getElementById('job-phase-message');
-            const isNumericComplete = job.status === 'running' && job.total > 0 && job.progress >= job.total;
             const phaseMessage = getPhaseIndicator(job.current_step);
 
-            if (isNumericComplete && phaseMessage) {
+            if (job.status === 'running' && phaseMessage) {
                 message.textContent = phaseMessage;
                 modal.classList.remove('hidden');
                 return;
