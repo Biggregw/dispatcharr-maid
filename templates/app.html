@@ -960,23 +960,6 @@
         </div>
     </div>
 
-    <div id="job-phase-modal" class="modal-overlay hidden">
-        <div class="modal">
-            <div class="modal-header">
-                <div>
-                    <div class="modal-title">Current Job Phase</div>
-                    <div class="preview-meta">Final steps before completion.</div>
-                </div>
-            </div>
-            <div class="modal-body">
-                <div id="job-phase-message" style="font-weight: 600;"></div>
-                <div class="progress-container" style="margin-top: 16px; position: relative;">
-                    <div class="progress-bar indeterminate"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <script>
         // Global state
         let selectedGroups = [];
@@ -1716,37 +1699,6 @@
             }
             
             container.innerHTML = html;
-            updateJobPhaseModal(job);
-        }
-
-        function getPhaseIndicator(stepText) {
-            const step = (stepText || '').toLowerCase();
-            if (step.includes('cleaning up') || step.includes('cleanup')) {
-                return '🧹 Cleaning up streams…';
-            }
-            if (step.includes('reorder')) {
-                return '↕️ Reordering channels…';
-            }
-            return null;
-        }
-
-        function updateJobPhaseModal(job) {
-            const modal = document.getElementById('job-phase-modal');
-            const message = document.getElementById('job-phase-message');
-            modal.classList.add('hidden');
-            message.textContent = '';
-            const phaseMessage = getPhaseIndicator(job.current_step);
-            const isFinalizing = job.status === 'running' && job.total > 0 && job.progress >= job.total && !phaseMessage;
-
-            if (job.status === 'running') {
-                if (phaseMessage) {
-                    message.textContent = phaseMessage;
-                    modal.classList.remove('hidden');
-                } else if (isFinalizing) {
-                    message.textContent = '🧹 Finalising changes, cleaning up and reordering streams…';
-                    modal.classList.remove('hidden');
-                }
-            }
         }
         
         // Cancel job
