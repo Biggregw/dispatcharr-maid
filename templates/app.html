@@ -465,6 +465,19 @@
             to { transform: rotate(360deg); }
         }
 
+        .loading-ellipsis::after {
+            content: "...";
+            display: inline-block;
+            width: 0;
+            overflow: hidden;
+            vertical-align: bottom;
+            animation: ellipsis 1.2s steps(4, end) infinite;
+        }
+
+        @keyframes ellipsis {
+            to { width: 1.2em; }
+        }
+
         /* Refresh preview modal */
         .modal-overlay {
             position: fixed;
@@ -1193,7 +1206,7 @@
             }
 
             document.getElementById('refresh-preview-modal').classList.remove('hidden');
-            document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-info">Searching for matching streams...</div>';
+            document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-info"><span class="loading-ellipsis">Searching for matching streams</span></div>';
             resetRefreshProgress();
             document.getElementById('refresh-preview-summary').textContent = 'Looking up matching streams...';
             document.getElementById('refresh-preview-description').textContent = '';
