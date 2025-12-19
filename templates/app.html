@@ -1423,6 +1423,8 @@
                         submitButton.textContent = 'Completed';
                         submitButton.disabled = true;
                     }
+                    refreshJobId = null;
+                    setTimeout(() => closeRefreshPreview(), 1000);
                 } else {
                     detailEl.textContent = 'The refresh did not finish. Please review the current job for details.';
                     if (submitButton) {
