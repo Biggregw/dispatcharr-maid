@@ -1736,14 +1736,14 @@
             modal.classList.add('hidden');
             message.textContent = '';
             const phaseMessage = getPhaseIndicator(job.current_step);
-            const isFinalizing = job.status === 'running' && job.total > 0 && job.progress >= job.total;
+            const isFinalizing = job.status === 'running' && job.total > 0 && job.progress >= job.total && !phaseMessage;
 
             if (job.status === 'running') {
-                if (isFinalizing) {
-                    message.textContent = '🧹 Finalising changes, cleaning up and reordering streams…';
-                    modal.classList.remove('hidden');
-                } else if (phaseMessage) {
+                if (phaseMessage) {
                     message.textContent = phaseMessage;
+                    modal.classList.remove('hidden');
+                } else if (isFinalizing) {
+                    message.textContent = '🧹 Finalising changes, cleaning up and reordering streams…';
                     modal.classList.remove('hidden');
                 }
             }
