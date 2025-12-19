@@ -1482,11 +1482,22 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    renderCurrentJob(data.job);
-                    updateRefreshProgress(data.job);
+                    const job = data.job;
+                    const isTerminal = ['completed', 'failed', 'cancelled'].includes(job.status);
+                    const reconciledJob = isTerminal ? {
+                        ...job,
+                        current_step: {
+                            completed: 'Completed.',
+                            failed: 'Failed.',
+                            cancelled: 'Cancelled.'
+                        }[job.status] || job.current_step
+                    } : job;
+
+                    renderCurrentJob(reconciledJob);
+                    updateRefreshProgress(reconciledJob);
 
                     // If completed, stop checking
-                    if (['completed', 'failed', 'cancelled'].includes(data.job.status)) {
+                    if (isTerminal) {
                         if (jobCheckInterval) {
                             clearInterval(jobCheckInterval);
                             jobCheckInterval = null;
