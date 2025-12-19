@@ -1501,10 +1501,7 @@
         }
 
         function updateRefreshProgress(job) {
-            if (!refreshJobId || job.job_id !== refreshJobId) {
-                return;
-            }
-
+            resetRefreshProgress();
             const container = document.getElementById('refresh-progress-container');
             const messageEl = document.getElementById('refresh-progress-message');
             const detailEl = document.getElementById('refresh-progress-detail');
@@ -1512,8 +1509,14 @@
             const percentEl = document.getElementById('refresh-progress-percentage');
             const submitButton = document.getElementById('refresh-submit-button');
 
-            if (container.classList.contains('hidden')) {
-                showRefreshProgress('Please wait while we add the selected streams...');
+            if (!refreshJobId || job.job_id !== refreshJobId) {
+                return;
+            }
+
+            container.classList.remove('hidden');
+            if (submitButton) {
+                submitButton.disabled = true;
+                submitButton.textContent = 'Adding...';
             }
 
             messageEl.textContent = job.current_step || 'Adding streams to Dispatcharr...';
@@ -1708,28 +1711,20 @@
         function updateJobPhaseModal(job) {
             const modal = document.getElementById('job-phase-modal');
             const message = document.getElementById('job-phase-message');
-            if (job.status !== 'running') {
-                modal.classList.add('hidden');
-                message.textContent = '';
-                return;
-            }
+            modal.classList.add('hidden');
+            message.textContent = '';
             const phaseMessage = getPhaseIndicator(job.current_step);
             const isFinalizing = job.status === 'running' && job.total > 0 && job.progress >= job.total;
 
-            if (isFinalizing) {
-                message.textContent = '🧹 Finalising changes, cleaning up and reordering streams…';
-                modal.classList.remove('hidden');
-                return;
+            if (job.status === 'running') {
+                if (isFinalizing) {
+                    message.textContent = '🧹 Finalising changes, cleaning up and reordering streams…';
+                    modal.classList.remove('hidden');
+                } else if (phaseMessage) {
+                    message.textContent = phaseMessage;
+                    modal.classList.remove('hidden');
+                }
             }
-
-            if (job.status === 'running' && phaseMessage) {
-                message.textContent = phaseMessage;
-                modal.classList.remove('hidden');
-                return;
-            }
-
-            modal.classList.add('hidden');
-            message.textContent = '';
         }
         
         // Cancel job
