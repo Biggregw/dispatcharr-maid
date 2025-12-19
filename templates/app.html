@@ -1709,6 +1709,13 @@
             const modal = document.getElementById('job-phase-modal');
             const message = document.getElementById('job-phase-message');
             const phaseMessage = getPhaseIndicator(job.current_step);
+            const isFinalizing = job.status === 'running' && job.total > 0 && job.progress >= job.total;
+
+            if (isFinalizing) {
+                message.textContent = '🧹 Finalising changes, cleaning up and reordering streams…';
+                modal.classList.remove('hidden');
+                return;
+            }
 
             if (job.status === 'running' && phaseMessage) {
                 message.textContent = phaseMessage;
