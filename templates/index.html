@@ -94,6 +94,41 @@
             color: white;
             font-weight: bold;
         }
+
+        .progress-bar.muted {
+            opacity: 0.5;
+            filter: saturate(0.7);
+        }
+
+        .phase-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            background: #f7fafc;
+            border-radius: 8px;
+            border-left: 3px solid #a3bffa;
+            color: #4a5568;
+            font-weight: 600;
+        }
+
+        .phase-indicator--active {
+            animation: phasePulse 1.8s ease-in-out infinite;
+        }
+
+        .phase-indicator__icon {
+            font-size: 1.1em;
+        }
+
+        .phase-indicator__text {
+            font-size: 0.95em;
+        }
+
+        @keyframes phasePulse {
+            0% { opacity: 0.6; }
+            50% { opacity: 1; }
+            100% { opacity: 0.6; }
+        }
         
         .stats-grid {
             display: grid;
@@ -294,10 +329,12 @@
                 return;
             }
             
-            const percent = progress.percent || 0;
             const processed = progress.processed || 0;
             const total = progress.total || '?';
             const failed = progress.failed || 0;
+            const isNumericComplete = total !== '?' && processed >= total;
+            const percent = isNumericComplete ? 100 : Math.min(100, progress.percent || 0);
+            const phase = getPhaseIndicator(progress.current_step);
             
             container.innerHTML = `
                 <div style="margin-bottom: 10px;">
@@ -306,10 +343,16 @@
                 </div>
                 
                 <div class="progress-container">
-                    <div class="progress-bar" style="width: ${percent}%">
+                    <div class="progress-bar ${isNumericComplete ? 'muted' : ''}" style="width: ${percent}%">
                         ${percent.toFixed(1)}%
                     </div>
                 </div>
+                ${isNumericComplete && phase ? `
+                    <div class="phase-indicator phase-indicator--active" aria-live="polite">
+                        <span class="phase-indicator__icon">${phase.icon}</span>
+                        <span class="phase-indicator__text">${phase.text}</span>
+                    </div>
+                ` : ''}
                 
                 <div class="stats-grid">
                     <div class="stat-box">
@@ -330,6 +373,17 @@
                     </div>
                 </div>
             `;
+        }
+
+        function getPhaseIndicator(stepText) {
+            const step = (stepText || '').toLowerCase();
+            if (step.includes('cleanup')) {
+                return { icon: '🧹', text: 'Cleaning up streams…' };
+            }
+            if (step.includes('reorder')) {
+                return { icon: '↕️', text: 'Reordering channels…' };
+            }
+            return null;
         }
         
         function updateLastRun(lastRun) {
