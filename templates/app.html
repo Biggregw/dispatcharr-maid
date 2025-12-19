@@ -630,6 +630,21 @@
             background: #bee3f8;
             color: #2c5282;
         }
+
+        .preview-loading {
+            animation: preview-pulse 1.4s ease-in-out infinite;
+        }
+
+        @keyframes preview-pulse {
+            0%, 100% {
+                transform: translateY(0);
+                box-shadow: 0 0 0 rgba(49, 130, 206, 0.2);
+            }
+            50% {
+                transform: translateY(-2px);
+                box-shadow: 0 8px 18px rgba(49, 130, 206, 0.25);
+            }
+        }
         
         .alert-success {
             background: #c6f6d5;
@@ -1245,7 +1260,7 @@
             }
 
             document.getElementById('refresh-preview-modal').classList.remove('hidden');
-            document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-info"><span class="loading-ellipsis">Searching for matching streams</span></div>';
+            document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-info preview-loading"><span class="loading-ellipsis">Searching for matching streams</span></div>';
             resetRefreshProgress();
             document.getElementById('refresh-preview-summary').textContent = 'Looking up matching streams...';
             document.getElementById('refresh-preview-description').textContent = '';
