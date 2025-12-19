@@ -358,6 +358,43 @@
             50% { transform: translateX(-20%); }
             100% { transform: translateX(120%); }
         }
+
+        #refresh-progress-container .progress-container {
+            background: #cfe8ff;
+            border-radius: 14px;
+            height: 26px;
+            box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.15);
+        }
+
+        #refresh-progress-container .progress-bar {
+            border-radius: 14px;
+            background: linear-gradient(90deg, #6d5bd0 0%, #7c4fd6 50%, #6d5bd0 100%);
+            overflow: hidden;
+        }
+
+        #refresh-progress-container .progress-bar.indeterminate {
+            width: 45%;
+            animation: refreshIndeterminate 1.6s ease-in-out infinite;
+        }
+
+        #refresh-progress-container .progress-bar.indeterminate::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+            animation: refreshShimmer 1.2s linear infinite;
+        }
+
+        @keyframes refreshIndeterminate {
+            0% { transform: translateX(-120%); }
+            50% { transform: translateX(-10%); }
+            100% { transform: translateX(120%); }
+        }
+
+        @keyframes refreshShimmer {
+            0% { transform: translateX(-60%); }
+            100% { transform: translateX(60%); }
+        }
         
         .stats-grid {
             display: grid;
@@ -1248,7 +1285,7 @@
             document.getElementById('refresh-progress-detail').textContent = 'Please wait. This dialog will close once the refresh finishes.';
             document.getElementById('refresh-progress-percentage').textContent = '';
             bar.classList.add('indeterminate');
-            bar.style.width = '30%';
+            bar.style.width = '45%';
         }
 
         function resetRefreshProgress() {
@@ -1261,7 +1298,7 @@
             document.getElementById('refresh-progress-detail').textContent = 'This window will stay open until the channel is updated.';
             document.getElementById('refresh-progress-percentage').textContent = '';
             bar.classList.add('indeterminate');
-            bar.style.width = '30%';
+            bar.style.width = '45%';
 
             if (submitButton) {
                 submitButton.disabled = false;
@@ -1420,7 +1457,7 @@
                 percentEl.textContent = `${percent.toFixed(1)}%`;
             } else {
                 bar.classList.add('indeterminate');
-                bar.style.width = '30%';
+                bar.style.width = '45%';
                 percentEl.textContent = '';
             }
 
