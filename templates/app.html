@@ -988,6 +988,8 @@
         let refreshPreviewStreams = [];
         let refreshPreviewMeta = null;
         let refreshJobId = null;
+        let lastTerminalJobId = null;
+        const terminalStatuses = ['completed', 'failed', 'cancelled'];
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
@@ -1454,6 +1456,7 @@
 
                 if (data.success) {
                     currentJobId = data.job_id;
+                    lastTerminalJobId = null;
 
                     // Show current job card
                     document.getElementById('current-job-card').classList.remove('hidden');
@@ -1475,6 +1478,19 @@
             }
         }
         
+        function reconcileJobForRender(job) {
+            const isTerminal = terminalStatuses.includes(job.status);
+            const terminalStep = {
+                completed: 'Completed.',
+                failed: 'Failed.',
+                cancelled: 'Cancelled.'
+            }[job.status];
+            return {
+                ...job,
+                current_step: isTerminal ? (terminalStep || job.current_step) : (job.current_step || 'Starting...')
+            };
+        }
+
         // Check job status
         async function checkJob(jobId) {
             try {
@@ -1483,15 +1499,8 @@
 
                 if (data.success) {
                     const job = data.job;
-                    const isTerminal = ['completed', 'failed', 'cancelled'].includes(job.status);
-                    const reconciledJob = isTerminal ? {
-                        ...job,
-                        current_step: {
-                            completed: 'Completed.',
-                            failed: 'Failed.',
-                            cancelled: 'Cancelled.'
-                        }[job.status] || job.current_step
-                    } : job;
+                    const isTerminal = terminalStatuses.includes(job.status);
+                    const reconciledJob = reconcileJobForRender(job);
 
                     renderCurrentJob(reconciledJob);
                     updateRefreshProgress(reconciledJob);
@@ -1502,8 +1511,10 @@
                             clearInterval(jobCheckInterval);
                             jobCheckInterval = null;
                         }
-                        // Reload history
-                        loadJobHistory();
+                        if (lastTerminalJobId !== job.job_id) {
+                            lastTerminalJobId = job.job_id;
+                            loadJobHistory();
+                        }
                     }
                 }
             } catch (error) {
@@ -1589,7 +1600,7 @@
                         ${job.status.toUpperCase()}
                     </span>
                     <span style="margin-left: 15px; color: #718096;">
-                        ${job.current_step || 'Starting...'}
+                        ${job.current_step}
                     </span>
                 </div>
             `;
@@ -1767,11 +1778,26 @@
                 
                 if (data.success && data.jobs.length > 0) {
                     const activeJob = data.jobs.find(j => j.status === 'running' || j.status === 'queued');
+                    const trackedJob = currentJobId ? data.jobs.find(j => j.job_id === currentJobId) : null;
+                    const jobToRender = activeJob || trackedJob;
                     
-                    if (activeJob && currentJobId !== activeJob.job_id) {
-                        currentJobId = activeJob.job_id;
+                    if (jobToRender) {
+                        currentJobId = jobToRender.job_id;
                         document.getElementById('current-job-card').classList.remove('hidden');
-                        checkJob(currentJobId);
+                        const reconciledJob = reconcileJobForRender(jobToRender);
+                        renderCurrentJob(reconciledJob);
+                        updateRefreshProgress(reconciledJob);
+
+                        if (terminalStatuses.includes(jobToRender.status)) {
+                            if (jobCheckInterval) {
+                                clearInterval(jobCheckInterval);
+                                jobCheckInterval = null;
+                            }
+                            if (lastTerminalJobId !== jobToRender.job_id) {
+                                lastTerminalJobId = jobToRender.job_id;
+                                loadJobHistory();
+                            }
+                        }
                     }
                 }
             } catch (error) {
