@@ -1005,10 +1005,12 @@
             document.getElementById('step-indicator-1').classList.remove('active');
             document.getElementById('step-indicator-1').classList.add('completed');
             document.getElementById('step-indicator-2').classList.add('active');
+            document.getElementById('step-indicator-3').classList.remove('active', 'completed');
             
             // Switch cards
             document.getElementById('step-1').classList.add('hidden');
             document.getElementById('step-2').classList.remove('hidden');
+            document.getElementById('step-3').classList.add('hidden');
             
             // Update summary
             const groupNames = selectedGroups.map(id => {
