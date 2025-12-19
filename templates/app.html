@@ -1708,6 +1708,11 @@
         function updateJobPhaseModal(job) {
             const modal = document.getElementById('job-phase-modal');
             const message = document.getElementById('job-phase-message');
+            if (job.status !== 'running') {
+                modal.classList.add('hidden');
+                message.textContent = '';
+                return;
+            }
             const phaseMessage = getPhaseIndicator(job.current_step);
             const isFinalizing = job.status === 'running' && job.total > 0 && job.progress >= job.total;
 
