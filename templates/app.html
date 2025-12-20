@@ -841,10 +841,23 @@
                     <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
                         Exclude Filter (optional)
                     </label>
-                    <input type="text" id="excludeFilter" placeholder="e.g., lincoln*,+1"
+                    <input type="text" id="excludeFilter" placeholder="e.g. linc*,york*,scot*"
                            style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
                     <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
                         Streams matching these patterns will be excluded.
+                    </span>
+                </div>
+
+                <div style="margin-top: 10px;">
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="excludePlusOne"
+                               style="width: 18px; height: 18px; margin-right: 10px; cursor: pointer;">
+                        <span style="color: #4b5563; font-weight: 500;">
+                            Exclude +1 channels
+                        </span>
+                    </label>
+                    <span style="display: block; margin-top: 5px; margin-left: 28px; color: #718096; font-size: 0.85em;">
+                        Excludes channels with +1 time-shifted variants.
                     </span>
                 </div>
                 
@@ -1308,6 +1321,7 @@
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
+                    exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
                     exclude_4k: document.getElementById('exclude4K')?.checked || false
                 };
 
@@ -1425,6 +1439,7 @@
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
+                    exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
                     exclude_4k: document.getElementById('exclude4K')?.checked || false,
                     selected_stream_ids: selectedStreamIds
                 };

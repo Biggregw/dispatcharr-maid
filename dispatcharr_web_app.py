@@ -100,10 +100,19 @@ def _build_config_from_job(job):
     return Config('config.yaml')
 
 
+def _build_exclude_filter(exclude_filter, exclude_plus_one):
+    filters = [item.strip() for item in (exclude_filter or '').split(',') if item.strip()]
+    if exclude_plus_one:
+        plus_one_pattern = r'\+ ?1'
+        if plus_one_pattern not in filters:
+            filters.append(plus_one_pattern)
+    return ','.join(filters) if filters else None
+
+
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None):
+    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -115,6 +124,7 @@ class Job:
         self.exclude_filter = exclude_filter
         self.streams_per_provider = streams_per_provider  # Specific channel IDs if selected
         self.exclude_4k = exclude_4k  # Exclude 4K/UHD streams during refresh
+        self.exclude_plus_one = exclude_plus_one
         self.selected_stream_ids = selected_stream_ids
         self.status = 'queued'  # queued, running, completed, failed, cancelled
         self.progress = 0
@@ -140,6 +150,7 @@ class Job:
             'channel_names': self.channel_names,
             'base_search_text': self.base_search_text,
             'selected_stream_ids': self.selected_stream_ids,
+            'exclude_plus_one': self.exclude_plus_one,
             'status': self.status,
             'progress': self.progress,
             'total': self.total,
@@ -325,13 +336,14 @@ def run_job_worker(job, api, config):
                 return
             
             job.current_step = 'Searching all providers for matching streams...'
+            effective_exclude_filter = _build_exclude_filter(job.exclude_filter, job.exclude_plus_one)
             refresh_result = refresh_channel_streams(
                 api,
                 config,
                 channel_id,
                 job.base_search_text,
                 job.include_filter,
-                job.exclude_filter,
+                effective_exclude_filter,
                 job.exclude_4k,
                 job.selected_stream_ids
             )
@@ -354,7 +366,7 @@ def run_job_worker(job, api, config):
                 'new_count': added,
                 'total_matching': refresh_result.get('total_matching', 0),
                 'include_filter': job.include_filter,
-                'exclude_filter': job.exclude_filter,
+                'exclude_filter': effective_exclude_filter,
                 'base_search_text': refresh_result.get('base_search_text')
             }
             
@@ -728,6 +740,7 @@ def api_refresh_preview():
         base_search_text = data.get('base_search_text')
         include_filter = data.get('include_filter')
         exclude_filter = data.get('exclude_filter')
+        exclude_plus_one = data.get('exclude_plus_one', False)
         exclude_4k = data.get('exclude_4k', False)
 
         if not channel_id:
@@ -737,13 +750,14 @@ def api_refresh_preview():
         api.login()
         config = Config('config.yaml')
 
+        effective_exclude_filter = _build_exclude_filter(exclude_filter, exclude_plus_one)
         preview = refresh_channel_streams(
             api,
             config,
             int(channel_id),
             base_search_text,
             include_filter,
-            exclude_filter,
+            effective_exclude_filter,
             exclude_4k,
             preview=True
         )
@@ -774,6 +788,7 @@ def api_start_job():
         exclude_filter = data.get('exclude_filter')
         streams_per_provider = data.get('streams_per_provider', 1)
         exclude_4k = data.get('exclude_4k', False)
+        exclude_plus_one = data.get('exclude_plus_one', False)
         selected_stream_ids = data.get('selected_stream_ids')
         
         if not job_type or not groups:
@@ -782,7 +797,7 @@ def api_start_job():
         # Create job
         job_id = str(uuid.uuid4())
         workspace, config_path = create_job_workspace(job_id)
-        job = Job(job_id, job_type, groups, channels, base_search_text, include_filter, exclude_filter, streams_per_provider, exclude_4k, group_names, channel_names, str(workspace), selected_stream_ids)
+        job = Job(job_id, job_type, groups, channels, base_search_text, include_filter, exclude_filter, streams_per_provider, exclude_4k, exclude_plus_one, group_names, channel_names, str(workspace), selected_stream_ids)
 
         # Initialize API and config
         api = DispatcharrAPI()
