@@ -189,7 +189,7 @@ def progress_callback(job, progress_data):
 
 def run_job_worker(job, api, config):
     """Background worker that executes the job"""
-    
+    task_name = None
     try:
         job.status = 'running'
         
@@ -209,6 +209,9 @@ def run_job_worker(job, api, config):
         
         # Execute based on job type
         if job.job_type in ['full', 'full_cleanup']:
+            if job.job_type == 'full_cleanup':
+                task_name = "Quality Check & Cleanup"
+                logging.info("TASK_START: Quality Check & Cleanup")
             # Step 1: Fetch
             if job.cancel_requested:
                 job.status = 'cancelled'
@@ -292,6 +295,8 @@ def run_job_worker(job, api, config):
             reorder_streams(api, config)
         
         elif job.job_type == 'refresh_optimize':
+            task_name = "Refresh Channel Streams"
+            logging.info("TASK_START: Refresh Channel Streams")
             # Validate single channel selection
             if not job.channels or len(job.channels) != 1:
                 job.status = 'failed'
@@ -369,6 +374,8 @@ def run_job_worker(job, api, config):
         job.completed_at = datetime.now().isoformat()
     
     finally:
+        if task_name:
+            logging.info(f"TASK_END: {task_name}")
         # Save to history
         save_job_to_history(job)
 
