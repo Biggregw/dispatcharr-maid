@@ -239,15 +239,22 @@ def run_job_worker(job, api, config):
                 progress_callback(job, progress_data)
                 return not job.cancel_requested  # Return False to cancel
             
-            analyze_streams(
-                config,
-                progress_callback=progress_wrapper,
-                force_full_analysis=(job.job_type == 'full_cleanup')
-            )
+            try:
+                analyzed_count = analyze_streams(
+                    config,
+                    progress_callback=progress_wrapper,
+                    force_full_analysis=(job.job_type == 'full_cleanup')
+                )
+            finally:
+                # Restore original setting
+                config.set('filters', 'stream_last_measured_days', original_days)
+                config.save()
             
-            # Restore original setting
-            config.set('filters', 'stream_last_measured_days', original_days)
-            config.save()
+            if job.job_type == 'full_cleanup' and not analyzed_count:
+                logging.warning("Full cleanup analysis executed zero streams; stopping before scoring/cleanup.")
+                job.status = 'failed'
+                job.current_step = 'Error: Analysis executed zero streams'
+                return
             
             # Step 3: Score
             if job.cancel_requested:

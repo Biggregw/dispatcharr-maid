@@ -593,6 +593,7 @@ def analyze_streams(config, input_csv=None,
         raise Exception("ffmpeg and ffprobe are required but not found")
 
     logging.info("Loading streams to analyze...")
+    analyzed_count = 0
 
     input_csv = input_csv or config.resolve_path('csv/02_grouped_channel_streams.csv')
     output_csv = output_csv or config.resolve_path('csv/03_iptv_stream_measurements.csv')
@@ -603,7 +604,7 @@ def analyze_streams(config, input_csv=None,
         df = pd.read_csv(input_csv)
     except FileNotFoundError:
         logging.error(f"Input CSV not found: {input_csv}")
-        return
+        return analyzed_count
     
     filters = config.get('filters') or {}
     
@@ -627,7 +628,7 @@ def analyze_streams(config, input_csv=None,
     
     if df.empty:
         logging.warning("No streams to analyze after applying filters")
-        return
+        return analyzed_count
     
     # Prune recently analyzed streams
     days_to_keep = filters.get('stream_last_measured_days', 7)
@@ -652,7 +653,7 @@ def analyze_streams(config, input_csv=None,
     
     if df.empty:
         logging.info("All streams have been analyzed recently - nothing to do")
-        return
+        return analyzed_count
     
     streams_to_analyze = df.to_dict('records')
     
@@ -710,7 +711,8 @@ def analyze_streams(config, input_csv=None,
                         
                         if result_row is None:  # Already processed
                             continue
-                        
+
+                        analyzed_count += 1
                         # Write to output
                         writer_out.writerow(result_row)
                         f_out.flush()
@@ -747,6 +749,7 @@ def analyze_streams(config, input_csv=None,
         df_final = df_final.reindex(columns=final_columns)
         df_final.to_csv(output_csv, index=False, na_rep='N/A')
         logging.info(f"Results saved to {output_csv}")
+        return analyzed_count
     
     except Exception as e:
         logging.error(f"Error during analysis: {e}")
