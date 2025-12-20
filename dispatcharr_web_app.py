@@ -617,9 +617,15 @@ def generate_job_summary(config, specific_channel_ids=None):
         # Provider breakdown
         provider_stats = {}
         provider_name_lookup = {}
+        provider_stats_df = None
         if 'm3u_account' in stats_df.columns:
-            if 'm3u_account_name' in stats_df.columns:
-                name_df = stats_df[['m3u_account', 'm3u_account_name']].dropna()
+            provider_stats_df = stats_df
+        elif 'm3u_account' in df.columns:
+            provider_stats_df = df
+
+        if provider_stats_df is not None:
+            if 'm3u_account_name' in provider_stats_df.columns:
+                name_df = provider_stats_df[['m3u_account', 'm3u_account_name']].dropna()
                 if not name_df.empty:
                     for provider_id, group in name_df.groupby('m3u_account'):
                         provider_name = group['m3u_account_name'].dropna().iloc[0]
@@ -627,15 +633,15 @@ def generate_job_summary(config, specific_channel_ids=None):
                             provider_name_lookup[provider_id] = provider_name
 
             quality_column = None
-            if 'quality_score' in stats_df.columns:
+            if 'quality_score' in provider_stats_df.columns:
                 quality_column = 'quality_score'
-            elif 'score' in stats_df.columns:
+            elif 'score' in provider_stats_df.columns:
                 quality_column = 'score'
 
-            for provider_id in stats_df['m3u_account'].unique():
+            for provider_id in provider_stats_df['m3u_account'].unique():
                 if pd.isna(provider_id):
                     continue
-                provider_df = stats_df[stats_df['m3u_account'] == provider_id]
+                provider_df = provider_stats_df[provider_stats_df['m3u_account'] == provider_id]
                 provider_total = len(provider_df)
                 provider_success = len(provider_df[provider_df['status'] == 'OK'])
                 
@@ -646,7 +652,7 @@ def generate_job_summary(config, specific_channel_ids=None):
                     avg_score = success_df[quality_column].mean()
 
                 provider_key = str(int(provider_id)) if isinstance(provider_id, (int, float)) else str(provider_id)
-                provider_name = provider_name_lookup.get(provider_id) or f"Provider {provider_key}"
+                provider_name = provider_name_lookup.get(provider_id)
                 provider_stats[provider_key] = {
                     'total': provider_total,
                     'successful': provider_success,
