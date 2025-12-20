@@ -475,6 +475,27 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
     return row
 
 
+# Provider name enrichment helpers
+def _resolve_provider_name(provider_id, provider_map):
+    if pd.isna(provider_id):
+        return None
+    if provider_map and provider_id in provider_map:
+        return provider_map[provider_id]
+    try:
+        return f"Provider {int(provider_id)}"
+    except (TypeError, ValueError):
+        return f"Provider {provider_id}"
+
+
+def _inject_provider_names(df, provider_map):
+    if 'm3u_account' not in df.columns:
+        return df
+    df['m3u_account_name'] = df['m3u_account'].apply(
+        lambda provider_id: _resolve_provider_name(provider_id, provider_map)
+    )
+    return df
+
+
 # Main functions
 
 def fetch_streams(api, config, output_file=None):
@@ -589,7 +610,7 @@ def fetch_streams(api, config, output_file=None):
 def analyze_streams(config, input_csv=None,
                    output_csv=None,
                    fails_csv=None, progress_callback=None,
-                   force_full_analysis=False):
+                   force_full_analysis=False, provider_map=None):
     """Analyze streams with progress tracking and checkpointing"""
 
     if not _check_ffmpeg_installed():
@@ -658,6 +679,10 @@ def analyze_streams(config, input_csv=None,
         logging.info("All streams have been analyzed recently - nothing to do")
         return analyzed_count
     
+    include_provider_name = provider_map is not None
+    if include_provider_name:
+        df = _inject_provider_names(df, provider_map)
+
     streams_to_analyze = df.to_dict('records')
     
     # Initialize progress tracker
@@ -679,10 +704,14 @@ def analyze_streams(config, input_csv=None,
     
     final_columns = [
         'channel_number', 'channel_id', 'stream_id', 'stream_name', 'stream_url',
-        'channel_group_id', 'm3u_account', 'timestamp', 'video_codec', 'audio_codec',
-        'interlaced_status', 'status', 'bitrate_kbps', 'fps', 'resolution',
-        'frames_decoded', 'frames_dropped', 'err_decode', 'err_discontinuity',
-        'err_timeout'
+        'channel_group_id', 'm3u_account'
+    ]
+    if include_provider_name:
+        final_columns.append('m3u_account_name')
+    final_columns += [
+        'timestamp', 'video_codec', 'audio_codec', 'interlaced_status', 'status',
+        'bitrate_kbps', 'fps', 'resolution', 'frames_decoded', 'frames_dropped',
+        'err_decode', 'err_discontinuity', 'err_timeout'
     ]
     
     output_exists = os.path.exists(output_csv)
@@ -762,7 +791,8 @@ def analyze_streams(config, input_csv=None,
 
 def score_streams(api, config, input_csv=None,
                  output_csv=None,
-                 update_stats=False):
+                 update_stats=False,
+                 provider_map=None):
     """Calculate scores and sort streams"""
 
     logging.info("Scoring streams...")
@@ -802,6 +832,10 @@ def score_streams(api, config, input_csv=None,
         logging.warning("No streams to score")
         return
     
+    include_provider_name = provider_map is not None or 'm3u_account_name' in df.columns
+    if include_provider_name and 'm3u_account_name' not in df.columns:
+        df = _inject_provider_names(df, provider_map or {})
+
     # Convert types
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
     df['frames_decoded'] = pd.to_numeric(df['frames_decoded'], errors='coerce')
@@ -884,7 +918,12 @@ def score_streams(api, config, input_csv=None,
     # Prepare final columns
     final_columns = [
         'stream_id', 'channel_number', 'channel_id', 'channel_group_id', 'stream_name',
-        'stream_url', 'm3u_account', 'avg_bitrate_kbps', 'avg_frames_decoded',
+        'stream_url', 'm3u_account',
+    ]
+    if include_provider_name:
+        final_columns.append('m3u_account_name')
+    final_columns += [
+        'avg_bitrate_kbps', 'avg_frames_decoded',
         'avg_frames_dropped', 'dropped_frame_percentage', 'fps', 'resolution',
         'video_codec', 'audio_codec', 'interlaced_status', 'status', 'score',
         'error_penalty'

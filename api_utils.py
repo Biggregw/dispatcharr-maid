@@ -177,6 +177,44 @@ class DispatcharrAPI:
         except Exception as e:
             logging.warning(f"Could not fetch stream {stream_id}: {e}")
             return None
+
+    def fetch_m3u_accounts(self):
+        """Fetch M3U accounts using available endpoints."""
+        endpoints = [
+            '/api/m3u-accounts/m3u-accounts/',
+            '/api/m3u/',
+            '/m3u-accounts/'
+        ]
+
+        last_error = None
+        for endpoint in endpoints:
+            try:
+                providers = self.get(endpoint)
+            except Exception as e:
+                last_error = e
+                continue
+
+            if providers:
+                return providers
+
+        if last_error:
+            logging.warning(f"Could not fetch M3U accounts: {last_error}")
+        return []
+
+    def fetch_m3u_account_map(self):
+        """Build a mapping of M3U account IDs to provider names."""
+        providers = self.fetch_m3u_accounts()
+        provider_map = {}
+        for provider in providers:
+            provider_id = provider.get('id')
+            if provider_id is None:
+                continue
+            provider_map[provider_id] = (
+                provider.get('name')
+                or provider.get('title')
+                or f"Provider {provider_id}"
+            )
+        return provider_map
     
     def update_channel_streams(self, channel_id, stream_ids):
         """Update the stream list for a channel"""

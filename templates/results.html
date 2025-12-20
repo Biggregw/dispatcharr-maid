@@ -208,8 +208,9 @@
                 
                 tbody.innerHTML = providers.map(([id, stats]) => {
                     const badgeClass = stats.success_rate >= 90 ? 'excellent' : stats.success_rate >= 70 ? 'good' : stats.success_rate >= 50 ? 'fair' : 'poor';
+                    const providerLabel = stats.provider_name || `Provider ${id}`;
                     return `<tr>
-                        <td>Provider ${id}</td>
+                        <td>${providerLabel}</td>
                         <td>${stats.total}</td>
                         <td style="color: #38a169;">${stats.successful}</td>
                         <td style="color: #e53e3e;">${stats.failed}</td>

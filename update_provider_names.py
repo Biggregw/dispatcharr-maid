@@ -9,17 +9,7 @@ api = DispatcharrAPI()
 # Fetch M3U accounts properly
 print("Fetching M3U accounts...")
 try:
-    # Try different endpoints
-    providers = api.get('/api/m3u-accounts/m3u-accounts/')
-    if not providers:
-        providers = api.get('/api/m3u/')
-    if not providers:
-        providers = api.get('/m3u-accounts/')
-    
-    provider_map = {}
-    for p in providers:
-        provider_map[p['id']] = p.get('name', p.get('title', f"Provider {p['id']}"))
-    
+    provider_map = api.fetch_m3u_account_map()
     print(f"Found {len(provider_map)} providers:")
     for id, name in provider_map.items():
         print(f"  ID {id}: {name}")
