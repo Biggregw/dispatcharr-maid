@@ -562,15 +562,22 @@ def cleanup_streams_by_provider(api, selected_group_ids, config, streams_per_pro
 def generate_job_summary(config, specific_channel_ids=None):
     """Generate comprehensive summary of last analysis, optionally filtered by channel IDs"""
     measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
+    scored_file = config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
     
     if not os.path.exists(measurements_file):
         return None
     
     try:
         df = pd.read_csv(measurements_file)
+        scored_df = None
+        if os.path.exists(scored_file):
+            scored_df = pd.read_csv(scored_file)
         
         if len(df) == 0:
             return None
+
+        if scored_df is not None and len(scored_df) == 0:
+            scored_df = None
         
         # Filter by specific channels if provided
         if specific_channel_ids:
@@ -579,26 +586,40 @@ def generate_job_summary(config, specific_channel_ids=None):
             
             if len(df) == 0:
                 return None
+            if scored_df is not None and 'channel_id' in scored_df.columns:
+                scored_df['channel_id'] = pd.to_numeric(scored_df['channel_id'], errors='coerce')
+                scored_df = scored_df[scored_df['channel_id'].isin(specific_channel_ids)]
         
         total = len(df)
         successful = len(df[df['status'] == 'OK'])
         failed = total - successful
         
+        stats_df = scored_df if scored_df is not None else df
+
         # Provider breakdown
         provider_stats = {}
-        if 'm3u_account' in df.columns:
-            for provider_id in df['m3u_account'].unique():
+        if 'm3u_account' in stats_df.columns:
+            quality_column = None
+            if 'quality_score' in stats_df.columns:
+                quality_column = 'quality_score'
+            elif 'score' in stats_df.columns:
+                quality_column = 'score'
+
+            for provider_id in stats_df['m3u_account'].unique():
                 if pd.isna(provider_id):
                     continue
-                provider_df = df[df['m3u_account'] == provider_id]
+                provider_df = stats_df[stats_df['m3u_account'] == provider_id]
                 provider_total = len(provider_df)
                 provider_success = len(provider_df[provider_df['status'] == 'OK'])
                 
                 # Get average quality score for successful streams
                 success_df = provider_df[provider_df['status'] == 'OK']
-                avg_score = success_df['quality_score'].mean() if 'quality_score' in df.columns and len(success_df) > 0 else 0
-                
-                provider_stats[str(int(provider_id))] = {
+                avg_score = 0
+                if quality_column and len(success_df) > 0:
+                    avg_score = success_df[quality_column].mean()
+
+                provider_key = str(int(provider_id)) if isinstance(provider_id, (int, float)) else str(provider_id)
+                provider_stats[provider_key] = {
                     'total': provider_total,
                     'successful': provider_success,
                     'failed': provider_total - provider_success,
@@ -644,13 +665,13 @@ def generate_job_summary(config, specific_channel_ids=None):
         
         # Channel breakdown
         channel_stats = {}
-        if 'channel_number' in df.columns:
-            for channel_num in df['channel_number'].unique():
+        if 'channel_number' in stats_df.columns:
+            for channel_num in stats_df['channel_number'].unique():
                 if pd.isna(channel_num):
                     continue
-                channel_df = df[df['channel_number'] == channel_num]
+                channel_df = stats_df[stats_df['channel_number'] == channel_num]
                 # Use stream_name as channel name (first occurrence)
-                channel_name = channel_df['stream_name'].iloc[0] if 'stream_name' in df.columns and len(channel_df) > 0 else f"Channel {int(channel_num)}"
+                channel_name = channel_df['stream_name'].iloc[0] if 'stream_name' in stats_df.columns and len(channel_df) > 0 else f"Channel {int(channel_num)}"
                 channel_total = len(channel_df)
                 channel_success = len(channel_df[channel_df['status'] == 'OK'])
                 
