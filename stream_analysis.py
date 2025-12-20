@@ -774,6 +774,7 @@ def score_streams(api, config, input_csv=None,
     
     filters = config.get('filters') or {}
     scoring_cfg = config.get('scoring') or {}
+    exclude_4k = filters.get('exclude_4k', False)
     
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])
@@ -816,6 +817,15 @@ def score_streams(api, config, input_csv=None,
         latest_meta.drop(columns=['bitrate_kbps', 'frames_decoded', 'frames_dropped']), 
         on='stream_id'
     )
+
+    if exclude_4k:
+        summary['resolution'] = summary['resolution'].astype(str).str.strip()
+        excluded_resolutions = {'3840x2160', '4096x2160'}
+        before_count = len(summary)
+        summary = summary[~summary['resolution'].isin(excluded_resolutions)]
+        excluded_count = before_count - len(summary)
+        if excluded_count:
+            logging.info(f"Excluded {excluded_count} 4K/UHD streams from scoring")
     
     # Calculate dropped frame percentage
     summary['dropped_frame_percentage'] = (
@@ -941,6 +951,16 @@ def reorder_streams(api, config, input_csv=None):
     end_range = filters.get('end_channel', 99999)
     df['channel_number'] = pd.to_numeric(df['channel_number'], errors='coerce')
     df = df[df['channel_number'].between(start_range, end_range)]
+
+    exclude_4k = filters.get('exclude_4k', False)
+    if exclude_4k and 'resolution' in df.columns:
+        df['resolution'] = df['resolution'].astype(str).str.strip()
+        excluded_resolutions = {'3840x2160', '4096x2160'}
+        before_count = len(df)
+        df = df[~df['resolution'].isin(excluded_resolutions)]
+        excluded_count = before_count - len(df)
+        if excluded_count:
+            logging.info(f"Excluded {excluded_count} 4K/UHD streams from reordering")
     
     if df.empty:
         logging.warning("No streams to reorder")
