@@ -250,12 +250,13 @@ def run_job_worker(job, api, config):
                 progress_callback(job, progress_data)
                 return not job.cancel_requested  # Return False to cancel
             
+            analyzed_count = 0
             try:
                 analyzed_count = analyze_streams(
                     config,
                     progress_callback=progress_wrapper,
                     force_full_analysis=(job.job_type == 'full_cleanup')
-                )
+                ) or 0
             finally:
                 # Restore original setting
                 config.set('filters', 'stream_last_measured_days', original_days)
@@ -882,7 +883,10 @@ def api_detailed_results():
         
         # Fall back to CSV-based summary if no recent jobs
         latest_job = _get_latest_job_with_workspace()
-        summary = generate_job_summary(_build_config_from_job(latest_job))
+        if latest_job is None:
+            summary = generate_job_summary(Config('config.yaml'))
+        else:
+            summary = generate_job_summary(_build_config_from_job(latest_job))
         
         if not summary:
             return jsonify({'success': False, 'error': 'No results available'}), 404
