@@ -1483,7 +1483,11 @@
             const remaining = typeof job.remaining === 'number'
                 ? job.remaining
                 : (typeof total === 'number' && typeof processed === 'number' ? total - processed : null);
-            return total !== null && processed !== null && processed === total && remaining === 0;
+            return total !== null
+                && processed !== null
+                && processed > 0
+                && processed === total
+                && remaining === 0;
         }
 
         function normalizeJobStatus(job) {
