@@ -71,7 +71,7 @@
             </div>
         </div>
         
-        <div class="card">
+        <div class="card" id="detailed-breakdown-card">
             <h2>🔍 Detailed Breakdown</h2>
             <div class="tabs">
                 <button class="tab active" onclick="showTab('providers')">Providers</button>
@@ -148,7 +148,10 @@
                     document.querySelector('#stat-rate').previousElementSibling.textContent = 'Status';
                     
                     // Hide the detailed breakdown section
-                    document.querySelectorAll('.card')[1].style.display = 'none';
+                    const breakdownCard = document.getElementById('detailed-breakdown-card');
+                    if (breakdownCard) {
+                        breakdownCard.style.display = 'none';
+                    }
                     
                     // Add filter info if present
                     if (r.include_filter || r.exclude_filter) {
