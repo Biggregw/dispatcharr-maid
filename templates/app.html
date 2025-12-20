@@ -470,6 +470,10 @@
             justify-content: space-between;
             align-items: center;
         }
+
+        .history-item.clickable {
+            cursor: pointer;
+        }
         
         .history-item:hover {
             background: #f7fafc;
@@ -713,8 +717,8 @@
             <h1>🧹 Dispatcharr Maid</h1>
             <p>Interactive Control Panel</p>
             <div style="margin-top: 15px;">
-                <button class="btn" onclick="window.location.href='/results'" style="background: white; color: #667eea;">
-                    📊 View Detailed Results
+                <button class="btn" onclick="scrollToJobHistory()" style="background: white; color: #667eea;">
+                    📊 View Job Results
                 </button>
             </div>
         </div>
@@ -1866,7 +1870,7 @@
                 }
                 
                 return `
-                    <div class="history-item">
+                    <div class="history-item clickable" onclick="viewJobResults('${job.job_id}')">
                         <div class="history-info">
                             <div class="history-type">${typeLabel}</div>
                             <div class="history-time" style="font-size: 0.85em; color: #718096;">${context}</div>
@@ -1885,6 +1889,20 @@
             const el = document.getElementById(elementId);
             el.textContent = message;
             el.classList.remove('hidden');
+        }
+
+        function viewJobResults(jobId) {
+            if (!jobId) {
+                return;
+            }
+            window.location.href = `/results?job_id=${encodeURIComponent(jobId)}`;
+        }
+
+        function scrollToJobHistory() {
+            const historySection = document.getElementById('history-container');
+            if (historySection) {
+                historySection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
         }
     </script>
 </body>

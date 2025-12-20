@@ -117,11 +117,20 @@
     </div>
     
     <script>
-        fetch('/api/results/detailed')
+        const params = new URLSearchParams(window.location.search);
+        const jobId = params.get('job_id');
+        const resultsUrl = jobId ? `/api/results/detailed/${encodeURIComponent(jobId)}` : '/api/results/detailed';
+
+        fetch(resultsUrl)
             .then(r => r.json())
             .then(data => {
                 if (!data.success) {
                     document.body.innerHTML = '<div style="text-align:center;padding:40px;color:white;"><h2>No results available</h2><p>Run an analysis first.</p><a href="/" style="color:white;">Go Back</a></div>';
+                    return;
+                }
+
+                if (jobId && data.analysis_ran === false) {
+                    document.body.innerHTML = '<div style="text-align:center;padding:40px;color:white;"><h2>No analysis ran for this job</h2><p>This job did not execute stream analysis.</p><a href="/" style="color:white;">Go Back</a></div>';
                     return;
                 }
                 
