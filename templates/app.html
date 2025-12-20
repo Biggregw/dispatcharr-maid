@@ -500,6 +500,13 @@
             font-weight: 600;
             font-size: 0.9em;
         }
+
+        .history-meta {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 6px;
+        }
         
         .status-completed {
             background: #c6f6d5;
@@ -1876,9 +1883,14 @@
                             <div class="history-time" style="font-size: 0.85em; color: #718096;">${context}</div>
                             <div class="history-time" style="font-size: 0.75em; color: #a0aec0;">${timeStr}</div>
                         </div>
-                        <span class="history-status ${statusClass}">
-                            ${streamInfo || job.status}
-                        </span>
+                        <div class="history-meta">
+                            <span class="history-status ${statusClass}">
+                                ${streamInfo || job.status}
+                            </span>
+                            <button class="text-btn" onclick="viewJobResults('${job.job_id}'); event.stopPropagation();">
+                                View Results
+                            </button>
+                        </div>
                     </div>
                 `;
             }).join('');

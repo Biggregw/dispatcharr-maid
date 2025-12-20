@@ -119,7 +119,17 @@
     <script>
         const params = new URLSearchParams(window.location.search);
         const jobId = params.get('job_id');
-        const resultsUrl = jobId ? `/api/results/detailed/${encodeURIComponent(jobId)}` : '/api/results/detailed';
+        const resultsUrl = jobId ? `/api/results/job/${encodeURIComponent(jobId)}` : '/api/results/detailed';
+
+        function showWarning(title, message) {
+            document.body.innerHTML = `
+                <div style="text-align:center;padding:40px;color:white;">
+                    <h2>${title}</h2>
+                    <p>${message}</p>
+                    <a href="/" style="color:white;">Go Back</a>
+                </div>
+            `;
+        }
 
         fetch(resultsUrl)
             .then(r => r.json())
@@ -128,16 +138,15 @@
                     document.body.innerHTML = '<div style="text-align:center;padding:40px;color:white;"><h2>No results available</h2><p>Run an analysis first.</p><a href="/" style="color:white;">Go Back</a></div>';
                     return;
                 }
-
-                if (jobId && data.analysis_ran === false) {
-                    document.body.innerHTML = '<div style="text-align:center;padding:40px;color:white;"><h2>No analysis ran for this job</h2><p>This job did not execute stream analysis.</p><a href="/" style="color:white;">Go Back</a></div>';
-                    return;
-                }
                 
                 const r = data.results;
+                const jobType = r.job_type || data.job_type;
+                const analyzedStreams = typeof data.analyzed_streams === 'number'
+                    ? data.analyzed_streams
+                    : (typeof r.total === 'number' ? r.total : 0);
                 
                 // Check if this is a refresh job
-                if (r.job_type === 'refresh') {
+                if (jobType === 'refresh') {
                     // Show refresh-specific results
                     document.querySelector('.header h1').textContent = '🔄 Channel Refresh Results';
                     document.querySelector('.header p').textContent = 'Stream Replacement Summary';
@@ -174,6 +183,16 @@
                         document.querySelectorAll('.card')[0].after(filterCard);
                     }
                     
+                    return;
+                }
+
+                if (data.analysis_ran === false) {
+                    showWarning('No analysis ran for this job', 'This job did not execute stream analysis.');
+                    return;
+                }
+
+                if (analyzedStreams === 0) {
+                    showWarning('No analysis results', 'Stream analysis ran but produced zero analyzed streams.');
                     return;
                 }
                 
