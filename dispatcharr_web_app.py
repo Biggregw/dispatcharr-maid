@@ -109,6 +109,11 @@ def _build_exclude_filter(exclude_filter, exclude_plus_one):
     return ','.join(filters) if filters else None
 
 
+def _job_ran_analysis(job_type):
+    """Return True if the job type includes an analysis step."""
+    return job_type in {'full', 'full_cleanup', 'analyze'}
+
+
 class Job:
     """Represents a running or completed job"""
 
@@ -390,10 +395,14 @@ def run_job_worker(job, api, config):
         job.current_step = 'Completed' if not job.cancel_requested else 'Cancelled'
         job.completed_at = datetime.now().isoformat()
         
-        # Generate summary (skip for refresh jobs - they set their own)
-        if job.job_type != 'refresh_optimize' and not job.result_summary:
-            # Pass channel filter to summary so it only shows what we just processed
-            job.result_summary = generate_job_summary(config, specific_channel_ids=job.channels)
+        # Generate analysis summary when analysis ran
+        if _job_ran_analysis(job.job_type):
+            summary = generate_job_summary(config, specific_channel_ids=job.channels)
+            if summary:
+                if job.result_summary:
+                    job.result_summary.update(summary)
+                else:
+                    job.result_summary = summary
         
     except Exception as e:
         job.status = 'failed'
@@ -869,6 +878,32 @@ def api_job_history():
     return jsonify({'success': True, 'history': history})
 
 
+@app.route('/api/results/detailed/<job_id>')
+def api_job_results(job_id):
+    """Get detailed analysis results for a specific job"""
+    try:
+        with job_lock:
+            job = jobs.get(job_id)
+
+        if job:
+            results = job.result_summary
+            analysis_ran = _job_ran_analysis(job.job_type)
+        else:
+            history = get_job_history()
+            history_job = next((entry for entry in history if entry.get('job_id') == job_id), None)
+            if not history_job:
+                return jsonify({'success': False, 'error': 'Job not found'}), 404
+            results = history_job.get('result_summary')
+            analysis_ran = _job_ran_analysis(history_job.get('job_type'))
+
+        if not results:
+            return jsonify({'success': False, 'error': 'No results available'}), 404
+
+        return jsonify({'success': True, 'results': results, 'analysis_ran': analysis_ran})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/results/detailed')
 def api_detailed_results():
     """Get detailed analysis results from the most recent completed job"""
@@ -879,7 +914,11 @@ def api_detailed_results():
             if completed_jobs:
                 # Get most recent
                 latest_job = max(completed_jobs, key=lambda j: j.started_at)
-                return jsonify({'success': True, 'results': latest_job.result_summary})
+                return jsonify({
+                    'success': True,
+                    'results': latest_job.result_summary,
+                    'analysis_ran': _job_ran_analysis(latest_job.job_type)
+                })
         
         # Fall back to CSV-based summary if no recent jobs
         latest_job = _get_latest_job_with_workspace()
@@ -891,7 +930,7 @@ def api_detailed_results():
         if not summary:
             return jsonify({'success': False, 'error': 'No results available'}), 404
         
-        return jsonify({'success': True, 'results': summary})
+        return jsonify({'success': True, 'results': summary, 'analysis_ran': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
