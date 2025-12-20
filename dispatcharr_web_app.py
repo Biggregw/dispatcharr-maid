@@ -114,6 +114,18 @@ def _job_ran_analysis(job_type):
     return job_type in {'full', 'full_cleanup', 'analyze'}
 
 
+def _fetch_provider_map(api):
+    """Fetch provider names once per job."""
+    try:
+        provider_map = api.fetch_m3u_account_map()
+        if provider_map:
+            logging.info("Loaded %s provider names", len(provider_map))
+        return provider_map or {}
+    except Exception as exc:
+        logging.warning("Provider name enrichment unavailable: %s", exc)
+        return {}
+
+
 def _extract_analyzed_streams(results):
     if isinstance(results, dict):
         total = results.get('total')
@@ -251,6 +263,7 @@ def run_job_worker(job, api, config):
     task_name = None
     try:
         job.status = 'running'
+        provider_map = None
         
         # Update config with selected groups and channels
         config.set('filters', 'channel_group_ids', job.groups)
@@ -266,6 +279,10 @@ def run_job_worker(job, api, config):
         
         config.save()
         
+        # Fetch provider names once per job if analysis or scoring is involved
+        if _job_ran_analysis(job.job_type) or job.job_type == 'score':
+            provider_map = _fetch_provider_map(api)
+
         # Execute based on job type
         if job.job_type in ['full', 'full_cleanup']:
             if job.job_type == 'full_cleanup':
@@ -300,7 +317,8 @@ def run_job_worker(job, api, config):
                 analyzed_count = analyze_streams(
                     config,
                     progress_callback=progress_wrapper,
-                    force_full_analysis=(job.job_type == 'full_cleanup')
+                    force_full_analysis=(job.job_type == 'full_cleanup'),
+                    provider_map=provider_map
                 ) or 0
             finally:
                 # Restore original setting
@@ -319,7 +337,7 @@ def run_job_worker(job, api, config):
                 return
             
             job.current_step = 'Scoring streams...'
-            score_streams(api, config, update_stats=True)
+            score_streams(api, config, update_stats=True, provider_map=provider_map)
             
             # Step 4: Reorder
             if job.cancel_requested:
@@ -355,11 +373,11 @@ def run_job_worker(job, api, config):
                 progress_callback(job, progress_data)
                 return not job.cancel_requested
             
-            analyze_streams(config, progress_callback=progress_wrapper)
+            analyze_streams(config, progress_callback=progress_wrapper, provider_map=provider_map)
         
         elif job.job_type == 'score':
             job.current_step = 'Scoring streams...'
-            score_streams(api, config, update_stats=True)
+            score_streams(api, config, update_stats=True, provider_map=provider_map)
         
         elif job.job_type == 'reorder':
             job.current_step = 'Reordering streams...'
@@ -598,7 +616,16 @@ def generate_job_summary(config, specific_channel_ids=None):
 
         # Provider breakdown
         provider_stats = {}
+        provider_name_lookup = {}
         if 'm3u_account' in stats_df.columns:
+            if 'm3u_account_name' in stats_df.columns:
+                name_df = stats_df[['m3u_account', 'm3u_account_name']].dropna()
+                if not name_df.empty:
+                    for provider_id, group in name_df.groupby('m3u_account'):
+                        provider_name = group['m3u_account_name'].dropna().iloc[0]
+                        if provider_name:
+                            provider_name_lookup[provider_id] = provider_name
+
             quality_column = None
             if 'quality_score' in stats_df.columns:
                 quality_column = 'quality_score'
@@ -619,12 +646,14 @@ def generate_job_summary(config, specific_channel_ids=None):
                     avg_score = success_df[quality_column].mean()
 
                 provider_key = str(int(provider_id)) if isinstance(provider_id, (int, float)) else str(provider_id)
+                provider_name = provider_name_lookup.get(provider_id) or f"Provider {provider_key}"
                 provider_stats[provider_key] = {
                     'total': provider_total,
                     'successful': provider_success,
                     'failed': provider_total - provider_success,
                     'success_rate': round(provider_success / provider_total * 100, 1) if provider_total > 0 else 0,
-                    'avg_quality': round(avg_score, 1)
+                    'avg_quality': round(avg_score, 1),
+                    'provider_name': provider_name
                 }
         
         # Quality distribution
