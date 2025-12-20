@@ -1474,6 +1474,28 @@
             };
         }
 
+        function isJobComplete(job) {
+            if (job.completed_at) {
+                return true;
+            }
+            const processed = typeof job.processed === 'number' ? job.processed : job.progress;
+            const total = typeof job.total === 'number' ? job.total : null;
+            const remaining = typeof job.remaining === 'number'
+                ? job.remaining
+                : (typeof total === 'number' && typeof processed === 'number' ? total - processed : null);
+            return total !== null && processed !== null && processed === total && remaining === 0;
+        }
+
+        function normalizeJobStatus(job) {
+            if (terminalStatuses.includes(job.status)) {
+                return job;
+            }
+            if (isJobComplete(job)) {
+                return { ...job, status: 'completed' };
+            }
+            return job;
+        }
+
         // Check job status
         async function checkJob(jobId) {
             try {
@@ -1481,7 +1503,7 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    const job = data.job;
+                    const job = normalizeJobStatus(data.job);
                     const isTerminal = terminalStatuses.includes(job.status);
                     const reconciledJob = reconcileJobForRender(job);
 
@@ -1732,21 +1754,22 @@
                     const activeJob = data.jobs.find(j => j.status === 'running' || j.status === 'queued');
                     const trackedJob = currentJobId ? data.jobs.find(j => j.job_id === currentJobId) : null;
                     const jobToRender = activeJob || trackedJob;
-                    
+
                     if (jobToRender) {
-                        currentJobId = jobToRender.job_id;
+                        const normalizedJob = normalizeJobStatus(jobToRender);
+                        currentJobId = normalizedJob.job_id;
                         document.getElementById('current-job-card').classList.remove('hidden');
-                        const reconciledJob = reconcileJobForRender(jobToRender);
+                        const reconciledJob = reconcileJobForRender(normalizedJob);
                         renderCurrentJob(reconciledJob);
                         updateRefreshProgress(reconciledJob);
 
-                        if (terminalStatuses.includes(jobToRender.status)) {
+                        if (terminalStatuses.includes(normalizedJob.status)) {
                             if (jobCheckInterval) {
                                 clearInterval(jobCheckInterval);
                                 jobCheckInterval = null;
                             }
-                            if (lastTerminalJobId !== jobToRender.job_id) {
-                                lastTerminalJobId = jobToRender.job_id;
+                            if (lastTerminalJobId !== normalizedJob.job_id) {
+                                lastTerminalJobId = normalizedJob.job_id;
                                 loadJobHistory();
                             }
                         }
