@@ -552,8 +552,10 @@ def fetch_streams(api, config, output_file=None):
     # Fetch and save streams
     with open(output_file, mode="w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["channel_number", "channel_id", "channel_group_id", 
-                        "stream_id", "stream_name", "stream_url"])
+        writer.writerow([
+            "channel_number", "channel_id", "channel_group_id",
+            "stream_id", "stream_name", "stream_url", "m3u_account"
+        ])
         
         for channel in final_channels:
             channel_id = channel.get("id")
@@ -575,7 +577,8 @@ def fetch_streams(api, config, output_file=None):
                     channel_group_id,
                     stream.get("id", ""),
                     stream.get("name", ""),
-                    stream.get("url", "")
+                    stream.get("url", ""),
+                    stream.get("m3u_account", "")
                 ])
             
             logging.info(f"  Saved {len(streams)} streams")
@@ -676,9 +679,10 @@ def analyze_streams(config, input_csv=None,
     
     final_columns = [
         'channel_number', 'channel_id', 'stream_id', 'stream_name', 'stream_url',
-        'channel_group_id', 'timestamp', 'video_codec', 'audio_codec', 'interlaced_status',
-        'status', 'bitrate_kbps', 'fps', 'resolution', 'frames_decoded', 'frames_dropped',
-        'err_decode', 'err_discontinuity', 'err_timeout'
+        'channel_group_id', 'm3u_account', 'timestamp', 'video_codec', 'audio_codec',
+        'interlaced_status', 'status', 'bitrate_kbps', 'fps', 'resolution',
+        'frames_decoded', 'frames_dropped', 'err_decode', 'err_discontinuity',
+        'err_timeout'
     ]
     
     output_exists = os.path.exists(output_csv)
@@ -879,10 +883,11 @@ def score_streams(api, config, input_csv=None,
     
     # Prepare final columns
     final_columns = [
-        'stream_id', 'channel_number', 'channel_id', 'channel_group_id', 'stream_name', 'stream_url',
-        'avg_bitrate_kbps', 'avg_frames_decoded', 'avg_frames_dropped', 'dropped_frame_percentage',
-        'fps', 'resolution', 'video_codec', 'audio_codec', 'interlaced_status', 'status', 
-        'score', 'error_penalty'
+        'stream_id', 'channel_number', 'channel_id', 'channel_group_id', 'stream_name',
+        'stream_url', 'm3u_account', 'avg_bitrate_kbps', 'avg_frames_decoded',
+        'avg_frames_dropped', 'dropped_frame_percentage', 'fps', 'resolution',
+        'video_codec', 'audio_codec', 'interlaced_status', 'status', 'score',
+        'error_penalty'
     ]
     for col in final_columns:
         if col not in df_sorted.columns:
