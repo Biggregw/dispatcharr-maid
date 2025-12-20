@@ -8,6 +8,7 @@ Run everything from the browser - no CLI needed!
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import uuid
@@ -30,6 +31,8 @@ from stream_analysis import (
     reorder_streams
 )
 from job_workspace import create_job_workspace
+
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 app = Flask(__name__)
 
