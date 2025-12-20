@@ -239,7 +239,11 @@ def run_job_worker(job, api, config):
                 progress_callback(job, progress_data)
                 return not job.cancel_requested  # Return False to cancel
             
-            analyze_streams(config, progress_callback=progress_wrapper)
+            analyze_streams(
+                config,
+                progress_callback=progress_wrapper,
+                force_full_analysis=(job.job_type == 'full_cleanup')
+            )
             
             # Restore original setting
             config.set('filters', 'stream_last_measured_days', original_days)

@@ -28,13 +28,14 @@ from api_utils import DispatcharrAPI
 class ProgressTracker:
     """Track analysis progress with ETA and resumability"""
 
-    def __init__(self, total_streams, checkpoint_file):
+    def __init__(self, total_streams, checkpoint_file, use_checkpoint=True):
         self.total = total_streams
         self.processed = 0
         self.failed = 0
         self.start_time = time.time()
         self.checkpoint_file = checkpoint_file
-        self.processed_ids = self.load_checkpoint()
+        self.use_checkpoint = use_checkpoint
+        self.processed_ids = self.load_checkpoint() if use_checkpoint else set()
         self.lock = threading.Lock()
     
     def load_checkpoint(self):
@@ -50,6 +51,8 @@ class ProgressTracker:
     
     def save_checkpoint(self):
         """Save current progress"""
+        if not self.use_checkpoint:
+            return
         Path(self.checkpoint_file).parent.mkdir(parents=True, exist_ok=True)
         with open(self.checkpoint_file, 'w') as f:
             json.dump({
@@ -104,6 +107,8 @@ class ProgressTracker:
     
     def clear_checkpoint(self):
         """Clear checkpoint file after successful completion"""
+        if not self.use_checkpoint:
+            return
         if os.path.exists(self.checkpoint_file):
             os.remove(self.checkpoint_file)
 
@@ -377,7 +382,7 @@ def _check_stream_for_critical_errors(url, timeout):
     return errors
 
 
-def _analyze_stream_task(row, config, progress_tracker=None):
+def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis=False):
     """Analyze a single stream"""
     url = row.get('stream_url')
     stream_name = row.get('stream_name', 'Unknown')
@@ -387,7 +392,7 @@ def _analyze_stream_task(row, config, progress_tracker=None):
         return row
     
     # Check if already processed
-    if progress_tracker and progress_tracker.is_processed(stream_id):
+    if progress_tracker and progress_tracker.is_processed(stream_id) and not force_full_analysis:
         logging.debug(f"Skipping already processed stream: {stream_name}")
         return None
     
@@ -580,7 +585,8 @@ def fetch_streams(api, config, output_file=None):
 
 def analyze_streams(config, input_csv=None,
                    output_csv=None,
-                   fails_csv=None, progress_callback=None):
+                   fails_csv=None, progress_callback=None,
+                   force_full_analysis=False):
     """Analyze streams with progress tracking and checkpointing"""
 
     if not _check_ffmpeg_installed():
@@ -625,7 +631,7 @@ def analyze_streams(config, input_csv=None,
     
     # Prune recently analyzed streams
     days_to_keep = filters.get('stream_last_measured_days', 7)
-    if days_to_keep > 0 and os.path.exists(output_csv):
+    if not force_full_analysis and days_to_keep > 0 and os.path.exists(output_csv):
         try:
             df_processed = pd.read_csv(output_csv)
             df_processed['timestamp'] = pd.to_datetime(df_processed['timestamp'], errors='coerce')
@@ -651,7 +657,11 @@ def analyze_streams(config, input_csv=None,
     streams_to_analyze = df.to_dict('records')
     
     # Initialize progress tracker
-    progress_tracker = ProgressTracker(len(streams_to_analyze), config.resolve_path('logs/checkpoint.json'))
+    progress_tracker = ProgressTracker(
+        len(streams_to_analyze),
+        config.resolve_path('logs/checkpoint.json'),
+        use_checkpoint=not force_full_analysis
+    )
     
     # Check for existing checkpoint
     if len(progress_tracker.processed_ids) > 0:
@@ -690,7 +700,7 @@ def analyze_streams(config, input_csv=None,
             
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {
-                    executor.submit(_analyze_stream_task, row, config, progress_tracker): row 
+                    executor.submit(_analyze_stream_task, row, config, progress_tracker, force_full_analysis): row
                     for row in streams_to_analyze
                 }
                 
