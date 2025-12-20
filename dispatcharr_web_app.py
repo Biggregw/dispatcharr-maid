@@ -114,6 +114,46 @@ def _job_ran_analysis(job_type):
     return job_type in {'full', 'full_cleanup', 'analyze'}
 
 
+def _extract_analyzed_streams(results):
+    if isinstance(results, dict):
+        total = results.get('total')
+        if isinstance(total, (int, float)):
+            return int(total)
+    return 0
+
+
+def _build_results_payload(results, analysis_ran, job_type):
+    return {
+        'success': True,
+        'results': results,
+        'analysis_ran': analysis_ran,
+        'analyzed_streams': _extract_analyzed_streams(results),
+        'job_type': job_type
+    }
+
+
+def _get_job_results(job_id):
+    with job_lock:
+        job = jobs.get(job_id)
+
+    if job:
+        results = job.result_summary
+        job_type = job.job_type
+    else:
+        history = get_job_history()
+        history_job = next((entry for entry in history if entry.get('job_id') == job_id), None)
+        if not history_job:
+            return None, None, None, 'Job not found'
+        results = history_job.get('result_summary')
+        job_type = history_job.get('job_type')
+
+    if not results:
+        return None, None, None, 'No results available'
+
+    analysis_ran = _job_ran_analysis(job_type) if job_type else False
+    return results, analysis_ran, job_type, None
+
+
 class Job:
     """Represents a running or completed job"""
 
@@ -882,24 +922,24 @@ def api_job_history():
 def api_job_results(job_id):
     """Get detailed analysis results for a specific job"""
     try:
-        with job_lock:
-            job = jobs.get(job_id)
+        results, analysis_ran, job_type, error = _get_job_results(job_id)
+        if error:
+            return jsonify({'success': False, 'error': error}), 404
 
-        if job:
-            results = job.result_summary
-            analysis_ran = _job_ran_analysis(job.job_type)
-        else:
-            history = get_job_history()
-            history_job = next((entry for entry in history if entry.get('job_id') == job_id), None)
-            if not history_job:
-                return jsonify({'success': False, 'error': 'Job not found'}), 404
-            results = history_job.get('result_summary')
-            analysis_ran = _job_ran_analysis(history_job.get('job_type'))
+        return jsonify(_build_results_payload(results, analysis_ran, job_type))
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-        if not results:
-            return jsonify({'success': False, 'error': 'No results available'}), 404
 
-        return jsonify({'success': True, 'results': results, 'analysis_ran': analysis_ran})
+@app.route('/api/results/job/<job_id>')
+def api_job_scoped_results(job_id):
+    """Get detailed analysis results scoped to a specific job."""
+    try:
+        results, analysis_ran, job_type, error = _get_job_results(job_id)
+        if error:
+            return jsonify({'success': False, 'error': error}), 404
+
+        return jsonify(_build_results_payload(results, analysis_ran, job_type))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -914,11 +954,11 @@ def api_detailed_results():
             if completed_jobs:
                 # Get most recent
                 latest_job = max(completed_jobs, key=lambda j: j.started_at)
-                return jsonify({
-                    'success': True,
-                    'results': latest_job.result_summary,
-                    'analysis_ran': _job_ran_analysis(latest_job.job_type)
-                })
+                return jsonify(_build_results_payload(
+                    latest_job.result_summary,
+                    _job_ran_analysis(latest_job.job_type),
+                    latest_job.job_type
+                ))
         
         # Fall back to CSV-based summary if no recent jobs
         latest_job = _get_latest_job_with_workspace()
@@ -930,7 +970,8 @@ def api_detailed_results():
         if not summary:
             return jsonify({'success': False, 'error': 'No results available'}), 404
         
-        return jsonify({'success': True, 'results': summary, 'analysis_ran': True})
+        job_type = latest_job.job_type if latest_job else None
+        return jsonify(_build_results_payload(summary, True, job_type))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
