@@ -126,6 +126,74 @@ def _fetch_provider_map(api):
         return {}
 
 
+def _provider_map_path(config):
+    return config.resolve_path('provider_map.json')
+
+
+def _persist_provider_map(config, provider_map):
+    if provider_map is None:
+        return
+    try:
+        provider_path = _provider_map_path(config)
+        Path(provider_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(provider_path, 'w') as handle:
+            json.dump({str(key): value for key, value in provider_map.items()}, handle, indent=2)
+    except Exception as exc:
+        logging.warning("Could not persist provider map: %s", exc)
+
+
+def _load_provider_map(config):
+    provider_path = _provider_map_path(config)
+    if not os.path.exists(provider_path):
+        return {}
+    try:
+        with open(provider_path, 'r') as handle:
+            data = json.load(handle)
+        if isinstance(data, dict):
+            return data
+        return {}
+    except Exception as exc:
+        logging.warning("Could not load provider map: %s", exc)
+        return {}
+
+
+def _normalize_provider_id(provider_id):
+    if pd.isna(provider_id):
+        return None
+    try:
+        return int(provider_id)
+    except (TypeError, ValueError):
+        return str(provider_id)
+
+
+def _lookup_provider_name(provider_map, provider_id):
+    if not provider_map:
+        return None
+    normalized_id = _normalize_provider_id(provider_id)
+    if normalized_id is None:
+        return None
+    if normalized_id in provider_map:
+        return provider_map[normalized_id]
+    if isinstance(normalized_id, int):
+        return provider_map.get(str(normalized_id))
+    if isinstance(normalized_id, str):
+        try:
+            return provider_map.get(int(normalized_id))
+        except ValueError:
+            return None
+    return None
+
+
+def _is_placeholder_provider_name(provider_id, provider_name):
+    if not provider_name:
+        return True
+    try:
+        expected = f"Provider {int(provider_id)}"
+    except (TypeError, ValueError):
+        expected = f"Provider {provider_id}"
+    return provider_name.strip() == expected
+
+
 def _extract_analyzed_streams(results):
     if isinstance(results, dict):
         total = results.get('total')
@@ -282,6 +350,7 @@ def run_job_worker(job, api, config):
         # Fetch provider names once per job if analysis or scoring is involved
         if _job_ran_analysis(job.job_type) or job.job_type == 'score':
             provider_map = _fetch_provider_map(api)
+            _persist_provider_map(config, provider_map)
 
         # Execute based on job type
         if job.job_type in ['full', 'full_cleanup']:
@@ -581,6 +650,7 @@ def generate_job_summary(config, specific_channel_ids=None):
     """Generate comprehensive summary of last analysis, optionally filtered by channel IDs"""
     measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
     scored_file = config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
+    provider_map = _load_provider_map(config)
     
     if not os.path.exists(measurements_file):
         return None
@@ -629,7 +699,7 @@ def generate_job_summary(config, specific_channel_ids=None):
                 if not name_df.empty:
                     for provider_id, group in name_df.groupby('m3u_account'):
                         provider_name = group['m3u_account_name'].dropna().iloc[0]
-                        if provider_name:
+                        if provider_name and not _is_placeholder_provider_name(provider_id, provider_name):
                             provider_name_lookup[provider_id] = provider_name
 
             quality_column = None
@@ -666,6 +736,8 @@ def generate_job_summary(config, specific_channel_ids=None):
 
                 provider_key = str(int(provider_id)) if isinstance(provider_id, (int, float)) else str(provider_id)
                 provider_name = provider_name_lookup.get(provider_id)
+                if not provider_name:
+                    provider_name = _lookup_provider_name(provider_map, provider_id)
                 provider_stats[provider_key] = {
                     'total': provider_total,
                     'successful': provider_success,
