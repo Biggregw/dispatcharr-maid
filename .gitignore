@@ -23,3 +23,12 @@ logs/
 .coverage
 htmlcov/
 .env
+
+# Sensitive provider and job data
+provider_names.json
+provider_map.json
+jobs/
+csv/
+
+# User-specific configuration
+config.yaml
