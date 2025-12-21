@@ -603,13 +603,20 @@ def fetch_streams(api, config, output_file=None):
 
     # Fetch provider accounts once and cache the mapping for downstream summaries.
     provider_accounts_endpoint = dispatcharr_cfg.get('m3u_accounts_endpoint')
+    provider_map = {}
     if not provider_accounts_endpoint:
-        raise ValueError(
-            "Missing dispatcharr.m3u_accounts_endpoint in config; "
-            "cannot resolve provider IDs to names from Dispatcharr."
+        logging.warning(
+            "dispatcharr.m3u_accounts_endpoint is not configured; "
+            "provider name resolution will be skipped."
         )
-
-    provider_map = _fetch_provider_map(api, config, provider_accounts_endpoint)
+    else:
+        try:
+            provider_map = _fetch_provider_map(api, config, provider_accounts_endpoint)
+        except ValueError as exc:
+            logging.warning(
+                "Unable to resolve provider names from Dispatcharr: %s", exc
+            )
+            provider_map = {}
     _write_provider_map(provider_map_file, provider_map)
 
     stream_provider_map = _fetch_stream_provider_map(api, config)
