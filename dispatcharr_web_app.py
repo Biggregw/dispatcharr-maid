@@ -194,7 +194,12 @@ def _get_job_results(job_id):
             return None, None, None, None, 'Job not found'
         results = history_job.get('result_summary')
         job_type = history_job.get('job_type')
-        config = Config('config.yaml')
+        workspace = history_job.get('workspace')
+        if workspace:
+            workspace_path = Path(workspace)
+            config = Config(workspace_path / 'config.yaml', working_dir=workspace_path)
+        else:
+            config = Config('config.yaml')
 
     if not results:
         return None, None, None, None, 'No results available'
@@ -253,7 +258,8 @@ class Job:
             'started_at': self.started_at,
             'completed_at': self.completed_at,
             'error': self.error,
-            'result_summary': self.result_summary
+            'result_summary': self.result_summary,
+            'workspace': self.workspace
         }
 
 
