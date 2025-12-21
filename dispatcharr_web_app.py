@@ -645,11 +645,24 @@ def generate_job_summary(config, specific_channel_ids=None):
                 provider_total = len(provider_df)
                 provider_success = len(provider_df[provider_df['status'] == 'OK'])
                 
-                # Get average quality score for successful streams
+                # Get average quality score for successful streams (exclude unknown/negative)
                 success_df = provider_df[provider_df['status'] == 'OK']
                 avg_score = 0
+                neutral_quality = 70
+                unknown_penalty = 5
                 if quality_column and len(success_df) > 0:
-                    avg_score = success_df[quality_column].mean()
+                    quality_series = pd.to_numeric(success_df[quality_column], errors='coerce')
+                    known_quality = quality_series[quality_series >= 0]
+                    if not known_quality.empty:
+                        avg_score = known_quality.mean()
+                    else:
+                        avg_score = neutral_quality - unknown_penalty
+                else:
+                    avg_score = neutral_quality - unknown_penalty
+
+                success_rate = round(provider_success / provider_total * 100, 1) if provider_total > 0 else 0
+                success_weight = (success_rate / 100) ** 2
+                weighted_score = avg_score * success_weight
 
                 provider_key = str(int(provider_id)) if isinstance(provider_id, (int, float)) else str(provider_id)
                 provider_name = provider_name_lookup.get(provider_id)
@@ -657,8 +670,9 @@ def generate_job_summary(config, specific_channel_ids=None):
                     'total': provider_total,
                     'successful': provider_success,
                     'failed': provider_total - provider_success,
-                    'success_rate': round(provider_success / provider_total * 100, 1) if provider_total > 0 else 0,
+                    'success_rate': success_rate,
                     'avg_quality': round(avg_score, 1),
+                    'weighted_score': round(weighted_score, 1),
                     'provider_name': provider_name
                 }
         
@@ -672,7 +686,9 @@ def generate_job_summary(config, specific_channel_ids=None):
         
         if 'quality_score' in df.columns:
             success_df = df[df['status'] == 'OK']
-            for score in success_df['quality_score']:
+            quality_series = pd.to_numeric(success_df['quality_score'], errors='coerce')
+            known_quality = quality_series[quality_series >= 0]
+            for score in known_quality:
                 if score >= 90:
                     quality_dist['excellent'] += 1
                 elif score >= 70:
