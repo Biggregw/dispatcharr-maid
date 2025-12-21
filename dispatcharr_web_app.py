@@ -143,14 +143,17 @@ def _extract_analyzed_streams(results):
     return 0
 
 
-def _build_results_payload(results, analysis_ran, job_type):
-    return {
+def _build_results_payload(results, analysis_ran, job_type, provider_names=None):
+    payload = {
         'success': True,
         'results': results,
         'analysis_ran': analysis_ran,
         'analyzed_streams': _extract_analyzed_streams(results),
         'job_type': job_type
     }
+    if provider_names is not None:
+        payload['provider_names'] = provider_names
+    return payload
 
 
 def _get_job_results(job_id):
@@ -160,19 +163,21 @@ def _get_job_results(job_id):
     if job:
         results = job.result_summary
         job_type = job.job_type
+        config = _build_config_from_job(job)
     else:
         history = get_job_history()
         history_job = next((entry for entry in history if entry.get('job_id') == job_id), None)
         if not history_job:
-            return None, None, None, 'Job not found'
+            return None, None, None, None, 'Job not found'
         results = history_job.get('result_summary')
         job_type = history_job.get('job_type')
+        config = Config('config.yaml')
 
     if not results:
-        return None, None, None, 'No results available'
+        return None, None, None, None, 'No results available'
 
     analysis_ran = _job_ran_analysis(job_type) if job_type else False
-    return results, analysis_ran, job_type, None
+    return results, analysis_ran, job_type, config, None
 
 
 class Job:
@@ -584,9 +589,6 @@ def generate_job_summary(config, specific_channel_ids=None):
     """Generate comprehensive summary of last analysis, optionally filtered by channel IDs"""
     measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
     scored_file = config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
-    # Optional, user-maintained provider name mapping for display-only enrichment.
-    provider_names = _load_provider_names(config)
-    
     if not os.path.exists(measurements_file):
         return None
     
@@ -661,15 +663,13 @@ def generate_job_summary(config, specific_channel_ids=None):
                 weighted_score = avg_score * success_weight
 
                 provider_key = str(int(provider_id)) if isinstance(provider_id, (int, float)) else str(provider_id)
-                provider_name = provider_names.get(provider_key)
                 provider_stats[provider_key] = {
                     'total': provider_total,
                     'successful': provider_success,
                     'failed': provider_total - provider_success,
                     'success_rate': success_rate,
                     'avg_quality': round(avg_score, 1),
-                    'weighted_score': round(weighted_score, 1),
-                    'provider_name': provider_name
+                    'weighted_score': round(weighted_score, 1)
                 }
         
         # Quality distribution
@@ -990,11 +990,12 @@ def api_job_history():
 def api_job_results(job_id):
     """Get detailed analysis results for a specific job"""
     try:
-        results, analysis_ran, job_type, error = _get_job_results(job_id)
+        results, analysis_ran, job_type, config, error = _get_job_results(job_id)
         if error:
             return jsonify({'success': False, 'error': error}), 404
 
-        return jsonify(_build_results_payload(results, analysis_ran, job_type))
+        provider_names = _load_provider_names(config) if config else {}
+        return jsonify(_build_results_payload(results, analysis_ran, job_type, provider_names))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1003,11 +1004,12 @@ def api_job_results(job_id):
 def api_job_scoped_results(job_id):
     """Get detailed analysis results scoped to a specific job."""
     try:
-        results, analysis_ran, job_type, error = _get_job_results(job_id)
+        results, analysis_ran, job_type, config, error = _get_job_results(job_id)
         if error:
             return jsonify({'success': False, 'error': error}), 404
 
-        return jsonify(_build_results_payload(results, analysis_ran, job_type))
+        provider_names = _load_provider_names(config) if config else {}
+        return jsonify(_build_results_payload(results, analysis_ran, job_type, provider_names))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1022,24 +1024,29 @@ def api_detailed_results():
             if completed_jobs:
                 # Get most recent
                 latest_job = max(completed_jobs, key=lambda j: j.started_at)
+                provider_names = _load_provider_names(_build_config_from_job(latest_job))
                 return jsonify(_build_results_payload(
                     latest_job.result_summary,
                     _job_ran_analysis(latest_job.job_type),
-                    latest_job.job_type
+                    latest_job.job_type,
+                    provider_names
                 ))
         
         # Fall back to CSV-based summary if no recent jobs
         latest_job = _get_latest_job_with_workspace()
         if latest_job is None:
-            summary = generate_job_summary(Config('config.yaml'))
+            config = Config('config.yaml')
+            summary = generate_job_summary(config)
         else:
-            summary = generate_job_summary(_build_config_from_job(latest_job))
+            config = _build_config_from_job(latest_job)
+            summary = generate_job_summary(config)
         
         if not summary:
             return jsonify({'success': False, 'error': 'No results available'}), 404
         
         job_type = latest_job.job_type if latest_job else None
-        return jsonify(_build_results_payload(summary, True, job_type))
+        provider_names = _load_provider_names(config)
+        return jsonify(_build_results_payload(summary, True, job_type, provider_names))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

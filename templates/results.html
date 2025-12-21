@@ -140,6 +140,7 @@
                 }
                 
                 const r = data.results;
+                const providerNames = data.provider_names || {};
                 const jobType = r.job_type || data.job_type;
                 const analyzedStreams = typeof data.analyzed_streams === 'number'
                     ? data.analyzed_streams
@@ -208,8 +209,8 @@
                 
                 tbody.innerHTML = providers.map(([id, stats]) => {
                     const badgeClass = stats.success_rate >= 90 ? 'excellent' : stats.success_rate >= 70 ? 'good' : stats.success_rate >= 50 ? 'fair' : 'poor';
-                    const providerLabel = stats.provider_name !== null && stats.provider_name !== undefined
-                        ? stats.provider_name
+                    const providerLabel = Object.prototype.hasOwnProperty.call(providerNames, id)
+                        ? providerNames[id]
                         : `Provider ${id}`;
                     return `<tr>
                         <td>${providerLabel}</td>
