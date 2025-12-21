@@ -1,9 +1,0 @@
-channel_number,channel_id,stream_id,stream_name,stream_url,channel_group_id,timestamp,video_codec,audio_codec,interlaced_status,status,bitrate_kbps,fps,resolution,frames_decoded,frames_dropped,err_decode,err_discontinuity,err_timeout
-228.0,7564,62519,|UK|Box Hits,http://125280576791.d4ktv.info/live/z23etr5537/pb6l2eyhpe/689871.ts,1256,2025-12-13T13:15:00.289699,N/A,N/A,N/A,Timeout,N/A,N/A,N/A,N/A,N/A,False,False,True
-228.0,7564,110535,|UK|Box Hits,http://130980947578.d4ktv.info/live/v3w0cvpz3k/6s9is7pm0i/689871.ts,1256,2025-12-13T13:15:01.135383,N/A,N/A,N/A,Timeout,N/A,N/A,N/A,N/A,N/A,False,False,True
-1.0,1,110855,|UK|  BBC ONE OXFORD,http://130980947578.d4ktv.info/live/v3w0cvpz3k/6s9is7pm0i/77372.ts,835,2025-12-13T16:13:03.184062,N/A,N/A,N/A,Timeout,N/A,N/A,N/A,N/A,N/A,False,False,True
-1.0,1,110855,|UK|  BBC ONE OXFORD,http://130980947578.d4ktv.info/live/v3w0cvpz3k/6s9is7pm0i/77372.ts,835,2025-12-13T16:20:05.422552,N/A,N/A,N/A,Timeout,N/A,N/A,N/A,N/A,N/A,False,False,True
-1.0,1,62839,|UK|  BBC ONE OXFORD,http://125280576791.d4ktv.info/live/z23etr5537/pb6l2eyhpe/77372.ts,835,2025-12-13T16:23:49.794805,N/A,N/A,N/A,Timeout,N/A,N/A,N/A,N/A,N/A,False,False,True
-1.0,1,62839,|UK|  BBC ONE OXFORD,http://125280576791.d4ktv.info/live/z23etr5537/pb6l2eyhpe/77372.ts,835,2025-12-13T16:35:58.458697,N/A,N/A,N/A,Timeout,N/A,N/A,N/A,N/A,N/A,False,False,True
-1.0,1,110855,|UK|  BBC ONE OXFORD,http://130980947578.d4ktv.info/live/v3w0cvpz3k/6s9is7pm0i/77372.ts,835,2025-12-13T17:36:59.661829,N/A,N/A,N/A,Timeout,N/A,N/A,N/A,N/A,N/A,False,False,True
-1.0,1,62839,|UK|  BBC ONE OXFORD,http://125280576791.d4ktv.info/live/z23etr5537/pb6l2eyhpe/77372.ts,835,2025-12-13T17:37:09.575416,N/A,N/A,N/A,Timeout,N/A,N/A,N/A,N/A,N/A,False,False,True
