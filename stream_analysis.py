@@ -629,6 +629,13 @@ def analyze_streams(config, input_csv=None,
     except FileNotFoundError:
         logging.error(f"Input CSV not found: {input_csv}")
         return analyzed_count
+
+    if 'm3u_account' not in df.columns:
+        logging.error(
+            "Input CSV is missing required 'm3u_account' column; "
+            "pipeline contract violation. Continuing without provider data."
+        )
+        df['m3u_account'] = pd.NA
     
     filters = config.get('filters') or {}
     
