@@ -477,6 +477,113 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
 
 # Main functions
 
+def _log_raw_response(tag, response, config):
+    """Persist raw API responses for auditing and debugging."""
+    logs_dir = Path(config.resolve_path('logs'))
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    raw_path = logs_dir / f"{tag}_raw_response.txt"
+    raw_path.write_text(response.text, encoding="utf-8")
+    logging.info("%s content-type: %s", tag, response.headers.get('Content-Type', ''))
+    logging.info("%s raw response saved to %s", tag, raw_path)
+
+
+def _normalize_provider_map(payload):
+    """Normalize Dispatcharr M3U account payloads into id -> name mapping."""
+    if isinstance(payload, dict) and 'results' in payload:
+        payload = payload['results']
+    if not isinstance(payload, list):
+        raise ValueError("M3U accounts payload is not a list or paginated result.")
+
+    provider_map = {}
+    for entry in payload:
+        if not isinstance(entry, dict):
+            raise ValueError("M3U account entry is not an object.")
+        if 'id' not in entry or 'name' not in entry:
+            raise ValueError("M3U account entry missing required 'id' or 'name' fields.")
+        provider_map[str(entry['id'])] = entry['name']
+
+    if not provider_map:
+        raise ValueError("No provider accounts found in M3U accounts response.")
+
+    return provider_map
+
+
+def _fetch_provider_map(api, config, endpoint):
+    """Fetch provider accounts from Dispatcharr and return id -> name mapping."""
+    response = api.get_raw(endpoint)
+    _log_raw_response('m3u_accounts', response, config)
+
+    content_type = response.headers.get('Content-Type', '')
+    if 'application/json' not in content_type:
+        raise ValueError(
+            f"M3U accounts response is not JSON (Content-Type: {content_type})."
+        )
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ValueError("Failed to parse M3U accounts JSON response.") from exc
+
+    return _normalize_provider_map(payload)
+
+
+def _write_provider_map(path, provider_map):
+    """Write provider mapping to disk for downstream summaries."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as handle:
+        json.dump(provider_map, handle, indent=2)
+
+
+def _fetch_stream_provider_map(api, config):
+    """Fetch all streams once and build a stream_id -> m3u_account mapping."""
+    stream_provider_map = {}
+    next_url = '/api/channels/streams/?limit=100'
+    page_index = 0
+
+    while next_url:
+        response = api.get_raw(next_url)
+        if page_index == 0:
+            _log_raw_response('streams_page_1', response, config)
+
+        content_type = response.headers.get('Content-Type', '')
+        if 'application/json' not in content_type:
+            raise ValueError(
+                f"Streams response is not JSON (Content-Type: {content_type})."
+            )
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ValueError("Failed to parse streams JSON response.") from exc
+
+        results = payload.get('results')
+        if results is None:
+            raise ValueError("Streams response missing 'results' field.")
+
+        for stream in results:
+            if not isinstance(stream, dict):
+                continue
+            stream_id = stream.get('id')
+            m3u_account = stream.get('m3u_account')
+            if stream_id is not None and m3u_account is not None:
+                stream_provider_map[int(stream_id)] = m3u_account
+
+        next_link = payload.get('next')
+        if next_link:
+            next_url = next_link.split('/api/')[-1]
+            next_url = '/api/' + next_url
+        else:
+            next_url = None
+        page_index += 1
+
+    if not stream_provider_map:
+        raise ValueError(
+            "Dispatcharr streams response did not expose m3u_account IDs; "
+            "cannot populate provider IDs at fetch time."
+        )
+
+    return stream_provider_map
+
 def fetch_streams(api, config, output_file=None):
     """Fetch streams for channels based on filters"""
     logging.info("Fetching streams from Dispatcharr...")
@@ -484,6 +591,7 @@ def fetch_streams(api, config, output_file=None):
     output_file = output_file or config.resolve_path('csv/02_grouped_channel_streams.csv')
     groups_file = config.resolve_path('csv/00_channel_groups.csv')
     metadata_file = config.resolve_path('csv/01_channels_metadata.csv')
+    provider_map_file = config.resolve_path('provider_map.json')
     
     filters = config.get('filters') or {}
     group_ids_list = filters.get('channel_group_ids', [])
@@ -491,6 +599,21 @@ def fetch_streams(api, config, output_file=None):
     start_range = filters.get('start_channel', 1)
     end_range = filters.get('end_channel', 99999)
     
+    dispatcharr_cfg = config.get('dispatcharr') or {}
+
+    # Fetch provider accounts once and cache the mapping for downstream summaries.
+    provider_accounts_endpoint = dispatcharr_cfg.get('m3u_accounts_endpoint')
+    if not provider_accounts_endpoint:
+        raise ValueError(
+            "Missing dispatcharr.m3u_accounts_endpoint in config; "
+            "cannot resolve provider IDs to names from Dispatcharr."
+        )
+
+    provider_map = _fetch_provider_map(api, config, provider_accounts_endpoint)
+    _write_provider_map(provider_map_file, provider_map)
+
+    stream_provider_map = _fetch_stream_provider_map(api, config)
+
     # Fetch groups
     groups = api.fetch_channel_groups()
     logging.info(f"Found {len(groups)} channel groups")
@@ -571,14 +694,28 @@ def fetch_streams(api, config, output_file=None):
                 continue
             
             for stream in streams:
+                stream_id = stream.get("id", "")
+                stream_lookup_id = None
+                try:
+                    stream_lookup_id = int(stream_id)
+                except (TypeError, ValueError):
+                    stream_lookup_id = None
+                m3u_account = stream.get("m3u_account")
+                if m3u_account in ("", None):
+                    m3u_account = stream_provider_map.get(stream_lookup_id)
+                if m3u_account in ("", None):
+                    raise ValueError(
+                        f"Stream {stream_id} is missing m3u_account from Dispatcharr; "
+                        "cannot proceed without provider IDs."
+                    )
                 writer.writerow([
                     channel_number,
                     channel_id,
                     channel_group_id,
-                    stream.get("id", ""),
+                    stream_id,
                     stream.get("name", ""),
                     stream.get("url", ""),
-                    stream.get("m3u_account", "")
+                    m3u_account
                 ])
             
             logging.info(f"  Saved {len(streams)} streams")
@@ -610,11 +747,17 @@ def analyze_streams(config, input_csv=None,
         return analyzed_count
 
     if 'm3u_account' not in df.columns:
-        logging.error(
+        raise ValueError(
             "Input CSV is missing required 'm3u_account' column; "
-            "pipeline contract violation. Continuing without provider data."
+            "pipeline contract violation. Refusing to continue."
         )
-        df['m3u_account'] = pd.NA
+
+    missing_provider = df['m3u_account'].isna() | (df['m3u_account'].astype(str).str.strip() == '')
+    if missing_provider.any():
+        raise ValueError(
+            f"Input CSV has {missing_provider.sum()} rows without m3u_account; "
+            "Dispatcharr provider IDs are required for analysis."
+        )
     
     filters = config.get('filters') or {}
     

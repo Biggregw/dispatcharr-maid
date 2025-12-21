@@ -93,6 +93,20 @@ class DispatcharrAPI:
         
         except requests.exceptions.RequestException as e:
             raise Exception(f"GET {url} failed: {e}")
+
+    def get_raw(self, endpoint, timeout=30):
+        """GET request returning raw response for inspection/logging"""
+        url = f"{self.base_url}{endpoint}"
+
+        try:
+            response = requests.get(url, headers=self._get_headers(), timeout=timeout)
+            if response.status_code == 401:
+                if self._refresh_token():
+                    response = requests.get(url, headers=self._get_headers(), timeout=timeout)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"GET {url} failed: {e}")
     
     def patch(self, endpoint, payload, timeout=30):
         """PATCH request with authentication and retry logic"""

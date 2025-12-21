@@ -119,8 +119,31 @@ def _provider_names_path(config):
 
 
 def _load_provider_names(config):
-    """Load optional, user-maintained provider display names (display-only)."""
+    """Load provider display names, preferring Dispatcharr mappings with optional overrides."""
+    provider_names = _load_provider_map(config)
     provider_path = _provider_names_path(config)
+    if not os.path.exists(provider_path):
+        return provider_names
+    try:
+        with open(provider_path, 'r') as handle:
+            data = json.load(handle)
+        if isinstance(data, dict):
+            provider_names.update({str(key): str(value) for key, value in data.items()})
+            return provider_names
+        logging.warning("provider_names.json must be a JSON object mapping provider_id to display_name.")
+        return provider_names
+    except Exception as exc:
+        logging.warning("Could not load provider_names.json: %s", exc)
+        return provider_names
+
+
+def _provider_map_path(config):
+    return config.resolve_path('provider_map.json')
+
+
+def _load_provider_map(config):
+    """Load Dispatcharr-sourced provider mappings for summary display."""
+    provider_path = _provider_map_path(config)
     if not os.path.exists(provider_path):
         return {}
     try:
@@ -128,10 +151,10 @@ def _load_provider_names(config):
             data = json.load(handle)
         if isinstance(data, dict):
             return {str(key): str(value) for key, value in data.items()}
-        logging.warning("provider_names.json must be a JSON object mapping provider_id to display_name.")
+        logging.warning("provider_map.json must be a JSON object mapping provider_id to display_name.")
         return {}
     except Exception as exc:
-        logging.warning("Could not load provider_names.json: %s", exc)
+        logging.warning("Could not load provider_map.json: %s", exc)
         return {}
 
 
