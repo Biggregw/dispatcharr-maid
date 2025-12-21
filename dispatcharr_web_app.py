@@ -109,6 +109,43 @@ def _build_exclude_filter(exclude_filter, exclude_plus_one):
     return ','.join(filters) if filters else None
 
 
+def _ensure_provider_map(api, config):
+    """
+    Ensure provider_map.json exists in the workspace.
+    This fetches provider accounts from Dispatcharr and saves the ID->name mapping.
+    Called for ALL job types so historical results always have provider names.
+    """
+    from stream_analysis import _fetch_provider_map, _write_provider_map
+    
+    provider_map_file = config.resolve_path('provider_map.json')
+    
+    # Skip if already exists (e.g., from a fetch operation)
+    if Path(provider_map_file).exists():
+        logging.info("provider_map.json already exists, skipping fetch")
+        return
+    
+    dispatcharr_cfg = config.get('dispatcharr') or {}
+    provider_accounts_endpoint = dispatcharr_cfg.get('m3u_accounts_endpoint')
+    
+    if not provider_accounts_endpoint:
+        logging.warning(
+            "dispatcharr.m3u_accounts_endpoint is not configured; "
+            "provider name resolution will be skipped."
+        )
+        # Write empty map so we don't keep trying
+        _write_provider_map(provider_map_file, {})
+        return
+    
+    try:
+        provider_map = _fetch_provider_map(api, config, provider_accounts_endpoint)
+        _write_provider_map(provider_map_file, provider_map)
+        logging.info(f"Fetched and saved {len(provider_map)} provider mappings")
+    except Exception as exc:
+        logging.warning(f"Unable to fetch provider names: {exc}")
+        # Write empty map to avoid repeated failures
+        _write_provider_map(provider_map_file, {})
+
+
 def _job_ran_analysis(job_type):
     """Return True if the job type includes an analysis step."""
     return job_type in {'full', 'full_cleanup', 'analyze'}
@@ -121,9 +158,18 @@ def _provider_names_path(config):
 def _load_provider_names(config):
     """Load provider display names, preferring Dispatcharr mappings with optional overrides."""
     provider_names = _load_provider_map(config)
+    
+    # Try workspace-specific provider_names.json first
     provider_path = _provider_names_path(config)
+    
+    # Fall back to root directory if not found in workspace
     if not os.path.exists(provider_path):
-        return provider_names
+        root_provider_path = 'provider_names.json'
+        if os.path.exists(root_provider_path):
+            provider_path = root_provider_path
+        else:
+            return provider_names
+    
     try:
         with open(provider_path, 'r') as handle:
             data = json.load(handle)
@@ -144,8 +190,15 @@ def _provider_map_path(config):
 def _load_provider_map(config):
     """Load Dispatcharr-sourced provider mappings for summary display."""
     provider_path = _provider_map_path(config)
+    
+    # Fall back to root directory if not found in workspace
     if not os.path.exists(provider_path):
-        return {}
+        root_provider_path = 'provider_map.json'
+        if os.path.exists(root_provider_path):
+            provider_path = root_provider_path
+        else:
+            return {}
+    
     try:
         with open(provider_path, 'r') as handle:
             data = json.load(handle)
@@ -320,6 +373,11 @@ def run_job_worker(job, api, config):
                 del config.config['filters']['specific_channel_ids']
         
         config.save()
+        
+        # ===== FIX: Ensure provider_map.json exists for ALL job types =====
+        # This ensures historical job results can display provider names correctly
+        _ensure_provider_map(api, config)
+        # ==================================================================
         
         # Execute based on job type
         if job.job_type in ['full', 'full_cleanup']:

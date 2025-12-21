@@ -6,11 +6,9 @@ analysis:
   timeout: 45
   workers: 8
 filters:
-  channel_group_ids:
-  - 835
+  channel_group_ids: []  # Add your channel group IDs here
   remove_duplicates: true
-  specific_channel_ids:
-  - 31
+  specific_channel_ids: []  # Add specific channel IDs here (optional)
   stream_last_measured_days: 0
 scoring:
   dropped_frames_penalty: 50
@@ -25,3 +23,5 @@ scoring:
     1920x1080: 40
     3840x2160: 5
     960x540: 10
+dispatcharr:
+  m3u_accounts_endpoint: /api/channels/m3u-accounts/

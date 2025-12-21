@@ -18,4 +18,10 @@ def create_job_workspace(job_id=None, base_config_path='config.yaml', jobs_root=
     if base_config.exists() and not target_config.exists():
         shutil.copy(base_config, target_config)
 
+    # Copy provider_names.json if it exists (for custom provider name mappings)
+    provider_names = Path('provider_names.json')
+    target_provider_names = workspace / 'provider_names.json'
+    if provider_names.exists() and not target_provider_names.exists():
+        shutil.copy(provider_names, target_provider_names)
+
     return workspace, target_config
