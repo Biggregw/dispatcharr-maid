@@ -114,84 +114,25 @@ def _job_ran_analysis(job_type):
     return job_type in {'full', 'full_cleanup', 'analyze'}
 
 
-def _fetch_provider_map(api):
-    """Fetch provider names once per job."""
-    try:
-        provider_map = api.fetch_m3u_account_map()
-        if provider_map:
-            logging.info("Loaded %s provider names", len(provider_map))
-        return provider_map or {}
-    except Exception as exc:
-        logging.warning("Provider name enrichment unavailable: %s", exc)
-        return {}
+def _provider_names_path(config):
+    return config.resolve_path('provider_names.json')
 
 
-def _provider_map_path(config):
-    return config.resolve_path('provider_map.json')
-
-
-def _persist_provider_map(config, provider_map):
-    if provider_map is None:
-        return
-    try:
-        provider_path = _provider_map_path(config)
-        Path(provider_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(provider_path, 'w') as handle:
-            json.dump({str(key): value for key, value in provider_map.items()}, handle, indent=2)
-    except Exception as exc:
-        logging.warning("Could not persist provider map: %s", exc)
-
-
-def _load_provider_map(config):
-    provider_path = _provider_map_path(config)
+def _load_provider_names(config):
+    """Load optional, user-maintained provider display names (display-only)."""
+    provider_path = _provider_names_path(config)
     if not os.path.exists(provider_path):
         return {}
     try:
         with open(provider_path, 'r') as handle:
             data = json.load(handle)
         if isinstance(data, dict):
-            return data
+            return {str(key): str(value) for key, value in data.items()}
+        logging.warning("provider_names.json must be a JSON object mapping provider_id to display_name.")
         return {}
     except Exception as exc:
-        logging.warning("Could not load provider map: %s", exc)
+        logging.warning("Could not load provider_names.json: %s", exc)
         return {}
-
-
-def _normalize_provider_id(provider_id):
-    if pd.isna(provider_id):
-        return None
-    try:
-        return int(provider_id)
-    except (TypeError, ValueError):
-        return str(provider_id)
-
-
-def _lookup_provider_name(provider_map, provider_id):
-    if not provider_map:
-        return None
-    normalized_id = _normalize_provider_id(provider_id)
-    if normalized_id is None:
-        return None
-    if normalized_id in provider_map:
-        return provider_map[normalized_id]
-    if isinstance(normalized_id, int):
-        return provider_map.get(str(normalized_id))
-    if isinstance(normalized_id, str):
-        try:
-            return provider_map.get(int(normalized_id))
-        except ValueError:
-            return None
-    return None
-
-
-def _is_placeholder_provider_name(provider_id, provider_name):
-    if not provider_name:
-        return True
-    try:
-        expected = f"Provider {int(provider_id)}"
-    except (TypeError, ValueError):
-        expected = f"Provider {provider_id}"
-    return provider_name.strip() == expected
 
 
 def _extract_analyzed_streams(results):
@@ -331,7 +272,6 @@ def run_job_worker(job, api, config):
     task_name = None
     try:
         job.status = 'running'
-        provider_map = None
         
         # Update config with selected groups and channels
         config.set('filters', 'channel_group_ids', job.groups)
@@ -347,11 +287,6 @@ def run_job_worker(job, api, config):
         
         config.save()
         
-        # Fetch provider names once per job if analysis or scoring is involved
-        if _job_ran_analysis(job.job_type) or job.job_type == 'score':
-            provider_map = _fetch_provider_map(api)
-            _persist_provider_map(config, provider_map)
-
         # Execute based on job type
         if job.job_type in ['full', 'full_cleanup']:
             if job.job_type == 'full_cleanup':
@@ -386,8 +321,7 @@ def run_job_worker(job, api, config):
                 analyzed_count = analyze_streams(
                     config,
                     progress_callback=progress_wrapper,
-                    force_full_analysis=(job.job_type == 'full_cleanup'),
-                    provider_map=provider_map
+                    force_full_analysis=(job.job_type == 'full_cleanup')
                 ) or 0
             finally:
                 # Restore original setting
@@ -406,7 +340,7 @@ def run_job_worker(job, api, config):
                 return
             
             job.current_step = 'Scoring streams...'
-            score_streams(api, config, update_stats=True, provider_map=provider_map)
+            score_streams(api, config, update_stats=True)
             
             # Step 4: Reorder
             if job.cancel_requested:
@@ -442,11 +376,11 @@ def run_job_worker(job, api, config):
                 progress_callback(job, progress_data)
                 return not job.cancel_requested
             
-            analyze_streams(config, progress_callback=progress_wrapper, provider_map=provider_map)
+            analyze_streams(config, progress_callback=progress_wrapper)
         
         elif job.job_type == 'score':
             job.current_step = 'Scoring streams...'
-            score_streams(api, config, update_stats=True, provider_map=provider_map)
+            score_streams(api, config, update_stats=True)
         
         elif job.job_type == 'reorder':
             job.current_step = 'Reordering streams...'
@@ -650,7 +584,8 @@ def generate_job_summary(config, specific_channel_ids=None):
     """Generate comprehensive summary of last analysis, optionally filtered by channel IDs"""
     measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
     scored_file = config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
-    provider_map = _load_provider_map(config)
+    # Optional, user-maintained provider name mapping for display-only enrichment.
+    provider_names = _load_provider_names(config)
     
     if not os.path.exists(measurements_file):
         return None
@@ -686,7 +621,6 @@ def generate_job_summary(config, specific_channel_ids=None):
 
         # Provider breakdown
         provider_stats = {}
-        provider_name_lookup = {}
         provider_stats_df = None
         if 'm3u_account' in stats_df.columns:
             provider_stats_df = stats_df
@@ -694,14 +628,6 @@ def generate_job_summary(config, specific_channel_ids=None):
             provider_stats_df = df
 
         if provider_stats_df is not None:
-            if 'm3u_account_name' in provider_stats_df.columns:
-                name_df = provider_stats_df[['m3u_account', 'm3u_account_name']].dropna()
-                if not name_df.empty:
-                    for provider_id, group in name_df.groupby('m3u_account'):
-                        provider_name = group['m3u_account_name'].dropna().iloc[0]
-                        if provider_name and not _is_placeholder_provider_name(provider_id, provider_name):
-                            provider_name_lookup[provider_id] = provider_name
-
             quality_column = None
             if 'quality_score' in provider_stats_df.columns:
                 quality_column = 'quality_score'
@@ -735,9 +661,7 @@ def generate_job_summary(config, specific_channel_ids=None):
                 weighted_score = avg_score * success_weight
 
                 provider_key = str(int(provider_id)) if isinstance(provider_id, (int, float)) else str(provider_id)
-                provider_name = provider_name_lookup.get(provider_id)
-                if not provider_name:
-                    provider_name = _lookup_provider_name(provider_map, provider_id)
+                provider_name = provider_names.get(provider_key)
                 provider_stats[provider_key] = {
                     'total': provider_total,
                     'successful': provider_success,
