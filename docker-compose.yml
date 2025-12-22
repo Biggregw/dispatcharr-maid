@@ -12,6 +12,7 @@ services:
     volumes:
       - ./csv:/app/csv           # CSV data files
       - ./logs:/app/logs         # Logs and checkpoints
+      - ./jobs:/app/jobs         # Per-job workspaces (persist results)
       - ./config.yaml:/app/config.yaml  # Configuration
       - ./.env:/app/.env         # Credentials
       - ./dispatcharr_web_app.py:/app/dispatcharr_web_app.py  # Main web app
