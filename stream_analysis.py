@@ -1204,7 +1204,7 @@ def reorder_streams(api, config, input_csv=None):
     
     logging.info("Reordering complete!")
 
-def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False):
+def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False, stream_name_regex=None):
     """
     Find and add all matching streams from all providers for a specific channel
     
@@ -1276,6 +1276,15 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             regexes.append(re.compile(pat))
         return regexes
 
+    # Optional regex for stream name filtering (applied after base match + wildcard include/exclude).
+    _stream_name_re = None
+    if isinstance(stream_name_regex, str) and stream_name_regex.strip():
+        try:
+            _stream_name_re = re.compile(stream_name_regex.strip(), flags=re.IGNORECASE)
+        except re.error as exc:
+            logging.error(f"Invalid stream_name_regex ignored: {exc}")
+            _stream_name_re = None
+
     # Precompute constants used for all stream comparisons (initialized later,
     # once `search_name` is known).
     _selected_normalized = None
@@ -1306,6 +1315,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             stream_lower = stream_name.lower()
             if any(r.search(stream_lower) for r in _exclude_regexes):
                 return False
+
+        if _stream_name_re and not _stream_name_re.search(stream_name):
+            return False
         
         return True
     
