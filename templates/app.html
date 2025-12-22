@@ -1692,8 +1692,12 @@
                 'queued': 'status-running'
             }[job.status] || '';
             
-            const isNumericComplete = job.total > 0 && job.progress >= job.total;
-            const percent = job.total > 0 ? (isNumericComplete ? 100 : Math.min(100, (job.progress / job.total * 100))) : 0;
+            const progressNum = Number(job.progress) || 0;
+            const totalNum = Number(job.total) || 0;
+            const failedNum = Number(job.failed) || 0;
+
+            const isNumericComplete = totalNum > 0 && progressNum >= totalNum;
+            const percent = totalNum > 0 ? (isNumericComplete ? 100 : Math.min(100, (progressNum / totalNum * 100))) : 0;
             let html = `
                 <div style="margin-bottom: 15px;">
                     <span class="history-status ${statusClass}">
@@ -1706,8 +1710,7 @@
             `;
 
             // If we don't know totals yet (startup/fetching/loading), show an indeterminate bar
-            if ((job.status === 'running' || job.status === 'queued') && !(job.total > 0)) {
-                const processed = typeof job.progress === 'number' ? job.progress : 0;
+            if ((job.status === 'running' || job.status === 'queued') && !(totalNum > 0)) {
                 html += `
                     <div class="phase-indicator phase-indicator--active" style="margin-bottom: 10px;">
                         <span class="phase-indicator__icon">⏳</span>
@@ -1719,7 +1722,7 @@
                     <div class="stats-grid">
                         <div class="stat-box">
                             <div class="stat-label">Processed</div>
-                            <div class="stat-value">${processed.toLocaleString()}</div>
+                            <div class="stat-value">${progressNum.toLocaleString()}</div>
                         </div>
                         <div class="stat-box">
                             <div class="stat-label">Total</div>
@@ -1727,7 +1730,7 @@
                         </div>
                         <div class="stat-box">
                             <div class="stat-label">Failed</div>
-                            <div class="stat-value" style="color: #e53e3e;">${(job.failed || 0).toLocaleString()}</div>
+                            <div class="stat-value" style="color: #e53e3e;">${failedNum.toLocaleString()}</div>
                         </div>
                         <div class="stat-box">
                             <div class="stat-label">Remaining</div>
@@ -1735,17 +1738,21 @@
                         </div>
                     </div>
                 `;
-            } else if (job.status === 'running' && job.total > 0) {
+            } else if (job.status === 'running' && totalNum > 0) {
                 // Keep animation until we have the first completed stream.
                 // Otherwise a 0%-width bar looks like "nothing is happening".
-                if ((job.progress || 0) === 0) {
+                // NOTE: coerce to number so "0" doesn't break the check.
+                if (progressNum <= 0) {
                     html += `
                         <div class="phase-indicator phase-indicator--active" style="margin-bottom: 10px;">
                             <span class="phase-indicator__icon">⏳</span>
                             <span class="phase-indicator__text">Analyzing… waiting for first stream result.</span>
                         </div>
-                        <div class="progress-container">
+                        <div class="progress-container" style="position: relative;">
                             <div class="progress-bar indeterminate"></div>
+                            <div style="position: relative; z-index: 1; text-align: left; padding-left: 10px; font-weight: 700; color: #ffffff; line-height: 30px;">
+                                0%
+                            </div>
                         </div>
                         <div class="stats-grid">
                             <div class="stat-box">
@@ -1754,15 +1761,15 @@
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Total</div>
-                                <div class="stat-value">${job.total.toLocaleString()}</div>
+                                <div class="stat-value">${totalNum.toLocaleString()}</div>
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Failed</div>
-                                <div class="stat-value" style="color: #e53e3e;">${(job.failed || 0).toLocaleString()}</div>
+                                <div class="stat-value" style="color: #e53e3e;">${failedNum.toLocaleString()}</div>
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Remaining</div>
-                                <div class="stat-value">${job.total.toLocaleString()}</div>
+                                <div class="stat-value">${totalNum.toLocaleString()}</div>
                             </div>
                         </div>
                     `;
@@ -1777,19 +1784,19 @@
                     <div class="stats-grid">
                         <div class="stat-box">
                             <div class="stat-label">Processed</div>
-                            <div class="stat-value">${job.progress.toLocaleString()}</div>
+                            <div class="stat-value">${progressNum.toLocaleString()}</div>
                         </div>
                         <div class="stat-box">
                             <div class="stat-label">Total</div>
-                            <div class="stat-value">${job.total.toLocaleString()}</div>
+                            <div class="stat-value">${totalNum.toLocaleString()}</div>
                         </div>
                         <div class="stat-box">
                             <div class="stat-label">Failed</div>
-                            <div class="stat-value" style="color: #e53e3e;">${job.failed.toLocaleString()}</div>
+                            <div class="stat-value" style="color: #e53e3e;">${failedNum.toLocaleString()}</div>
                         </div>
                         <div class="stat-box">
                             <div class="stat-label">Remaining</div>
-                            <div class="stat-value">${(job.total - job.progress).toLocaleString()}</div>
+                            <div class="stat-value">${Math.max(0, totalNum - progressNum).toLocaleString()}</div>
                         </div>
                     </div>
                 `;
