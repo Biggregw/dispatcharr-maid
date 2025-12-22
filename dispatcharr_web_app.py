@@ -196,7 +196,7 @@ def _load_provider_metadata(config):
     provider_path = _provider_metadata_path(config)
 
     if not os.path.exists(provider_path):
-        root_provider_path = Path(__file__).resolve().parent / 'provider_metadata.json'
+        root_provider_path = Path(app.root_path) / 'provider_metadata.json'
         if root_provider_path.exists():
             provider_path = root_provider_path
         else:
