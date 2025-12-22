@@ -156,6 +156,19 @@ This ordering **aligns perfectly with Dispatcharr's playback behavior**, allowin
 
 The result: **Maximum reliability with optimal quality.**
 
+### Provider Discovery & Capacity Visibility
+
+Dispatcharr-Maid can auto-discover provider IDs, names, and capacity metadata
+directly from Dispatcharr (via `manage.py` or an authenticated API call). This
+means you no longer need to maintain provider_map.json manually—manual overrides
+in provider_names.json are still supported and take precedence.
+
+Because most providers enforce strict connection limits, **provider diversity**
+is critical: spreading channels across multiple providers reduces the risk of
+hitting per-provider max_streams limits. The existing round-robin ordering
+above is intentionally preserved to keep failover behavior consistent while
+maximizing diversity.
+
 ---
 
 ## 📚 Documentation
@@ -259,5 +272,4 @@ If you find Dispatcharr-Maid useful, please consider giving it a ⭐ on GitHub! 
 ---
 
 ## 🐼 Made with ❤️ for the Dispatcharr community 🐼
-
 

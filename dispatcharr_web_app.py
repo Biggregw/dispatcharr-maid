@@ -22,6 +22,7 @@ from flask import Flask, render_template, jsonify, request
 from flask_cors import CORS
 
 from api_utils import DispatcharrAPI
+from provider_data import refresh_provider_data
 from stream_analysis import (
     refresh_channel_streams,
     Config,
@@ -115,35 +116,7 @@ def _ensure_provider_map(api, config):
     This fetches provider accounts from Dispatcharr and saves the ID->name mapping.
     Called for ALL job types so historical results always have provider names.
     """
-    from stream_analysis import _fetch_provider_map, _write_provider_map
-    
-    provider_map_file = config.resolve_path('provider_map.json')
-    
-    # Skip if already exists (e.g., from a fetch operation)
-    if Path(provider_map_file).exists():
-        logging.info("provider_map.json already exists, skipping fetch")
-        return
-    
-    dispatcharr_cfg = config.get('dispatcharr') or {}
-    provider_accounts_endpoint = dispatcharr_cfg.get('m3u_accounts_endpoint')
-    
-    if not provider_accounts_endpoint:
-        logging.warning(
-            "dispatcharr.m3u_accounts_endpoint is not configured; "
-            "provider name resolution will be skipped."
-        )
-        # Write empty map so we don't keep trying
-        _write_provider_map(provider_map_file, {})
-        return
-    
-    try:
-        provider_map = _fetch_provider_map(api, config, provider_accounts_endpoint)
-        _write_provider_map(provider_map_file, provider_map)
-        logging.info(f"Fetched and saved {len(provider_map)} provider mappings")
-    except Exception as exc:
-        logging.warning(f"Unable to fetch provider names: {exc}")
-        # Write empty map to avoid repeated failures
-        _write_provider_map(provider_map_file, {})
+    refresh_provider_data(api, config, force=False)
 
 
 def _job_ran_analysis(job_type):
@@ -211,6 +184,68 @@ def _load_provider_map(config):
         return {}
 
 
+def _provider_metadata_path(config):
+    return config.resolve_path('provider_metadata.json')
+
+
+def _load_provider_metadata(config):
+    """Load Dispatcharr-sourced provider metadata for capacity visibility."""
+    provider_path = _provider_metadata_path(config)
+
+    if not os.path.exists(provider_path):
+        root_provider_path = 'provider_metadata.json'
+        if os.path.exists(root_provider_path):
+            provider_path = root_provider_path
+        else:
+            return {}
+
+    try:
+        with open(provider_path, 'r') as handle:
+            data = json.load(handle)
+        if isinstance(data, dict):
+            return {str(key): value for key, value in data.items()}
+        logging.warning("provider_metadata.json must be a JSON object mapping provider_id to metadata.")
+        return {}
+    except Exception as exc:
+        logging.warning("Could not load provider_metadata.json: %s", exc)
+        return {}
+
+
+def _build_capacity_summary(df, provider_metadata):
+    if not provider_metadata:
+        return None
+
+    capacities = []
+    for meta in provider_metadata.values():
+        max_streams = None
+        if isinstance(meta, dict):
+            max_streams = meta.get('max_streams')
+        if isinstance(max_streams, (int, float)) and max_streams > 0:
+            capacities.append(int(max_streams))
+
+    if not capacities:
+        return None
+
+    total_capacity = sum(capacities)
+    channel_count = None
+    if 'channel_id' in df.columns:
+        channel_count = int(df['channel_id'].nunique())
+
+    warning = None
+    if channel_count is not None and channel_count > total_capacity:
+        warning = (
+            "Configured channels exceed total provider capacity. "
+            "If all channels are watched simultaneously, provider connection limits may be hit."
+        )
+
+    return {
+        'total_capacity': total_capacity,
+        'channel_count': channel_count,
+        'provider_count': len(capacities),
+        'warning': warning
+    }
+
+
 def _extract_analyzed_streams(results):
     if isinstance(results, dict):
         total = results.get('total')
@@ -219,7 +254,7 @@ def _extract_analyzed_streams(results):
     return 0
 
 
-def _build_results_payload(results, analysis_ran, job_type, provider_names=None):
+def _build_results_payload(results, analysis_ran, job_type, provider_names=None, provider_metadata=None, capacity_summary=None):
     payload = {
         'success': True,
         'results': results,
@@ -229,6 +264,10 @@ def _build_results_payload(results, analysis_ran, job_type, provider_names=None)
     }
     if provider_names is not None:
         payload['provider_names'] = provider_names
+    if provider_metadata is not None:
+        payload['provider_metadata'] = provider_metadata
+    if capacity_summary is not None:
+        payload['capacity_summary'] = capacity_summary
     return payload
 
 
@@ -816,7 +855,9 @@ def generate_job_summary(config, specific_channel_ids=None):
                     'failed': channel_total - channel_success,
                     'success_rate': round(channel_success / channel_total * 100, 1) if channel_total > 0 else 0
                 }
-        
+        provider_metadata = _load_provider_metadata(config)
+        capacity_summary = _build_capacity_summary(df, provider_metadata)
+
         return {
             'total': total,
             'successful': successful,
@@ -827,6 +868,7 @@ def generate_job_summary(config, specific_channel_ids=None):
             'resolution_distribution': resolution_dist,
             'error_types': error_types,
             'channel_stats': channel_stats,
+            'capacity_summary': capacity_summary,
             'timestamp': datetime.now().isoformat()
         }
     except Exception as e:
@@ -1082,7 +1124,16 @@ def api_job_results(job_id):
             return jsonify({'success': False, 'error': error}), 404
 
         provider_names = _load_provider_names(config) if config else {}
-        return jsonify(_build_results_payload(results, analysis_ran, job_type, provider_names))
+        provider_metadata = _load_provider_metadata(config) if config else {}
+        capacity_summary = results.get('capacity_summary') if isinstance(results, dict) else None
+        return jsonify(_build_results_payload(
+            results,
+            analysis_ran,
+            job_type,
+            provider_names,
+            provider_metadata,
+            capacity_summary
+        ))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1096,7 +1147,16 @@ def api_job_scoped_results(job_id):
             return jsonify({'success': False, 'error': error}), 404
 
         provider_names = _load_provider_names(config) if config else {}
-        return jsonify(_build_results_payload(results, analysis_ran, job_type, provider_names))
+        provider_metadata = _load_provider_metadata(config) if config else {}
+        capacity_summary = results.get('capacity_summary') if isinstance(results, dict) else None
+        return jsonify(_build_results_payload(
+            results,
+            analysis_ran,
+            job_type,
+            provider_names,
+            provider_metadata,
+            capacity_summary
+        ))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1112,11 +1172,17 @@ def api_detailed_results():
                 # Get most recent
                 latest_job = max(completed_jobs, key=lambda j: j.started_at)
                 provider_names = _load_provider_names(_build_config_from_job(latest_job))
+                capacity_summary = None
+                if isinstance(latest_job.result_summary, dict):
+                    capacity_summary = latest_job.result_summary.get('capacity_summary')
+                provider_metadata = _load_provider_metadata(_build_config_from_job(latest_job))
                 return jsonify(_build_results_payload(
                     latest_job.result_summary,
                     _job_ran_analysis(latest_job.job_type),
                     latest_job.job_type,
-                    provider_names
+                    provider_names,
+                    provider_metadata,
+                    capacity_summary
                 ))
         
         # Fall back to CSV-based summary if no recent jobs
@@ -1133,7 +1199,16 @@ def api_detailed_results():
         
         job_type = latest_job.job_type if latest_job else None
         provider_names = _load_provider_names(config)
-        return jsonify(_build_results_payload(summary, True, job_type, provider_names))
+        provider_metadata = _load_provider_metadata(config)
+        capacity_summary = summary.get('capacity_summary') if isinstance(summary, dict) else None
+        return jsonify(_build_results_payload(
+            summary,
+            True,
+            job_type,
+            provider_names,
+            provider_metadata,
+            capacity_summary
+        ))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

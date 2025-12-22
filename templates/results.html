@@ -30,6 +30,7 @@
         .success-badge.good { background: #bee3f8; color: #2c5282; }
         .success-badge.fair { background: #feebc8; color: #7c2d12; }
         .success-badge.poor { background: #fed7d7; color: #742a2a; }
+        .capacity-warning { margin-top: 12px; color: #97266d; font-weight: 600; }
         .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; }
         .tab { padding: 12px 24px; cursor: pointer; border: none; background: none; font-size: 1em; font-weight: 600; color: #718096; border-bottom: 3px solid transparent; transition: all 0.3s; }
         .tab.active { color: #667eea; border-bottom-color: #667eea; }
@@ -69,6 +70,7 @@
                     <div class="stat-value" id="stat-rate">0%</div>
                 </div>
             </div>
+            <div id="capacity-warning" class="capacity-warning" style="display:none;"></div>
         </div>
         
         <div class="card" id="detailed-breakdown-card">
@@ -89,6 +91,7 @@
                             <th>Failed</th>
                             <th>Success Rate</th>
                             <th>Avg Quality</th>
+                            <th>Max Streams</th>
                         </tr>
                     </thead>
                     <tbody id="provider-tbody"></tbody>
@@ -141,6 +144,7 @@
                 
                 const r = data.results;
                 const providerNames = data.provider_names || {};
+                const providerMetadata = data.provider_metadata || {};
                 const jobType = r.job_type || data.job_type;
                 const analyzedStreams = typeof data.analyzed_streams === 'number'
                     ? data.analyzed_streams
@@ -202,6 +206,12 @@
                 document.getElementById('stat-success').textContent = r.successful.toLocaleString();
                 document.getElementById('stat-failed').textContent = r.failed.toLocaleString();
                 document.getElementById('stat-rate').textContent = r.success_rate + '%';
+                const capacitySummary = r.capacity_summary || data.capacity_summary;
+                if (capacitySummary && capacitySummary.warning) {
+                    const capacityEl = document.getElementById('capacity-warning');
+                    capacityEl.textContent = capacitySummary.warning;
+                    capacityEl.style.display = 'block';
+                }
                 
                 // Providers
                 const tbody = document.getElementById('provider-tbody');
@@ -212,6 +222,10 @@
                     const providerLabel = Object.prototype.hasOwnProperty.call(providerNames, id)
                         ? providerNames[id]
                         : `Provider ${id}`;
+                    const providerMeta = providerMetadata[id] || {};
+                    const maxStreams = typeof providerMeta.max_streams === 'number'
+                        ? providerMeta.max_streams
+                        : (providerMeta.max_streams === 0 ? 0 : '—');
                     return `<tr>
                         <td>${providerLabel}</td>
                         <td>${stats.total}</td>
@@ -219,6 +233,7 @@
                         <td style="color: #e53e3e;">${stats.failed}</td>
                         <td><span class="success-badge ${badgeClass}">${stats.success_rate}%</span></td>
                         <td>${stats.avg_quality}</td>
+                        <td>${maxStreams}</td>
                     </tr>`;
                 }).join('');
                 
