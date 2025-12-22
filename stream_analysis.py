@@ -599,6 +599,8 @@ def fetch_streams(api, config, output_file=None):
     filters = config.get('filters') or {}
     group_ids_list = filters.get('channel_group_ids', [])
     specific_channel_ids = filters.get('specific_channel_ids')  # NEW: specific channels
+    channel_name_regex = filters.get('channel_name_regex')
+    channel_number_regex = filters.get('channel_number_regex')
     start_range = filters.get('start_channel', 1)
     end_range = filters.get('end_channel', 99999)
     
@@ -637,17 +639,45 @@ def fetch_streams(api, config, output_file=None):
             if ch.get('id') in specific_ids_set
         ]
         logging.info(f"Using {len(filtered_channels)} specific channels")
-    elif group_ids_list:
-        # Filter by group IDs
-        target_group_ids = set(group_ids_list)
-        filtered_channels = [
-            ch for ch in all_channels 
-            if ch.get('channel_group_id') in target_group_ids
-        ]
-        logging.info(f"Filtered to {len(filtered_channels)} channels in selected groups")
     else:
-        # No filters
-        filtered_channels = all_channels
+        # Start from group filter (if any), then optionally apply regex filters.
+        if group_ids_list:
+            target_group_ids = set(group_ids_list)
+            filtered_channels = [
+                ch for ch in all_channels
+                if ch.get('channel_group_id') in target_group_ids
+            ]
+            logging.info(f"Filtered to {len(filtered_channels)} channels in selected groups")
+        else:
+            filtered_channels = all_channels
+
+        # Optional: regex-based selection (mainly for persisted UI selections)
+        name_re = None
+        number_re = None
+        try:
+            if isinstance(channel_name_regex, str) and channel_name_regex.strip():
+                name_re = re.compile(channel_name_regex.strip(), flags=re.IGNORECASE)
+        except re.error as exc:
+            logging.error(f"Invalid filters.channel_name_regex: {exc}")
+        try:
+            if isinstance(channel_number_regex, str) and channel_number_regex.strip():
+                number_re = re.compile(channel_number_regex.strip())
+        except re.error as exc:
+            logging.error(f"Invalid filters.channel_number_regex: {exc}")
+
+        if name_re:
+            filtered_channels = [
+                ch for ch in filtered_channels
+                if name_re.search(str(ch.get('name', '') or ''))
+            ]
+            logging.info(f"Applied channel_name_regex => {len(filtered_channels)} channels")
+
+        if number_re:
+            filtered_channels = [
+                ch for ch in filtered_channels
+                if number_re.search(str(ch.get('channel_number', '') or ''))
+            ]
+            logging.info(f"Applied channel_number_regex => {len(filtered_channels)} channels")
     
     # Apply channel number range
     final_channels = [

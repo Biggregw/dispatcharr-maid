@@ -797,6 +797,20 @@
                     <span class="summary-label">Channels Selected:</span>
                     <span class="summary-value" id="selected-channels-count">0 (All)</span>
                 </div>
+                <div style="margin-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <button type="button" class="btn btn-next" onclick="saveChannelSelectionRegex()"
+                            style="background: #48bb78; color: white;">
+                        💾 Save selection as regex
+                    </button>
+                    <button type="button" class="btn btn-back" id="copy-regex-btn" onclick="copySavedRegex()" disabled>
+                        Copy regex
+                    </button>
+                    <span id="regex-save-status" style="color: #4a5568; font-weight: 600;"></span>
+                </div>
+                <div id="regex-output" class="hidden" style="margin-top: 10px; padding: 10px; background: #f7fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                    <div style="font-weight: 700; margin-bottom: 6px; color: #2d3748;">Saved regex (channel names)</div>
+                    <code id="saved-regex" style="word-break: break-word;"></code>
+                </div>
             </div>
             
             <div class="channel-search">
@@ -2049,6 +2063,71 @@
                 return;
             }
             window.location.href = `/results?job_id=${encodeURIComponent(jobId)}`;
+        }
+
+        async function saveChannelSelectionRegex() {
+            const statusEl = document.getElementById('regex-save-status');
+            const outputEl = document.getElementById('regex-output');
+            const regexEl = document.getElementById('saved-regex');
+            const copyBtn = document.getElementById('copy-regex-btn');
+
+            statusEl.textContent = 'Saving…';
+            outputEl.classList.add('hidden');
+            regexEl.textContent = '';
+            copyBtn.disabled = true;
+
+            try {
+                const payload = {
+                    groups: selectedGroups,
+                    channels: selectedChannels
+                };
+                const response = await fetch('/api/save-channel-selection-regex', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    statusEl.textContent = 'Save failed: ' + (data.error || 'Unknown error');
+                    return;
+                }
+
+                if (data.saved && data.regex) {
+                    regexEl.textContent = data.regex;
+                    outputEl.classList.remove('hidden');
+                    copyBtn.disabled = false;
+                    statusEl.textContent = `Saved (${data.channel_count || 0} channels)`;
+                } else {
+                    statusEl.textContent = data.message || 'No specific channels selected (All channels).';
+                }
+            } catch (error) {
+                statusEl.textContent = 'Save failed: ' + error.message;
+            }
+        }
+
+        async function copySavedRegex() {
+            const regexText = document.getElementById('saved-regex')?.textContent || '';
+            const statusEl = document.getElementById('regex-save-status');
+            if (!regexText) return;
+
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(regexText);
+                } else {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = regexText;
+                    textarea.style.position = 'fixed';
+                    textarea.style.opacity = '0';
+                    document.body.appendChild(textarea);
+                    textarea.focus();
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                }
+                statusEl.textContent = 'Copied regex to clipboard';
+            } catch (error) {
+                statusEl.textContent = 'Copy failed: ' + error.message;
+            }
         }
 
         function scrollToJobHistory() {
