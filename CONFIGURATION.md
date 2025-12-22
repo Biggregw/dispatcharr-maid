@@ -99,6 +99,12 @@ Fallback (requires Dispatcharr API auth):
 Manual overrides via provider_names.json always take precedence and are
 never overwritten by auto-discovery.
 
+Docker-based Provider Discovery
+--------------------------------
+If Dispatcharr runs in Docker, set `dispatcharr.docker_container` in
+config.yaml to the Dispatcharr container name so provider metadata
+discovery can access it.
+
 
 KEEPING YOUR DATA PRIVATE
 ==========================

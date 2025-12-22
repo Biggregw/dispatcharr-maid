@@ -27,4 +27,5 @@ dispatcharr:
   m3u_accounts_endpoint: /api/channels/m3u-accounts/
   manage_py_path: ""  # Optional: path to Dispatcharr manage.py for direct DB access
   container_name: "dispatcharr"  # Optional: Docker container name for manage.py exec
+  # docker_container: "dispatcharr"  # Required for provider metadata discovery when Dispatcharr runs in Docker
   refresh_provider_data: false  # Set true to overwrite provider_map/provider_metadata
