@@ -181,21 +181,22 @@ def refresh_provider_data(api, config, force=False):
         return {}, {}
 
     manage_py_path = dispatcharr_cfg.get('manage_py_path') or os.getenv('DISPATCHARR_MANAGE_PY')
+    docker_container = dispatcharr_cfg.get('docker_container') or dispatcharr_cfg.get('container_name')
+    docker_manage_py = bool(manage_py_path and manage_py_path.startswith('docker:'))
     payload = None
 
-    if manage_py_path:
+    if docker_manage_py or docker_container:
+        container_name = docker_container or "dispatcharr"
+        try:
+            payload = _fetch_provider_payload_via_docker_exec(container_name)
+        except ValueError as exc:
+            logging.warning("Unable to fetch provider data via docker exec: %s", exc)
+
+    if payload is None and manage_py_path and not docker_manage_py:
         try:
             payload = _fetch_provider_payload_via_manage_py(manage_py_path)
         except ValueError as exc:
             logging.warning("Unable to fetch provider data via manage.py: %s", exc)
-
-    if payload is None:
-        container_name = dispatcharr_cfg.get('container_name')
-        if container_name:
-            try:
-                payload = _fetch_provider_payload_via_docker_exec(container_name)
-            except ValueError as exc:
-                logging.warning("Unable to fetch provider data via docker exec: %s", exc)
 
     if payload is None:
         provider_accounts_endpoint = dispatcharr_cfg.get('m3u_accounts_endpoint')
@@ -208,7 +209,7 @@ def refresh_provider_data(api, config, force=False):
         else:
             logging.warning(
                 "Provider discovery skipped: configure dispatcharr.manage_py_path, "
-                "dispatcharr.container_name, or dispatcharr.m3u_accounts_endpoint."
+                "dispatcharr.docker_container, or dispatcharr.m3u_accounts_endpoint."
             )
             return {}, {}
 
