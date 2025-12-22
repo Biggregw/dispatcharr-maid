@@ -899,7 +899,7 @@
                     <span>Refresh Channel Streams</span>
                 </button>
 
-                <button class="action-btn primary" onclick="startJob('full_cleanup')">
+                <button class="action-btn primary" onclick="startJob('full_cleanup', null, event)">
                     <span>🚀</span>
                     <span>Quality Check & Cleanup</span>
                 </button>
@@ -1413,7 +1413,51 @@
         }
 
         // Start a job
-        async function startJob(jobType, selectedStreamIds = null) {
+        function jobTypeLabel(jobType) {
+            return {
+                refresh_optimize: 'Refresh Channel Streams',
+                full_cleanup: 'Quality Check & Cleanup',
+                full: 'Full Pipeline',
+                fetch: 'Fetch Streams',
+                analyze: 'Analyze Streams',
+                score: 'Score Streams',
+                reorder: 'Reorder Streams',
+                cleanup: 'Cleanup'
+            }[jobType] || jobType;
+        }
+
+        function renderOptimisticStartingJob(jobType, groupNames, channelNames) {
+            const optimisticJob = {
+                job_id: 'starting',
+                job_type: jobType,
+                group_names: groupNames,
+                channel_names: channelNames,
+                status: 'queued',
+                progress: 0,
+                total: 0,
+                failed: 0,
+                current_step: `Starting ${jobTypeLabel(jobType)}...`
+            };
+            document.getElementById('current-job-card').classList.remove('hidden');
+            renderCurrentJob(reconcileJobForRender(optimisticJob));
+        }
+
+        function setButtonLoading(event, isLoading) {
+            const btn = event?.target?.closest?.('button');
+            if (!btn) return;
+            if (!btn.dataset.originalHtml) {
+                btn.dataset.originalHtml = btn.innerHTML;
+            }
+            if (isLoading) {
+                btn.disabled = true;
+                btn.innerHTML = `<span class="spinner"></span><span>${jobTypeLabel(btn.dataset.jobType || 'Job')} starting</span>`;
+            } else {
+                btn.disabled = false;
+                btn.innerHTML = btn.dataset.originalHtml;
+            }
+        }
+
+        async function startJob(jobType, selectedStreamIds = null, event = null) {
             try {
                 // Get group names
                 const groupNames = selectedGroups.map(id => {
@@ -1439,6 +1483,9 @@
                         channelNames = names.join(', ');
                     }
                 }
+
+                // Immediate UI feedback (so it doesn't look like nothing is happening)
+                renderOptimisticStartingJob(jobType, groupNames, channelNames);
                 
                 const payload = {
                     job_type: jobType,
@@ -1454,6 +1501,13 @@
                     exclude_4k: document.getElementById('exclude4K')?.checked || false,
                     selected_stream_ids: selectedStreamIds
                 };
+
+                // Button loading state (best-effort)
+                if (event) {
+                    const btn = event.target?.closest?.('button');
+                    if (btn) btn.dataset.jobType = jobType;
+                    setButtonLoading(event, true);
+                }
                 
                 const response = await fetch('/api/start-job', {
                     method: 'POST',
@@ -1469,6 +1523,13 @@
 
                     // Show current job card
                     document.getElementById('current-job-card').classList.remove('hidden');
+
+                    // Render immediately from the start-job response (don't wait for first poll)
+                    if (data.job) {
+                        const reconciled = reconcileJobForRender(normalizeJobStatus(data.job));
+                        renderCurrentJob(reconciled);
+                        updateRefreshProgress(reconciled);
+                    }
                     
                     // Start monitoring
                     if (jobCheckInterval) clearInterval(jobCheckInterval);
@@ -1484,6 +1545,10 @@
             } catch (error) {
                 alert('Failed to start job: ' + error.message);
                 return null;
+            } finally {
+                if (event) {
+                    setButtonLoading(event, false);
+                }
             }
         }
         
@@ -1639,8 +1704,38 @@
                     </span>
                 </div>
             `;
-            
-            if (job.status === 'running' && job.total > 0) {
+
+            // If we don't know totals yet (startup/fetching/loading), show an indeterminate bar
+            if ((job.status === 'running' || job.status === 'queued') && !(job.total > 0)) {
+                const processed = typeof job.progress === 'number' ? job.progress : 0;
+                html += `
+                    <div class="phase-indicator phase-indicator--active" style="margin-bottom: 10px;">
+                        <span class="phase-indicator__icon">⏳</span>
+                        <span class="phase-indicator__text">Working… totals will appear shortly.</span>
+                    </div>
+                    <div class="progress-container">
+                        <div class="progress-bar indeterminate"></div>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <div class="stat-label">Processed</div>
+                            <div class="stat-value">${processed.toLocaleString()}</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Total</div>
+                            <div class="stat-value">—</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Failed</div>
+                            <div class="stat-value" style="color: #e53e3e;">${(job.failed || 0).toLocaleString()}</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Remaining</div>
+                            <div class="stat-value">—</div>
+                        </div>
+                    </div>
+                `;
+            } else if (job.status === 'running' && job.total > 0) {
                 html += `
                     <div class="progress-container">
                         <div class="progress-bar ${isNumericComplete ? 'muted' : ''}" style="width: ${percent}%">
