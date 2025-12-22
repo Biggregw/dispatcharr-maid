@@ -25,3 +25,5 @@ scoring:
     960x540: 10
 dispatcharr:
   m3u_accounts_endpoint: /api/channels/m3u-accounts/
+  manage_py_path: ""  # Optional: path to Dispatcharr manage.py for direct DB access
+  refresh_provider_data: false  # Set true to overwrite provider_map/provider_metadata

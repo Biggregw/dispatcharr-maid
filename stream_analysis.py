@@ -22,6 +22,7 @@ import pandas as pd
 import yaml
 
 from api_utils import DispatcharrAPI
+from provider_data import refresh_provider_data
 
 
 # Progress tracking
@@ -591,8 +592,6 @@ def fetch_streams(api, config, output_file=None):
     output_file = output_file or config.resolve_path('csv/02_grouped_channel_streams.csv')
     groups_file = config.resolve_path('csv/00_channel_groups.csv')
     metadata_file = config.resolve_path('csv/01_channels_metadata.csv')
-    provider_map_file = config.resolve_path('provider_map.json')
-    
     filters = config.get('filters') or {}
     group_ids_list = filters.get('channel_group_ids', [])
     specific_channel_ids = filters.get('specific_channel_ids')  # NEW: specific channels
@@ -600,24 +599,11 @@ def fetch_streams(api, config, output_file=None):
     end_range = filters.get('end_channel', 99999)
     
     dispatcharr_cfg = config.get('dispatcharr') or {}
-
-    # Fetch provider accounts once and cache the mapping for downstream summaries.
-    provider_accounts_endpoint = dispatcharr_cfg.get('m3u_accounts_endpoint')
-    provider_map = {}
-    if not provider_accounts_endpoint:
-        logging.warning(
-            "dispatcharr.m3u_accounts_endpoint is not configured; "
-            "provider name resolution will be skipped."
-        )
-    else:
-        try:
-            provider_map = _fetch_provider_map(api, config, provider_accounts_endpoint)
-        except ValueError as exc:
-            logging.warning(
-                "Unable to resolve provider names from Dispatcharr: %s", exc
-            )
-            provider_map = {}
-    _write_provider_map(provider_map_file, provider_map)
+    refresh_provider_data(
+        api,
+        config,
+        force=bool(dispatcharr_cfg.get('refresh_provider_data', False))
+    )
 
     stream_provider_map = _fetch_stream_provider_map(api, config)
 

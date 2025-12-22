@@ -8,7 +8,8 @@ IMPORTANT: These files are ignored by git to protect your privacy!
 
 The following files contain YOUR data and are NOT committed to GitHub:
 - provider_names.json (your custom provider names)
-- provider_map.json (auto-generated from Dispatcharr API)
+- provider_map.json (auto-generated provider ID → name mapping)
+- provider_metadata.json (auto-generated provider metadata, including max_streams)
 - config.yaml (your channel groups and settings)
 - jobs/ directory (your job history and workspaces)
 - csv/ directory (your stream analysis data)
@@ -79,6 +80,25 @@ How to find provider IDs:
 If you skip this step, providers will show their Dispatcharr names
 or fall back to "Provider 1", "Provider 2", etc.
 
+Auto-Discovery of Provider Names (OPTIONAL)
+-------------------------------------------
+Dispatcharr-Maid can auto-discover provider IDs, names, and capacity
+via Dispatcharr itself. This keeps provider_map.json and
+provider_metadata.json updated without manual edits.
+
+Preferred (authoritative) source:
+- Configure `dispatcharr.manage_py_path` in config.yaml to point to
+  Dispatcharr's manage.py, then run:
+
+  python refresh_provider_data.py --manage-py /path/to/dispatcharr/manage.py
+
+Fallback (requires Dispatcharr API auth):
+- Ensure `dispatcharr.m3u_accounts_endpoint` is set (default example above)
+- Run `python refresh_provider_data.py`
+
+Manual overrides via provider_names.json always take precedence and are
+never overwritten by auto-discovery.
+
 
 KEEPING YOUR DATA PRIVATE
 ==========================
@@ -90,6 +110,7 @@ sensitive files from being committed to git:
 
 ✓ provider_names.json - Your private provider mappings
 ✓ provider_map.json - Auto-generated API data
+✓ provider_metadata.json - Auto-generated provider capacity metadata
 ✓ config.yaml - Your channel groups and settings
 ✓ jobs/ - Your job history with provider info
 ✓ csv/ - Your stream analysis results
@@ -125,6 +146,7 @@ git status
 # Should NOT see:
 # - provider_names.json
 # - provider_map.json
+# - provider_metadata.json
 # - config.yaml
 # - .env
 # - jobs/
@@ -233,4 +255,3 @@ SUMMARY
 ✓ Update .example files when adding new features
 
 Your provider information and settings stay private! 🔒
-

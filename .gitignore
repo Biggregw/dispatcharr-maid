@@ -27,6 +27,7 @@ htmlcov/
 # Sensitive provider and job data
 provider_names.json
 provider_map.json
+provider_metadata.json
 jobs/
 csv/
 
