@@ -193,14 +193,18 @@ def _provider_metadata_path(config):
 
 def _load_provider_metadata(config):
     """Load Dispatcharr-sourced provider metadata for capacity visibility."""
-    provider_path = _provider_metadata_path(config)
+    root_provider_path = Path(app.root_path) / 'provider_metadata.json'
+    provider_path = None
+    if config:
+        workspace_path = Path(_provider_metadata_path(config))
+        if workspace_path.exists():
+            provider_path = workspace_path
 
-    if not os.path.exists(provider_path):
-        root_provider_path = Path(app.root_path) / 'provider_metadata.json'
-        if root_provider_path.exists():
-            provider_path = root_provider_path
-        else:
-            return {}
+    if provider_path is None:
+        provider_path = root_provider_path
+
+    if not provider_path.exists():
+        return {}
 
     try:
         with open(provider_path, 'r') as handle:
