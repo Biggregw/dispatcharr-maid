@@ -82,6 +82,13 @@
             </div>
             
             <div id="providers-tab" class="tab-content active">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin: 10px 0 0 0;">
+                    <label style="display:flex;align-items:center;gap:8px;color:#4a5568;font-weight:600;">
+                        <input type="checkbox" id="show-all-providers" />
+                        Show all providers (including 0 streams)
+                    </label>
+                    <div id="provider-count-note" style="color:#718096;font-size:0.95em;"></div>
+                </div>
                 <table id="provider-table">
                     <thead>
                         <tr>
@@ -215,27 +222,75 @@
                 
                 // Providers
                 const tbody = document.getElementById('provider-tbody');
-                const providers = Object.entries(r.provider_stats || {}).sort((a, b) => a[1].success_rate - b[1].success_rate);
-                
-                tbody.innerHTML = providers.map(([id, stats]) => {
-                    const badgeClass = stats.success_rate >= 90 ? 'excellent' : stats.success_rate >= 70 ? 'good' : stats.success_rate >= 50 ? 'fair' : 'poor';
-                    const providerLabel = Object.prototype.hasOwnProperty.call(providerNames, id)
-                        ? providerNames[id]
-                        : `Provider ${id}`;
-                    const providerMeta = providerMetadata[id] || {};
-                    const maxStreams = typeof providerMeta.max_streams === 'number'
-                        ? providerMeta.max_streams
-                        : (providerMeta.max_streams === 0 ? 0 : '—');
-                    return `<tr>
-                        <td>${providerLabel}</td>
-                        <td>${stats.total}</td>
-                        <td style="color: #38a169;">${stats.successful}</td>
-                        <td style="color: #e53e3e;">${stats.failed}</td>
-                        <td><span class="success-badge ${badgeClass}">${stats.success_rate}%</span></td>
-                        <td>${stats.avg_quality}</td>
-                        <td>${maxStreams}</td>
-                    </tr>`;
-                }).join('');
+                const providerCountNote = document.getElementById('provider-count-note');
+                const showAllProvidersEl = document.getElementById('show-all-providers');
+
+                function renderProviders(showAll) {
+                    const providerStats = r.provider_stats || {};
+                    const providerStatsEntries = Object.entries(providerStats);
+                    const configuredProviderIds = Object.keys(providerNames || {});
+
+                    // If we don't have a configured provider list, fall back to what the run produced.
+                    const providerIds = (showAll && configuredProviderIds.length > 0)
+                        ? configuredProviderIds
+                        : providerStatsEntries.map(([id]) => id);
+
+                    const rows = providerIds.map((id) => {
+                        const stats = Object.prototype.hasOwnProperty.call(providerStats, id)
+                            ? providerStats[id]
+                            : { total: 0, successful: 0, failed: 0, success_rate: 0, avg_quality: '—' };
+                        return [id, stats];
+                    });
+
+                    // Sort: providers with data first, then by success rate (ascending like before), then by name.
+                    rows.sort((a, b) => {
+                        const aHasData = (a[1]?.total || 0) > 0;
+                        const bHasData = (b[1]?.total || 0) > 0;
+                        if (aHasData !== bHasData) return aHasData ? -1 : 1;
+                        const aRate = typeof a[1]?.success_rate === 'number' ? a[1].success_rate : 0;
+                        const bRate = typeof b[1]?.success_rate === 'number' ? b[1].success_rate : 0;
+                        if (aRate !== bRate) return aRate - bRate;
+                        const aName = Object.prototype.hasOwnProperty.call(providerNames, a[0]) ? providerNames[a[0]] : `${a[0]}`;
+                        const bName = Object.prototype.hasOwnProperty.call(providerNames, b[0]) ? providerNames[b[0]] : `${b[0]}`;
+                        return aName.localeCompare(bName);
+                    });
+
+                    providerCountNote.textContent = `Showing ${providerStatsEntries.length} provider${providerStatsEntries.length === 1 ? '' : 's'} in this run` +
+                        (configuredProviderIds.length > 0 ? ` (configured: ${configuredProviderIds.length})` : '');
+
+                    tbody.innerHTML = rows.map(([id, stats]) => {
+                        const rate = typeof stats.success_rate === 'number' ? stats.success_rate : 0;
+                        const badgeClass = rate >= 90 ? 'excellent' : rate >= 70 ? 'good' : rate >= 50 ? 'fair' : 'poor';
+                        const providerLabel = Object.prototype.hasOwnProperty.call(providerNames, id)
+                            ? providerNames[id]
+                            : `Provider ${id}`;
+                        const providerMeta = providerMetadata[id] || {};
+                        const maxStreams = typeof providerMeta.max_streams === 'number'
+                            ? providerMeta.max_streams
+                            : (providerMeta.max_streams === 0 ? 0 : '—');
+                        const avgQuality = (stats.avg_quality === undefined || stats.avg_quality === null) ? '—' : stats.avg_quality;
+                        const total = typeof stats.total === 'number' ? stats.total : 0;
+                        const successful = typeof stats.successful === 'number' ? stats.successful : 0;
+                        const failed = typeof stats.failed === 'number' ? stats.failed : 0;
+
+                        return `<tr>
+                            <td>${providerLabel}</td>
+                            <td>${total}</td>
+                            <td style="color: #38a169;">${successful}</td>
+                            <td style="color: #e53e3e;">${failed}</td>
+                            <td><span class="success-badge ${badgeClass}">${rate}%</span></td>
+                            <td>${avgQuality}</td>
+                            <td>${maxStreams}</td>
+                        </tr>`;
+                    }).join('');
+                }
+
+                // Default view matches prior behavior (only providers present in this run).
+                renderProviders(false);
+                showAllProvidersEl.checked = false;
+                showAllProvidersEl.addEventListener('change', (e) => {
+                    renderProviders(Boolean(e.target && e.target.checked));
+                });
                 
                 // Channels
                 const chanTbody = document.getElementById('channel-tbody');
