@@ -599,11 +599,12 @@ def fetch_streams(api, config, output_file=None):
     end_range = filters.get('end_channel', 99999)
     
     dispatcharr_cfg = config.get('dispatcharr') or {}
-    refresh_provider_data(
-        api,
-        config,
-        force=bool(dispatcharr_cfg.get('refresh_provider_data', False))
-    )
+    if dispatcharr_cfg.get('refresh_provider_data', False):
+        refresh_provider_data(
+            api,
+            config,
+            force=bool(dispatcharr_cfg.get('refresh_provider_data', False))
+        )
 
     stream_provider_map = _fetch_stream_provider_map(api, config)
 
