@@ -653,6 +653,15 @@ def cleanup_streams_by_provider(api, selected_group_ids, config, streams_per_pro
                     stream_scores[stream_id] = score
         except Exception as e:
             logging.warning(f"Could not load scores: {e}")
+
+    # Performance: fetch provider IDs for all streams once (avoid N+1 API calls)
+    stream_provider_map = {}
+    try:
+        stream_provider_map = api.fetch_stream_provider_map()
+    except Exception as e:
+        logging.warning(
+            f"Could not build stream provider map; falling back to per-stream lookups: {e}"
+        )
     
     channels = api.fetch_channels()
     
@@ -678,25 +687,31 @@ def cleanup_streams_by_provider(api, selected_group_ids, config, streams_per_pro
         stats['channels_processed'] += 1
         stats['total_streams_before'] += len(stream_ids)
         
-        # Fetch details for each stream and group by provider
+        # Group streams by provider (prefer cached provider map; fallback only when needed)
         streams_by_provider = {}
         
         for stream_id in stream_ids:
-            stream_details = api.fetch_stream_details(stream_id)
-            
-            if stream_details:
-                provider_id = stream_details.get('m3u_account')
-                
-                if provider_id is not None:
-                    if provider_id not in streams_by_provider:
-                        streams_by_provider[provider_id] = []
-                    
-                    # Store stream with its score
-                    score = stream_scores.get(stream_id, 0)
-                    streams_by_provider[provider_id].append({
-                        'id': stream_id,
-                        'score': score
-                    })
+            sid = int(stream_id)
+            provider_id = stream_provider_map.get(sid)
+
+            # Fallback: only hit the API if we couldn't map this stream
+            if provider_id is None:
+                stream_details = api.fetch_stream_details(sid)
+                if stream_details:
+                    provider_id = stream_details.get('m3u_account')
+
+            if provider_id is None:
+                continue
+
+            if provider_id not in streams_by_provider:
+                streams_by_provider[provider_id] = []
+
+            # Store stream with its score
+            score = stream_scores.get(sid, 0)
+            streams_by_provider[provider_id].append({
+                'id': sid,
+                'score': score
+            })
         
         # Keep top N streams from each provider, grouped by rank
         streams_by_rank = {}  # rank -> [stream_ids]
