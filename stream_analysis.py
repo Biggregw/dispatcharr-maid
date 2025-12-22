@@ -31,12 +31,16 @@ class ProgressTracker:
 
     def __init__(self, total_streams, checkpoint_file, use_checkpoint=True):
         self.total = total_streams
+        # If resuming from a checkpoint, treat already-processed IDs as progress
+        # so UIs/CLI progress bars don't look "stuck" at 0%.
         self.processed = 0
         self.failed = 0
         self.start_time = time.time()
         self.checkpoint_file = checkpoint_file
         self.use_checkpoint = use_checkpoint
         self.processed_ids = self.load_checkpoint() if use_checkpoint else set()
+        if self.processed_ids:
+            self.processed = len(self.processed_ids)
         self.lock = threading.Lock()
     
     def load_checkpoint(self):
@@ -810,6 +814,15 @@ def analyze_streams(config, input_csv=None,
         config.resolve_path('logs/checkpoint.json'),
         use_checkpoint=not force_full_analysis
     )
+
+    # Emit an initial progress update immediately (0 / total) so UIs can show
+    # that analysis is underway before the first stream finishes.
+    if progress_callback:
+        try:
+            progress_callback(progress_tracker.get_progress())
+        except Exception:
+            # Progress reporting should never fail the analysis.
+            logging.debug("progress_callback failed during initial progress emit", exc_info=True)
     
     # Check for existing checkpoint
     if len(progress_tracker.processed_ids) > 0:
