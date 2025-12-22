@@ -2101,16 +2101,7 @@
                     outputEl.classList.remove('hidden');
                     copyBtn.disabled = false;
                     const count = data.channel_count || 0;
-                    statusEl.textContent = `Saved (${count} channels) — starting Quality Check & Cleanup…`;
-
-                    // Requirement: only when "save regex" is used, immediately run Quality Check & Cleanup.
-                    if (count > 0) {
-                        // Move to step 3 so the user can see job progress immediately.
-                        goToStep3();
-                        // Start Quality Check & Cleanup on the current selectedChannels.
-                        // (These reflect the tick-box selection that was just saved.)
-                        await startJob('full_cleanup', null, null);
-                    }
+                    statusEl.textContent = `Saved (${count} channels)`;
                 } else {
                     statusEl.textContent = data.message || 'No specific channels selected (All channels).';
                 }
@@ -2119,10 +2110,33 @@
             }
         }
 
+        async function ensureChannelsLoadedForStep2() {
+            // Ensure the channel list is present before ticking boxes.
+            if (!selectedGroups || selectedGroups.length === 0) return false;
+            const container = document.getElementById('channel-container');
+            const loading = document.getElementById('channel-loading');
+            const hasRendered = container && !container.classList.contains('hidden') && container.querySelector('.channel-item');
+            if (hasRendered) return true;
+            // If we are still loading or haven't rendered yet, load channels now.
+            if (loading && !loading.classList.contains('hidden')) {
+                // Wait briefly for in-flight loadChannels
+                await new Promise(r => setTimeout(r, 250));
+                const ok = container && container.querySelector('.channel-item');
+                return Boolean(ok);
+            }
+            await loadChannels();
+            return Boolean(container && container.querySelector('.channel-item'));
+        }
+
         async function useSavedChannelSelection(mode = 'regex') {
             const statusEl = document.getElementById('regex-save-status');
             statusEl.textContent = 'Loading saved selection…';
             try {
+                const ready = await ensureChannelsLoadedForStep2();
+                if (!ready) {
+                    statusEl.textContent = 'Load failed: channels not loaded yet.';
+                    return;
+                }
                 const payload = { groups: selectedGroups, mode: mode || 'auto' };
                 const response = await fetch('/api/resolve-saved-channel-selection', {
                     method: 'POST',
@@ -2144,7 +2158,16 @@
                     if (cb) cb.checked = true;
                 });
                 updateChannelSelection();
-                statusEl.textContent = `Loaded saved ${data.mode_used || 'selection'} (${ids.length} channels)`;
+                const modeUsed = data.mode_used || 'selection';
+                statusEl.textContent = `Loaded saved ${modeUsed} (${ids.length} channels) — starting Quality Check & Cleanup…`;
+
+                // Requirement: after using a saved regex selection, immediately run cleanup.
+                if (ids.length > 0) {
+                    goToStep3();
+                    await startJob('full_cleanup', null, null);
+                } else {
+                    statusEl.textContent = `Loaded saved ${modeUsed} but matched 0 channels.`;
+                }
             } catch (error) {
                 statusEl.textContent = 'Load failed: ' + error.message;
             }
