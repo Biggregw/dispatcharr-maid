@@ -40,6 +40,22 @@ app = Flask(__name__)
 
 CORS(app)
 
+
+@app.after_request
+def _disable_browser_cache(response):
+    """
+    Mobile browsers can aggressively cache HTML, which makes UI changes appear
+    "not applied" even after a redeploy/restart. Disable caching for dynamic
+    app pages and API responses so the UI always matches the server version.
+    """
+    try:
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    except Exception:
+        pass
+    return response
+
 _dispatcharr_auth_state = {
     'authenticated': False,
     'last_error': None
