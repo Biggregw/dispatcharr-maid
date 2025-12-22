@@ -6,6 +6,7 @@ Run everything from the browser - no CLI needed!
 """
 
 import json
+import html
 import logging
 import os
 import sys
@@ -66,8 +67,9 @@ def _ensure_dispatcharr_ready():
 
 def _render_auth_error(error_message):
     message = error_message or 'Dispatcharr credentials are invalid or unavailable.'
+    message = html.escape(str(message))
     return (
-        """<!DOCTYPE html>
+        f"""<!DOCTYPE html>
         <html lang='en'>
         <head><meta charset='utf-8'><title>Dispatcharr Authentication Required</title></head>
         <body>
