@@ -288,6 +288,7 @@ def _get_job_results(job_id):
         results = job.result_summary
         job_type = job.job_type
         config = _build_config_from_job(job)
+        specific_channel_ids = job.channels
     else:
         history = get_job_history()
         history_job = next((entry for entry in history if entry.get('job_id') == job_id), None)
@@ -296,14 +297,24 @@ def _get_job_results(job_id):
         results = history_job.get('result_summary')
         job_type = history_job.get('job_type')
         workspace = history_job.get('workspace')
+        specific_channel_ids = history_job.get('channels')
         if workspace:
             workspace_path = Path(workspace)
             config = Config(workspace_path / 'config.yaml', working_dir=workspace_path)
         else:
             config = Config('config.yaml')
 
-    if not results:
-        return None, None, None, None, 'No results available'
+    # Treat "missing" as None (an empty dict is still a valid payload).
+    # If the summary is missing, try reconstructing from the job workspace.
+    if results is None or (isinstance(results, dict) and not results and _job_ran_analysis(job_type)):
+        try:
+            summary = generate_job_summary(config, specific_channel_ids=specific_channel_ids)
+        except Exception:
+            summary = None
+        if summary:
+            results = summary
+        elif results is None:
+            return None, None, None, None, 'No results available'
 
     analysis_ran = _job_ran_analysis(job_type) if job_type else False
     return results, analysis_ran, job_type, config, None
