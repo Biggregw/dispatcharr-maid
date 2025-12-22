@@ -135,6 +135,13 @@ def cleanup_streams_by_provider(api, selected_group_ids):
     print("="*70 + "\n")
     
     channels = api.fetch_channels()
+
+    # Performance: fetch provider IDs for all streams once (avoid N+1 API calls)
+    stream_provider_map = {}
+    try:
+        stream_provider_map = api.fetch_stream_provider_map()
+    except Exception as e:
+        print(f"Warning: could not build stream provider map; using per-stream lookups: {e}")
     
     filtered_channels = [
         ch for ch in channels 
@@ -159,20 +166,24 @@ def cleanup_streams_by_provider(api, selected_group_ids):
         
         print(f"  Channel {channel_number}: {channel_name} ({len(stream_ids)} streams)")
         
-        # Fetch details for each stream to get provider info
+        # Group streams by provider (prefer cached provider map; fallback only when needed)
         streams_by_provider = {}
         
         for stream_id in stream_ids:
-            stream_details = api.fetch_stream_details(stream_id)
-            
-            if stream_details:
-                # Get provider/account identifier
-                provider_id = stream_details.get('m3u_account')
-                
-                if provider_id is not None:
-                    if provider_id not in streams_by_provider:
-                        streams_by_provider[provider_id] = []
-                    streams_by_provider[provider_id].append(stream_id)
+            sid = int(stream_id)
+            provider_id = stream_provider_map.get(sid)
+
+            if provider_id is None:
+                stream_details = api.fetch_stream_details(sid)
+                if stream_details:
+                    provider_id = stream_details.get('m3u_account')
+
+            if provider_id is None:
+                continue
+
+            if provider_id not in streams_by_provider:
+                streams_by_provider[provider_id] = []
+            streams_by_provider[provider_id].append(sid)
         
         # Keep only the first (top-ranked) stream from each provider
         streams_to_keep = []

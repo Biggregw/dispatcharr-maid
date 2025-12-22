@@ -1193,6 +1193,10 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     import re
     import subprocess
     import json
+
+    # Performance: precompile regexes used in matching loops
+    _QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
+    _TIMESHIFT_RE = re.compile(r'\+\d')
     
     def check_stream_resolution(stream_url, timeout=5):
         """Quick resolution check using ffprobe (1-2 seconds per stream)"""
@@ -1225,51 +1229,53 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     
     def strip_quality(text):
         """Remove quality indicators"""
-        quality_terms = ['hd', 'sd', 'fhd', '4k', 'uhd', 'hevc', 'h264', 'h265']
-        result = text
-        for term in quality_terms:
-            result = re.sub(rf'\b{term}\b', '', result, flags=re.IGNORECASE)
-        return result.strip()
+        return _QUALITY_RE.sub('', text).strip()
+
+    def compile_wildcard_filter(filter_text):
+        """
+        Compile a comma-separated glob filter (supports '*' wildcard) into regex objects.
+        Uses a safe glob-to-regex conversion (escapes all non-wildcard characters).
+        """
+        if not filter_text:
+            return []
+        parts = [p.strip().lower() for p in filter_text.split(',') if p.strip()]
+        regexes = []
+        for part in parts:
+            # Convert glob (*) to regex (.*), escape everything else
+            pat = re.escape(part).replace(r'\*', '.*')
+            regexes.append(re.compile(pat))
+        return regexes
+
+    # Precompute constants used for all stream comparisons (initialized later,
+    # once `search_name` is known).
+    _selected_normalized = None
+    _selected_has_timeshift = None
+    _include_regexes = None
+    _exclude_regexes = None
     
-    def matches_channel(selected_channel, stream_name, regional_filter=None, exclude_filter=None):
-        """Check if stream matches selected channel"""
-        selected_base = strip_quality(selected_channel)
-        selected_normalized = normalize(selected_base)
+    def matches_stream(stream_name):
+        """Check if stream matches the selected channel (fast path; precomputed filters)."""
         stream_normalized = normalize(stream_name)
         
-        if selected_normalized not in stream_normalized:
+        if _selected_normalized not in stream_normalized:
             return False
         
-        selected_has_timeshift = re.search(r'\+\d', selected_channel)
-        stream_has_timeshift = re.search(r'\+\d', stream_name)
+        stream_has_timeshift = bool(_TIMESHIFT_RE.search(stream_name))
         
-        if selected_has_timeshift and not stream_has_timeshift:
+        if _selected_has_timeshift and not stream_has_timeshift:
             return False
-        if not selected_has_timeshift and stream_has_timeshift:
+        if not _selected_has_timeshift and stream_has_timeshift:
             return False
         
-        if regional_filter:
-            wildcards = [w.strip() for w in regional_filter.split(',')]
+        if _include_regexes:
             stream_lower = stream_name.lower()
-            
-            matched = False
-            for wildcard in wildcards:
-                pattern = wildcard.replace('*', '.*')
-                if re.search(pattern, stream_lower):
-                    matched = True
-                    break
-            
-            if not matched:
+            if not any(r.search(stream_lower) for r in _include_regexes):
                 return False
         
-        if exclude_filter:
-            excludes = [e.strip() for e in exclude_filter.split(',')]
+        if _exclude_regexes:
             stream_lower = stream_name.lower()
-            
-            for exclude in excludes:
-                pattern = exclude.replace('*', '.*')
-                if re.search(pattern, stream_lower):
-                    return False
+            if any(r.search(stream_lower) for r in _exclude_regexes):
+                return False
         
         return True
     
@@ -1293,6 +1299,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         logging.info(f"Include filter: {include_filter}")
     if exclude_filter:
         logging.info(f"Exclude filter: {exclude_filter}")
+
+    # Precompute match constants once (used inside the stream loop)
+    _selected_normalized = normalize(strip_quality(search_name))
+    _selected_has_timeshift = bool(_TIMESHIFT_RE.search(search_name))
+    _include_regexes = compile_wildcard_filter(include_filter)
+    _exclude_regexes = compile_wildcard_filter(exclude_filter)
     
     # Get current streams for this channel
     current_streams = api.fetch_channel_streams(channel_id)
@@ -1325,7 +1337,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         stream_name = stream.get('name', '')
         stream_id = stream.get('id')
         
-        if matches_channel(search_name, stream_name, include_filter, exclude_filter):
+        if matches_stream(stream_name):
             matching_streams.append({'id': stream_id, 'url': stream.get('url', ''), 'name': stream_name})
     
     logging.info(f"Found {len(matching_streams)} matching streams")

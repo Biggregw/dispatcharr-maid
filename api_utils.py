@@ -183,6 +183,48 @@ class DispatcharrAPI:
     def fetch_channel_streams(self, channel_id):
         """Fetch streams for a specific channel"""
         return self.get(f'/api/channels/channels/{channel_id}/streams/')
+
+    def fetch_stream_provider_map(self, limit=100):
+        """
+        Fetch all streams and build a stream_id -> m3u_account map.
+
+        This avoids N+1 API calls when you only need provider/account IDs.
+        Returns a dict of {int(stream_id): m3u_account}.
+        """
+        stream_provider_map = {}
+        next_url = f'/api/channels/streams/?limit={int(limit)}'
+
+        while next_url:
+            payload = self.get(next_url)
+
+            # DRF-style pagination: {results: [...], next: "..."}
+            if isinstance(payload, dict) and 'results' in payload:
+                results = payload.get('results') or []
+                next_link = payload.get('next')
+            # Fallback: unpaginated list
+            elif isinstance(payload, list):
+                results = payload
+                next_link = None
+            else:
+                raise ValueError("Unexpected streams response shape; expected dict or list.")
+
+            for stream in results:
+                if not isinstance(stream, dict):
+                    continue
+                stream_id = stream.get('id')
+                m3u_account = stream.get('m3u_account')
+                if stream_id is None or m3u_account is None:
+                    continue
+                stream_provider_map[int(stream_id)] = m3u_account
+
+            if next_link:
+                # Convert absolute next URL to API-relative endpoint
+                next_url = next_link.split('/api/')[-1]
+                next_url = '/api/' + next_url
+            else:
+                next_url = None
+
+        return stream_provider_map
     
     def fetch_stream_details(self, stream_id):
         """Fetch details for a specific stream"""
