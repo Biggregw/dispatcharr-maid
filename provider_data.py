@@ -68,39 +68,19 @@ def _fetch_provider_payload_via_api(api, config, endpoint):
     return payload
 
 
-def _fetch_provider_payload_via_manage_py(manage_py_path):
-    manage_py = Path(manage_py_path)
-    if not manage_py.exists():
-        raise ValueError(f"manage.py not found at {manage_py}.")
-
-    command = [
-        sys.executable,
-        str(manage_py),
-        'shell',
-        '-c',
-        (
-            "from apps.m3u.models import M3UAccount; "
-            "import json; "
-            "print(json.dumps(["
-            "{'id': account.id, 'name': account.name, 'max_streams': account.max_streams} "
-            "for account in M3UAccount.objects.all()]))"
-        )
-    ]
-
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        cwd=str(manage_py.parent)
+def _build_manage_py_query():
+    return (
+        "from apps.m3u.models import M3UAccount; "
+        "import json; "
+        "print(json.dumps(["
+        "{'id': account.id, 'name': account.name, 'max_streams': account.max_streams} "
+        "for account in M3UAccount.objects.all()]))"
     )
 
-    if result.returncode != 0:
-        raise ValueError(
-            "manage.py shell failed: "
-            f"{result.stderr.strip() or result.stdout.strip()}"
-        )
 
-    stdout = result.stdout.strip()
+# Helper: parse provider payload from manage.py output.
+def _parse_provider_payload_from_stdout(stdout):
+    stdout = stdout.strip()
     if not stdout:
         raise ValueError("manage.py shell did not return provider data.")
 
@@ -119,6 +99,66 @@ def _fetch_provider_payload_via_manage_py(manage_py_path):
         raise ValueError("Unable to parse provider data from manage.py output.")
 
     return payload
+
+
+def _fetch_provider_payload_via_manage_py(manage_py_path):
+    manage_py = Path(manage_py_path)
+    if not manage_py.exists():
+        raise ValueError(f"manage.py not found at {manage_py}.")
+
+    command = [
+        sys.executable,
+        str(manage_py),
+        'shell',
+        '-c',
+        _build_manage_py_query()
+    ]
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        cwd=str(manage_py.parent)
+    )
+
+    if result.returncode != 0:
+        raise ValueError(
+            "manage.py shell failed: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+
+    return _parse_provider_payload_from_stdout(result.stdout)
+
+
+# Helper: fetch provider payload via docker exec.
+def _fetch_provider_payload_via_docker_exec(container_name):
+    command = [
+        'docker',
+        'exec',
+        container_name,
+        'python3',
+        '/app/manage.py',
+        'shell',
+        '-c',
+        _build_manage_py_query()
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise ValueError("docker exec is unavailable.") from exc
+
+    if result.returncode != 0:
+        raise ValueError(
+            "docker exec manage.py shell failed: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+
+    return _parse_provider_payload_from_stdout(result.stdout)
 
 
 def _write_json(path, payload):
@@ -148,8 +188,16 @@ def refresh_provider_data(api, config, force=False):
             payload = _fetch_provider_payload_via_manage_py(manage_py_path)
         except ValueError as exc:
             logging.warning("Unable to fetch provider data via manage.py: %s", exc)
-            return {}, {}
-    else:
+
+    if payload is None:
+        container_name = dispatcharr_cfg.get('container_name')
+        if container_name:
+            try:
+                payload = _fetch_provider_payload_via_docker_exec(container_name)
+            except ValueError as exc:
+                logging.warning("Unable to fetch provider data via docker exec: %s", exc)
+
+    if payload is None:
         provider_accounts_endpoint = dispatcharr_cfg.get('m3u_accounts_endpoint')
         if provider_accounts_endpoint and api:
             try:
@@ -159,8 +207,8 @@ def refresh_provider_data(api, config, force=False):
                 return {}, {}
         else:
             logging.warning(
-                "Provider discovery skipped: configure dispatcharr.manage_py_path "
-                "or dispatcharr.m3u_accounts_endpoint."
+                "Provider discovery skipped: configure dispatcharr.manage_py_path, "
+                "dispatcharr.container_name, or dispatcharr.m3u_accounts_endpoint."
             )
             return {}, {}
 
