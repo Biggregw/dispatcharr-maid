@@ -264,6 +264,148 @@ def _extract_analyzed_streams(results):
     return 0
 
 
+def _tokenize_words(text):
+    """Simple word tokenizer for regex generation (lowercased alnum words)."""
+    if not isinstance(text, str):
+        return []
+    return re.findall(r'[a-z0-9]+', text.lower())
+
+
+def _generate_minimalish_regex(include_strings, exclude_strings):
+    """
+    Heuristic regex generator:
+    - Ensures it matches ALL include_strings
+    - Ensures it matches NONE of exclude_strings
+    - Tries to keep it short by preferring word-based negative lookaheads,
+      falling back to literal exclusions when needed.
+    """
+    include = [s for s in (include_strings or []) if isinstance(s, str) and s.strip()]
+    exclude = [s for s in (exclude_strings or []) if isinstance(s, str) and s.strip()]
+
+    # If nothing is selected, return a regex that matches nothing.
+    if not include:
+        return r'^(?!)$'
+
+    include_lc = [s.lower() for s in include]
+    exclude_lc = [s.lower() for s in exclude]
+
+    include_token_sets = [set(_tokenize_words(s)) for s in include_lc]
+    exclude_token_sets = [set(_tokenize_words(s)) for s in exclude_lc]
+
+    include_tokens = set().union(*include_token_sets) if include_token_sets else set()
+    exclude_tokens = set().union(*exclude_token_sets) if exclude_token_sets else set()
+
+    # Candidate negative tokens: appear in excludes, never in includes.
+    # (This is how we can get small exclusions like "dolby".)
+    stop = {
+        'the', 'and', 'for', 'with', 'from',
+        'hd', 'sd', 'fhd', 'uhd', '4k', 'h264', 'h265', 'hevc', 'aac',
+    }
+    candidate_neg = sorted(
+        {
+            t for t in exclude_tokens
+            if t not in include_tokens
+            and t not in stop
+            and len(t) >= 3
+        },
+        key=lambda x: (len(x), x)
+    )
+
+    # Greedy set-cover of excluded strings using negative tokens.
+    uncovered = set(range(len(exclude_token_sets)))
+    neg_tokens = []
+    if candidate_neg and uncovered:
+        # Precompute token -> which excluded indices it covers.
+        covers = {}
+        for tok in candidate_neg:
+            idxs = {i for i, s in enumerate(exclude_token_sets) if tok in s}
+            if idxs:
+                covers[tok] = idxs
+
+        while uncovered:
+            best_tok = None
+            best_gain = 0
+            for tok, idxs in covers.items():
+                gain = len(idxs & uncovered)
+                if gain > best_gain:
+                    best_gain = gain
+                    best_tok = tok
+            if not best_tok or best_gain == 0:
+                break
+            neg_tokens.append(best_tok)
+            uncovered -= covers.get(best_tok, set())
+            # Remove it so we don't pick again.
+            covers.pop(best_tok, None)
+
+    # If some excluded strings aren't covered by unique tokens, fall back to literals.
+    neg_literals = []
+    if exclude and uncovered:
+        for i in sorted(uncovered):
+            # Literal exclusion: entire string (still case-insensitive due to (?i)).
+            neg_literals.append(exclude[i])
+
+    # Positive tokens: words shared by ALL includes (helps narrow the match).
+    pos_tokens = []
+    if include_token_sets:
+        common = set.intersection(*include_token_sets) if include_token_sets else set()
+        pos_tokens = sorted([t for t in common if t not in stop and len(t) >= 3], key=lambda x: (len(x), x))
+
+    def _build_regex(neg_toks, neg_lits, pos_toks):
+        neg_parts = []
+        for t in neg_toks:
+            neg_parts.append(r'\b' + re.escape(t) + r'\b')
+        for lit in neg_lits:
+            neg_parts.append(re.escape(lit))
+
+        pos_lookaheads = ''.join([r'(?=.*\b' + re.escape(t) + r'\b)' for t in pos_toks])
+        neg_lookahead = ''
+        if neg_parts:
+            neg_lookahead = r'(?!.*(?:' + '|'.join(neg_parts) + r'))'
+
+        return r'(?i)^' + neg_lookahead + pos_lookaheads + r'.*$'
+
+    # Build an initial regex and validate. If any excluded still match, add literal exclusions for them.
+    regex = _build_regex(neg_tokens, neg_literals, pos_tokens)
+
+    try:
+        compiled = re.compile(regex)
+    except re.error:
+        # Hard fallback: exact-match alternation for includes.
+        escaped = [re.escape(s) for s in sorted(set(include), key=lambda s: (s.casefold(), s))]
+        body = escaped[0] if len(escaped) == 1 else '(?:' + '|'.join(escaped) + ')'
+        return r'(?i)^(?:' + body + r')$'
+
+    # Ensure all includes match; if not, drop positive tokens and retry.
+    if any(not compiled.search(s) for s in include):
+        regex = _build_regex(neg_tokens, neg_literals, [])
+        compiled = re.compile(regex)
+
+    # Ensure excludes are excluded; if not, add literal exclusions for those remaining.
+    if exclude:
+        still_matching = [s for s in exclude if compiled.search(s)]
+        if still_matching:
+            regex = _build_regex(neg_tokens, neg_literals + still_matching, pos_tokens if 'pos_tokens' in locals() else [])
+            try:
+                compiled = re.compile(regex)
+            except re.error:
+                # Last-resort: exact-match alternation for includes.
+                escaped = [re.escape(s) for s in sorted(set(include), key=lambda s: (s.casefold(), s))]
+                body = escaped[0] if len(escaped) == 1 else '(?:' + '|'.join(escaped) + ')'
+                return r'(?i)^(?:' + body + r')$'
+
+    # Final sanity.
+    if any(not compiled.search(s) for s in include):
+        escaped = [re.escape(s) for s in sorted(set(include), key=lambda s: (s.casefold(), s))]
+        body = escaped[0] if len(escaped) == 1 else '(?:' + '|'.join(escaped) + ')'
+        return r'(?i)^(?:' + body + r')$'
+    if any(compiled.search(s) for s in exclude):
+        escaped = [re.escape(s) for s in sorted(set(include), key=lambda s: (s.casefold(), s))]
+        body = escaped[0] if len(escaped) == 1 else '(?:' + '|'.join(escaped) + ')'
+        return r'(?i)^(?:' + body + r')$'
+
+    return regex
+
+
 def _build_results_payload(results, analysis_ran, job_type, provider_names=None, provider_metadata=None, capacity_summary=None):
     payload = {
         'success': True,
@@ -556,6 +698,11 @@ def run_job_worker(job, api, config):
             
             job.current_step = 'Searching all providers for matching streams...'
             effective_exclude_filter = _build_exclude_filter(job.exclude_filter, job.exclude_plus_one)
+            filters = config.get('filters') or {}
+            stream_name_regex = None
+            if isinstance(filters, dict):
+                stream_name_regex = filters.get('refresh_stream_name_regex')
+
             refresh_result = refresh_channel_streams(
                 api,
                 config,
@@ -564,7 +711,8 @@ def run_job_worker(job, api, config):
                 job.include_filter,
                 effective_exclude_filter,
                 job.exclude_4k,
-                job.selected_stream_ids
+                job.selected_stream_ids,
+                stream_name_regex=stream_name_regex
             )
             
             if 'error' in refresh_result:
@@ -1286,6 +1434,7 @@ def api_refresh_preview():
         exclude_filter = data.get('exclude_filter')
         exclude_plus_one = data.get('exclude_plus_one', False)
         exclude_4k = data.get('exclude_4k', False)
+        stream_name_regex = data.get('stream_name_regex')
 
         if not channel_id:
             return jsonify({'success': False, 'error': 'Channel ID is required'}), 400
@@ -1293,6 +1442,11 @@ def api_refresh_preview():
         api = DispatcharrAPI()
         api.login()
         config = Config('config.yaml')
+
+        if stream_name_regex is None:
+            filters = config.get('filters') or {}
+            if isinstance(filters, dict):
+                stream_name_regex = filters.get('refresh_stream_name_regex')
 
         effective_exclude_filter = _build_exclude_filter(exclude_filter, exclude_plus_one)
         preview = refresh_channel_streams(
@@ -1303,7 +1457,8 @@ def api_refresh_preview():
             include_filter,
             effective_exclude_filter,
             exclude_4k,
-            preview=True
+            preview=True,
+            stream_name_regex=stream_name_regex
         )
 
         if 'error' in preview:
@@ -1531,6 +1686,147 @@ def api_export_csv():
             mimetype='text/csv',
             headers={'Content-Disposition': 'attachment; filename=stream_analysis_results.csv'}
         )
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/results/streams')
+def api_results_streams():
+    """
+    Return per-stream rows from the most recent (or job-scoped) analysis CSV.
+
+    Query params:
+      - job_id: optional
+      - limit: int (default 500, max 5000)
+      - offset: int (default 0)
+    """
+    try:
+        job_id = request.args.get('job_id')
+        limit = request.args.get('limit', '500')
+        offset = request.args.get('offset', '0')
+        try:
+            limit_i = max(1, min(5000, int(limit)))
+        except (TypeError, ValueError):
+            limit_i = 500
+        try:
+            offset_i = max(0, int(offset))
+        except (TypeError, ValueError):
+            offset_i = 0
+
+        if job_id:
+            results, analysis_ran, job_type, config, error = _get_job_results(job_id)
+            if error:
+                return jsonify({'success': False, 'error': error}), 404
+        else:
+            latest_job = _get_latest_job_with_workspace()
+            config = _build_config_from_job(latest_job)
+
+        measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
+        if not os.path.exists(measurements_file):
+            return jsonify({'success': False, 'error': 'No stream measurements CSV found for this job.'}), 404
+
+        df = pd.read_csv(measurements_file)
+        total = int(len(df))
+
+        # Provide stable defaults even if columns differ between versions.
+        def col(name, fallback=None):
+            return name if name in df.columns else fallback
+
+        columns = {
+            'stream_id': col('stream_id', col('id')),
+            'stream_name': col('stream_name', col('name')),
+            'status': col('status'),
+            'quality_score': col('quality_score', col('score')),
+            'resolution': col('resolution'),
+            'provider_id': col('m3u_account'),
+            'channel_number': col('channel_number'),
+            'channel_id': col('channel_id')
+        }
+
+        # Slice with offset/limit.
+        slice_df = df.iloc[offset_i: offset_i + limit_i]
+        rows = []
+        for _, row in slice_df.iterrows():
+            item = {}
+            for key, cname in columns.items():
+                if cname is None:
+                    item[key] = None
+                    continue
+                value = row.get(cname)
+                if pd.isna(value):
+                    value = None
+                # Normalize ids to int where possible for UI consistency.
+                if key in ('stream_id', 'provider_id', 'channel_id', 'channel_number') and value is not None:
+                    try:
+                        value = int(value)
+                    except Exception:
+                        pass
+                if key in ('quality_score',) and value is not None:
+                    try:
+                        value = float(value)
+                    except Exception:
+                        pass
+                item[key] = value
+            rows.append(item)
+
+        return jsonify({
+            'success': True,
+            'total': total,
+            'offset': offset_i,
+            'limit': limit_i,
+            'streams': rows
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/regex/generate', methods=['POST'])
+def api_generate_regex():
+    """
+    Generate a "minimal-ish" regex from include/exclude lists.
+
+    Payload:
+      {
+        "include": ["..."],
+        "exclude": ["..."]
+      }
+    """
+    try:
+        data = request.get_json() or {}
+        include = data.get('include') or []
+        exclude = data.get('exclude') or []
+        if not isinstance(include, list) or not isinstance(exclude, list):
+            return jsonify({'success': False, 'error': '"include" and "exclude" must be lists'}), 400
+
+        regex = _generate_minimalish_regex(include, exclude)
+        return jsonify({'success': True, 'regex': regex})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/regex/save', methods=['POST'])
+def api_save_regex():
+    """
+    Save the generated stream-name regex into config.yaml for reuse.
+
+    Payload:
+      { "regex": "..." }
+    """
+    try:
+        data = request.get_json() or {}
+        regex = data.get('regex')
+        if not isinstance(regex, str) or not regex.strip():
+            return jsonify({'success': False, 'error': '"regex" must be a non-empty string'}), 400
+        try:
+            re.compile(regex)
+        except re.error as exc:
+            return jsonify({'success': False, 'error': f'Invalid regex: {exc}'}), 400
+
+        config = Config('config.yaml')
+        config.set('filters', 'refresh_stream_name_regex', regex.strip())
+        config.set('filters', 'refresh_stream_name_regex_saved_at', datetime.now().isoformat())
+        config.save()
+        return jsonify({'success': True, 'saved': True, 'regex': regex.strip()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

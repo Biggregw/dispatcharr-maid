@@ -36,6 +36,16 @@
         .tab.active { color: #667eea; border-bottom-color: #667eea; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
+        .muted { color: #718096; }
+        .small { font-size: 0.9em; }
+        .pill { display:inline-block; padding: 4px 10px; border-radius: 999px; background: #edf2f7; color:#2d3748; font-weight: 600; font-size: 0.85em; }
+        .btn-sm { padding: 10px 14px; border-radius: 8px; font-size: 0.95em; }
+        .input { width: 100%; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em; }
+        .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+        .stream-tools { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin: 10px 0; }
+        .codebox { margin-top: 10px; padding: 12px; background: #f7fafc; border-radius: 10px; border: 1px solid #e2e8f0; }
+        code { word-break: break-word; }
+        .stream-table-wrap { overflow-x: auto; }
     </style>
 </head>
 <body>
@@ -79,6 +89,7 @@
                 <button class="tab active" onclick="showTab('providers')">Providers</button>
                 <button class="tab" onclick="showTab('channels')">Channels</button>
                 <button class="tab" onclick="showTab('errors')">Errors</button>
+                <button class="tab" onclick="showTab('streams')">Streams</button>
             </div>
             
             <div id="providers-tab" class="tab-content active">
@@ -123,6 +134,47 @@
             <div id="errors-tab" class="tab-content">
                 <div id="error-list"></div>
             </div>
+
+            <div id="streams-tab" class="tab-content">
+                <div class="row" style="justify-content: space-between; margin-top: 6px;">
+                    <div class="muted small">
+                        Tick streams you want the regex to <strong>match</strong>. Untick streams you want it to <strong>exclude</strong> (e.g. untick any “dolby” variants).
+                    </div>
+                    <div class="pill" id="streams-count-pill">0 streams</div>
+                </div>
+
+                <div class="stream-tools">
+                    <input id="stream-search" class="input" style="max-width: 520px;" type="text" placeholder="🔍 Filter streams by name (client-side)" oninput="filterStreamRows()" />
+                    <button class="btn btn-sm" type="button" onclick="selectAllStreams()">Select all</button>
+                    <button class="btn btn-sm" type="button" onclick="clearAllStreams()">Clear all</button>
+                    <button class="btn btn-sm" type="button" style="background:#667eea;color:white;" onclick="generateStreamRegex()">Generate minimal regex</button>
+                    <button class="btn btn-sm" type="button" style="background:#48bb78;color:white;" onclick="saveStreamRegex()" id="save-stream-regex-btn" disabled>Save regex</button>
+                    <button class="btn btn-sm" type="button" onclick="copyStreamRegex()" id="copy-stream-regex-btn" disabled>Copy regex</button>
+                    <span id="stream-regex-status" class="muted small"></span>
+                </div>
+
+                <div id="stream-regex-output" class="codebox" style="display:none;">
+                    <div style="font-weight:700; color:#2d3748; margin-bottom:6px;">Generated regex</div>
+                    <code id="stream-regex-code"></code>
+                </div>
+
+                <div class="stream-table-wrap">
+                    <table id="stream-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 70px;">Use</th>
+                                <th>Stream</th>
+                                <th>Status</th>
+                                <th>Quality</th>
+                                <th>Resolution</th>
+                                <th>Provider</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stream-tbody"></tbody>
+                    </table>
+                </div>
+                <div id="streams-loading" class="muted small" style="margin-top:10px;"></div>
+            </div>
         </div>
     </div>
     
@@ -130,6 +182,18 @@
         const params = new URLSearchParams(window.location.search);
         const jobId = params.get('job_id');
         const resultsUrl = jobId ? `/api/results/job/${encodeURIComponent(jobId)}` : '/api/results/detailed';
+        let streamsLoaded = false;
+
+        function escapeHtml(str) {
+            const s = String(str ?? '');
+            return s.replace(/[&<>"']/g, (c) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            }[c]));
+        }
 
         function showWarning(title, message) {
             document.body.innerHTML = `
@@ -328,6 +392,182 @@
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
             event.target.classList.add('active');
             document.getElementById(tabName + '-tab').classList.add('active');
+
+            if (tabName === 'streams' && !streamsLoaded) {
+                loadStreams();
+            }
+        }
+
+        function setStreamStatus(msg) {
+            const el = document.getElementById('stream-regex-status');
+            if (el) el.textContent = msg || '';
+        }
+
+        function updateStreamsCount() {
+            const all = document.querySelectorAll('.stream-row');
+            const checked = document.querySelectorAll('.stream-row input[type="checkbox"]:checked');
+            const pill = document.getElementById('streams-count-pill');
+            if (pill) pill.textContent = `${checked.length}/${all.length} selected`;
+        }
+
+        async function loadStreams() {
+            streamsLoaded = true;
+            const loadingEl = document.getElementById('streams-loading');
+            if (loadingEl) loadingEl.textContent = 'Loading streams...';
+
+            const url = jobId
+                ? `/api/results/streams?job_id=${encodeURIComponent(jobId)}&limit=2000&offset=0`
+                : `/api/results/streams?limit=2000&offset=0`;
+
+            try {
+                const resp = await fetch(url);
+                const data = await resp.json();
+                if (!data.success) {
+                    if (loadingEl) loadingEl.textContent = data.error || 'Failed to load streams.';
+                    return;
+                }
+                const rows = Array.isArray(data.streams) ? data.streams : [];
+                const tbody = document.getElementById('stream-tbody');
+                if (!tbody) return;
+
+                tbody.innerHTML = rows.map((s) => {
+                    const name = escapeHtml(s.stream_name || '(unnamed)');
+                    const status = escapeHtml(s.status || '');
+                    const quality = (typeof s.quality_score === 'number') ? s.quality_score.toFixed(1) : (s.quality_score ?? '');
+                    const resolution = escapeHtml(s.resolution || '');
+                    const provider = (s.provider_id ?? '') === '' ? '' : escapeHtml(String(s.provider_id));
+                    const checkboxId = `use-stream-${escapeHtml(String(s.stream_id ?? Math.random()))}`;
+                    return `
+                        <tr class="stream-row" data-stream-name="${escapeHtml(String(s.stream_name || '')).toLowerCase()}">
+                            <td><input type="checkbox" id="${checkboxId}" class="stream-use-cb" checked onchange="updateStreamsCount()" /></td>
+                            <td><label for="${checkboxId}" style="cursor:pointer;"><strong>${name}</strong></label></td>
+                            <td>${status}</td>
+                            <td>${escapeHtml(String(quality))}</td>
+                            <td>${resolution}</td>
+                            <td>${provider}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                if (loadingEl) loadingEl.textContent = rows.length ? `Loaded ${rows.length} stream rows.` : 'No streams found.';
+                updateStreamsCount();
+            } catch (e) {
+                if (loadingEl) loadingEl.textContent = `Failed to load streams: ${e.message}`;
+            }
+        }
+
+        function filterStreamRows() {
+            const q = (document.getElementById('stream-search')?.value || '').trim().toLowerCase();
+            document.querySelectorAll('.stream-row').forEach((row) => {
+                const name = row.getAttribute('data-stream-name') || '';
+                row.style.display = (!q || name.includes(q)) ? '' : 'none';
+            });
+            updateStreamsCount();
+        }
+
+        function selectAllStreams() {
+            document.querySelectorAll('.stream-row input[type="checkbox"]').forEach(cb => { cb.checked = true; });
+            updateStreamsCount();
+        }
+
+        function clearAllStreams() {
+            document.querySelectorAll('.stream-row input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+            updateStreamsCount();
+        }
+
+        function getStreamIncludeExclude() {
+            const include = [];
+            const exclude = [];
+            document.querySelectorAll('.stream-row').forEach((row) => {
+                const name = row.querySelector('td:nth-child(2)')?.innerText?.trim() || '';
+                const checked = row.querySelector('input[type="checkbox"]')?.checked;
+                if (!name) return;
+                if (checked) include.push(name);
+                else exclude.push(name);
+            });
+            return { include, exclude };
+        }
+
+        async function generateStreamRegex() {
+            setStreamStatus('Generating...');
+            const { include, exclude } = getStreamIncludeExclude();
+            const outBox = document.getElementById('stream-regex-output');
+            const outCode = document.getElementById('stream-regex-code');
+            const saveBtn = document.getElementById('save-stream-regex-btn');
+            const copyBtn = document.getElementById('copy-stream-regex-btn');
+
+            if (!include.length) {
+                setStreamStatus('Select at least one stream.');
+                if (outBox) outBox.style.display = 'none';
+                if (saveBtn) saveBtn.disabled = true;
+                if (copyBtn) copyBtn.disabled = true;
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/regex/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ include, exclude })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    setStreamStatus(data.error || 'Failed to generate regex.');
+                    if (outBox) outBox.style.display = 'none';
+                    if (saveBtn) saveBtn.disabled = true;
+                    if (copyBtn) copyBtn.disabled = true;
+                    return;
+                }
+                const regex = data.regex || '';
+                if (outCode) outCode.textContent = regex;
+                if (outBox) outBox.style.display = 'block';
+                if (saveBtn) saveBtn.disabled = !regex;
+                if (copyBtn) copyBtn.disabled = !regex;
+                setStreamStatus(`Generated. Includes: ${include.length}, excludes: ${exclude.length}.`);
+            } catch (e) {
+                setStreamStatus(`Failed: ${e.message}`);
+                if (outBox) outBox.style.display = 'none';
+                if (saveBtn) saveBtn.disabled = true;
+                if (copyBtn) copyBtn.disabled = true;
+            }
+        }
+
+        async function saveStreamRegex() {
+            const regex = document.getElementById('stream-regex-code')?.textContent || '';
+            if (!regex) return;
+            setStreamStatus('Saving...');
+            try {
+                const resp = await fetch('/api/regex/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ regex })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    setStreamStatus(data.error || 'Failed to save regex.');
+                    return;
+                }
+                setStreamStatus('Saved to config.yaml (filters.refresh_stream_name_regex).');
+            } catch (e) {
+                setStreamStatus(`Save failed: ${e.message}`);
+            }
+        }
+
+        async function copyStreamRegex() {
+            const regexText = document.getElementById('stream-regex-code')?.textContent || '';
+            if (!regexText) return;
+            try {
+                await navigator.clipboard.writeText(regexText);
+                setStreamStatus('Copied regex to clipboard.');
+            } catch {
+                const ta = document.createElement('textarea');
+                ta.value = regexText;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                setStreamStatus('Copied regex to clipboard.');
+            }
         }
     </script>
 </body>
