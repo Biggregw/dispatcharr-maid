@@ -1455,8 +1455,12 @@
             renderCurrentJob(reconcileJobForRender(optimisticJob));
         }
 
-        function setButtonLoading(event, isLoading) {
-            const btn = event?.target?.closest?.('button');
+        function getClickedButton(event) {
+            // Prefer currentTarget (stable) over target (may be inner span/svg)
+            return event?.currentTarget || event?.target?.closest?.('button') || null;
+        }
+
+        function setButtonLoading(btn, isLoading) {
             if (!btn) return;
             if (!btn.dataset.originalHtml) {
                 btn.dataset.originalHtml = btn.innerHTML;
@@ -1470,7 +1474,16 @@
             }
         }
 
+        function resetActionButtons() {
+            // Only reset buttons that were put into a loading state by us.
+            document.querySelectorAll('button.action-btn[data-original-html]').forEach(btn => {
+                btn.disabled = false;
+                btn.innerHTML = btn.dataset.originalHtml;
+            });
+        }
+
         async function startJob(jobType, selectedStreamIds = null, event = null) {
+            const clickedBtn = getClickedButton(event);
             try {
                 // Get group names
                 const groupNames = selectedGroups.map(id => {
@@ -1516,17 +1529,20 @@
                 };
 
                 // Button loading state (best-effort)
-                if (event) {
-                    const btn = event.target?.closest?.('button');
-                    if (btn) btn.dataset.jobType = jobType;
-                    setButtonLoading(event, true);
+                if (clickedBtn) {
+                    clickedBtn.dataset.jobType = jobType;
+                    setButtonLoading(clickedBtn, true);
                 }
-                
+
+                // If the server is restarting/updating, fetch can hang; ensure we always recover.
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 20000);
                 const response = await fetch('/api/start-job', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(payload)
-                });
+                    body: JSON.stringify(payload),
+                    signal: controller.signal
+                }).finally(() => clearTimeout(timeoutId));
                 
                 const data = await response.json();
 
@@ -1559,9 +1575,8 @@
                 alert('Failed to start job: ' + error.message);
                 return null;
             } finally {
-                if (event) {
-                    setButtonLoading(event, false);
-                }
+                // Always restore the button even if the request errored/hung.
+                if (clickedBtn) setButtonLoading(clickedBtn, false);
             }
         }
         
@@ -1620,6 +1635,7 @@
 
                     // If completed, stop checking
                     if (isTerminal) {
+                        resetActionButtons();
                         if (jobCheckInterval) {
                             clearInterval(jobCheckInterval);
                             jobCheckInterval = null;
@@ -1911,6 +1927,7 @@
                         updateRefreshProgress(reconciledJob);
 
                         if (terminalStatuses.includes(normalizedJob.status)) {
+                            resetActionButtons();
                             if (jobCheckInterval) {
                                 clearInterval(jobCheckInterval);
                                 jobCheckInterval = null;
@@ -1920,7 +1937,14 @@
                                 loadJobHistory();
                             }
                         }
+                    } else {
+                        // No job in memory to render (e.g., after a server update/restart).
+                        // Ensure action buttons are never left stuck.
+                        resetActionButtons();
                     }
+                } else if (data.success) {
+                    // No jobs known by server; clear any stale UI loading state.
+                    resetActionButtons();
                 }
             } catch (error) {
                 // Silently fail
