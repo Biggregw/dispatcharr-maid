@@ -116,6 +116,9 @@ def _ensure_provider_map(api, config):
     This fetches provider accounts from Dispatcharr and saves the ID->name mapping.
     Called for ALL job types so historical results always have provider names.
     """
+    dispatcharr_cfg = config.get('dispatcharr') or {}
+    if not dispatcharr_cfg.get('refresh_provider_data', False):
+        return
     refresh_provider_data(api, config, force=False)
 
 
