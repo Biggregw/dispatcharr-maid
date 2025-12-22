@@ -9,6 +9,7 @@ import json
 import html
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -1009,6 +1010,267 @@ def api_channels():
         
         return jsonify({'success': True, 'channels': channels_by_group})
 
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _build_exact_match_regex(values):
+    """
+    Build a regex that matches exactly one of the given strings.
+
+    Returns:
+        str|None: regex like ^(?:A|B|C)$ or None if values is empty.
+    """
+    if not values:
+        return None
+    cleaned = [v for v in values if isinstance(v, str) and v.strip()]
+    if not cleaned:
+        return None
+    # Stable order: casefold, then original (to keep deterministic output).
+    unique = sorted(set(cleaned), key=lambda s: (s.casefold(), s))
+    escaped = [re.escape(v) for v in unique]
+    body = escaped[0] if len(escaped) == 1 else '(?:' + '|'.join(escaped) + ')'
+    return r'^(?:' + body + r')$'
+
+
+@app.route('/api/resolve-saved-channel-selection', methods=['POST'])
+def api_resolve_saved_channel_selection():
+    """
+    Resolve the saved channel selection (regex and/or IDs in config.yaml) into concrete channel IDs.
+
+    Expected payload:
+      {
+        "groups": [1,2,3],
+        "mode": "regex" | "ids" | "auto"   # default: auto
+      }
+    """
+    try:
+        data = request.get_json() or {}
+        groups = data.get('groups') or []
+        mode = (data.get('mode') or 'auto').strip().lower()
+
+        if not isinstance(groups, list):
+            return jsonify({'success': False, 'error': '"groups" must be a list'}), 400
+        if mode not in ('regex', 'ids', 'auto'):
+            return jsonify({'success': False, 'error': '"mode" must be one of: regex, ids, auto'}), 400
+
+        group_ids = []
+        for g in groups:
+            try:
+                group_ids.append(int(g))
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': f'Invalid group id: {g}'}), 400
+
+        config = Config('config.yaml')
+        filters = config.get('filters') or {}
+        if not isinstance(filters, dict):
+            filters = {}
+
+        channel_name_regex = filters.get('channel_name_regex')
+        channel_number_regex = filters.get('channel_number_regex')
+        specific_channel_ids = filters.get('specific_channel_ids') or []
+
+        use_regex = mode == 'regex' or (mode == 'auto' and (
+            (isinstance(channel_name_regex, str) and channel_name_regex.strip())
+            or (isinstance(channel_number_regex, str) and channel_number_regex.strip())
+        ))
+
+        use_ids = mode == 'ids' or (mode == 'auto' and not use_regex and isinstance(specific_channel_ids, list) and len(specific_channel_ids) > 0)
+
+        if not use_regex and not use_ids:
+            return jsonify({
+                'success': False,
+                'error': 'No saved selection found. Save a selection first (regex or specific_channel_ids).'
+            }), 400
+
+        api = DispatcharrAPI()
+        api.login()
+        all_channels = api.fetch_channels()
+
+        # Filter to selected groups first.
+        allowed_groups = set(group_ids) if group_ids else None
+        candidates = [
+            ch for ch in all_channels
+            if isinstance(ch, dict)
+            and ch.get('id') is not None
+            and (allowed_groups is None or ch.get('channel_group_id') in allowed_groups)
+        ]
+
+        resolved = []
+        details = []
+
+        if use_regex:
+            name_re = None
+            num_re = None
+            try:
+                if isinstance(channel_name_regex, str) and channel_name_regex.strip():
+                    name_re = re.compile(channel_name_regex.strip(), flags=re.IGNORECASE)
+            except re.error as exc:
+                return jsonify({'success': False, 'error': f'Invalid saved channel_name_regex: {exc}'}), 400
+            try:
+                if isinstance(channel_number_regex, str) and channel_number_regex.strip():
+                    num_re = re.compile(channel_number_regex.strip())
+            except re.error as exc:
+                return jsonify({'success': False, 'error': f'Invalid saved channel_number_regex: {exc}'}), 400
+
+            if not name_re and not num_re:
+                return jsonify({'success': False, 'error': 'Saved regex is empty.'}), 400
+
+            for ch in candidates:
+                name = str(ch.get('name') or '')
+                num = str(ch.get('channel_number') or '')
+                if (name_re and name_re.search(name)) or (num_re and num_re.search(num)):
+                    cid = int(ch['id'])
+                    resolved.append(cid)
+                    details.append({
+                        'id': cid,
+                        'name': ch.get('name', 'Unknown'),
+                        'channel_number': ch.get('channel_number'),
+                        'channel_group_id': ch.get('channel_group_id')
+                    })
+
+        elif use_ids:
+            try:
+                allowed_ids = {int(x) for x in specific_channel_ids if x is not None}
+            except (TypeError, ValueError):
+                allowed_ids = set()
+
+            by_id = {int(ch.get('id')): ch for ch in candidates if ch.get('id') is not None}
+            for cid in sorted(allowed_ids):
+                if cid in by_id:
+                    ch = by_id[cid]
+                    resolved.append(cid)
+                    details.append({
+                        'id': cid,
+                        'name': ch.get('name', 'Unknown'),
+                        'channel_number': ch.get('channel_number'),
+                        'channel_group_id': ch.get('channel_group_id')
+                    })
+
+        # Sort by channel number (if numeric), then name
+        def _sort_key(item):
+            num = item.get('channel_number')
+            try:
+                num_i = int(num)
+            except (TypeError, ValueError):
+                num_i = 10**9
+            name = (item.get('name') or '')
+            return (num_i, name.casefold(), name)
+
+        details.sort(key=_sort_key)
+        resolved = [d['id'] for d in details]
+
+        return jsonify({
+            'success': True,
+            'mode_used': 'regex' if use_regex else 'ids',
+            'channel_ids': resolved,
+            'channels': details,
+            'count': len(resolved)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/save-channel-selection-regex', methods=['POST'])
+def api_save_channel_selection_regex():
+    """
+    Generate and persist a regex representing the current channel tickbox selection.
+
+    Persists into base config.yaml (not the per-job workspace) so future runs can reuse it.
+
+    Expected payload:
+      {
+        "groups": [1,2,3],
+        "channels": [111,222] | null
+      }
+    """
+    try:
+        data = request.get_json() or {}
+        groups = data.get('groups') or []
+        channels = data.get('channels')  # list[int] or None
+
+        if not isinstance(groups, list):
+            return jsonify({'success': False, 'error': '"groups" must be a list'}), 400
+        if channels is not None and not isinstance(channels, list):
+            return jsonify({'success': False, 'error': '"channels" must be a list or null'}), 400
+
+        group_ids = []
+        for g in groups:
+            try:
+                group_ids.append(int(g))
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': f'Invalid group id: {g}'}), 400
+
+        channel_ids = None
+        if channels is not None:
+            channel_ids = []
+            for c in channels:
+                try:
+                    channel_ids.append(int(c))
+                except (TypeError, ValueError):
+                    return jsonify({'success': False, 'error': f'Invalid channel id: {c}'}), 400
+
+        config = Config('config.yaml')
+        config.set('filters', 'channel_group_ids', group_ids)
+
+        # If no specific channels are selected (null == "All"), clear saved selection keys.
+        if not channel_ids:
+            filters = config.get('filters') or {}
+            if isinstance(filters, dict):
+                for key in ('specific_channel_ids', 'channel_name_regex', 'channel_number_regex'):
+                    if key in filters:
+                        del config.config['filters'][key]
+            config.save()
+            return jsonify({
+                'success': True,
+                'saved': False,
+                'message': 'No specific channels selected (All channels). Cleared saved selection regex.',
+                'regex': None
+            })
+
+        # Resolve channel IDs -> names/numbers from Dispatcharr
+        api = DispatcharrAPI()
+        api.login()
+        all_channels = api.fetch_channels()
+        by_id = {int(ch.get('id')): ch for ch in all_channels if isinstance(ch, dict) and ch.get('id') is not None}
+
+        missing = [cid for cid in channel_ids if cid not in by_id]
+        if missing:
+            return jsonify({
+                'success': False,
+                'error': f'{len(missing)} channel id(s) not found in Dispatcharr: {missing[:10]}' + ('...' if len(missing) > 10 else '')
+            }), 400
+
+        names = []
+        numbers = []
+        for cid in channel_ids:
+            ch = by_id[cid]
+            name = ch.get('name') or ''
+            if isinstance(name, str) and name.strip():
+                names.append(name.strip())
+            num = ch.get('channel_number')
+            if num is not None and str(num).strip() != '':
+                numbers.append(str(num).strip())
+
+        name_regex = _build_exact_match_regex(names)
+        number_regex = _build_exact_match_regex(numbers)
+
+        config.set('filters', 'specific_channel_ids', channel_ids)
+        if name_regex:
+            config.set('filters', 'channel_name_regex', name_regex)
+        if number_regex:
+            config.set('filters', 'channel_number_regex', number_regex)
+        config.set('filters', 'selection_saved_at', datetime.now().isoformat())
+        config.save()
+
+        return jsonify({
+            'success': True,
+            'saved': True,
+            'channel_count': len(channel_ids),
+            'regex': name_regex,
+            'channel_name_regex': name_regex,
+            'channel_number_regex': number_regex
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
