@@ -798,6 +798,10 @@
                     <span class="summary-value" id="selected-channels-count">0 (All)</span>
                 </div>
                 <div style="margin-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <button type="button" class="btn btn-back" onclick="useSavedChannelSelection('regex')"
+                            style="background: #667eea; color: white;">
+                        ↩ Use saved regex
+                    </button>
                     <button type="button" class="btn btn-next" onclick="saveChannelSelectionRegex()"
                             style="background: #48bb78; color: white;">
                         💾 Save selection as regex
@@ -2096,12 +2100,53 @@
                     regexEl.textContent = data.regex;
                     outputEl.classList.remove('hidden');
                     copyBtn.disabled = false;
-                    statusEl.textContent = `Saved (${data.channel_count || 0} channels)`;
+                    const count = data.channel_count || 0;
+                    statusEl.textContent = `Saved (${count} channels) — starting Quality Check & Cleanup…`;
+
+                    // Requirement: only when "save regex" is used, immediately run Quality Check & Cleanup.
+                    if (count > 0) {
+                        // Move to step 3 so the user can see job progress immediately.
+                        goToStep3();
+                        // Start Quality Check & Cleanup on the current selectedChannels.
+                        // (These reflect the tick-box selection that was just saved.)
+                        await startJob('full_cleanup', null, null);
+                    }
                 } else {
                     statusEl.textContent = data.message || 'No specific channels selected (All channels).';
                 }
             } catch (error) {
                 statusEl.textContent = 'Save failed: ' + error.message;
+            }
+        }
+
+        async function useSavedChannelSelection(mode = 'regex') {
+            const statusEl = document.getElementById('regex-save-status');
+            statusEl.textContent = 'Loading saved selection…';
+            try {
+                const payload = { groups: selectedGroups, mode: mode || 'auto' };
+                const response = await fetch('/api/resolve-saved-channel-selection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    statusEl.textContent = 'Load failed: ' + (data.error || 'Unknown error');
+                    return;
+                }
+
+                const ids = Array.isArray(data.channel_ids) ? data.channel_ids : [];
+                // Clear all checkboxes first.
+                document.querySelectorAll('.channel-item input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+                // Tick resolved channels.
+                ids.forEach((id) => {
+                    const cb = document.getElementById(`channel-${id}`);
+                    if (cb) cb.checked = true;
+                });
+                updateChannelSelection();
+                statusEl.textContent = `Loaded saved ${data.mode_used || 'selection'} (${ids.length} channels)`;
+            } catch (error) {
+                statusEl.textContent = 'Load failed: ' + error.message;
             }
         }
 
