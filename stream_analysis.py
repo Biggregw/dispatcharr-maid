@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -867,8 +867,11 @@ def analyze_streams(config, input_csv=None,
                     executor.submit(_analyze_stream_task, row, config, progress_tracker, force_full_analysis): row
                     for row in streams_to_analyze
                 }
-                
-                for future in futures:
+
+                # IMPORTANT: iterate as futures complete, not submission order.
+                # This avoids UI "stalling" at 0% when the first submitted stream is slow,
+                # even though other streams may have already finished.
+                for future in as_completed(futures):
                     try:
                         result_row = future.result()
                         

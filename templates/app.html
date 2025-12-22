@@ -1736,6 +1736,37 @@
                     </div>
                 `;
             } else if (job.status === 'running' && job.total > 0) {
+                // Keep animation until we have the first completed stream.
+                // Otherwise a 0%-width bar looks like "nothing is happening".
+                if ((job.progress || 0) === 0) {
+                    html += `
+                        <div class="phase-indicator phase-indicator--active" style="margin-bottom: 10px;">
+                            <span class="phase-indicator__icon">⏳</span>
+                            <span class="phase-indicator__text">Analyzing… waiting for first stream result.</span>
+                        </div>
+                        <div class="progress-container">
+                            <div class="progress-bar indeterminate"></div>
+                        </div>
+                        <div class="stats-grid">
+                            <div class="stat-box">
+                                <div class="stat-label">Processed</div>
+                                <div class="stat-value">0</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-label">Total</div>
+                                <div class="stat-value">${job.total.toLocaleString()}</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-label">Failed</div>
+                                <div class="stat-value" style="color: #e53e3e;">${(job.failed || 0).toLocaleString()}</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-label">Remaining</div>
+                                <div class="stat-value">${job.total.toLocaleString()}</div>
+                            </div>
+                        </div>
+                    `;
+                } else {
                 html += `
                     <div class="progress-container">
                         <div class="progress-bar ${isNumericComplete ? 'muted' : ''}" style="width: ${percent}%">
@@ -1762,6 +1793,7 @@
                         </div>
                     </div>
                 `;
+                }
             }
             
             if (job.status === 'running') {
