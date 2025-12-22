@@ -1807,7 +1807,10 @@ def api_generate_regex():
 @app.route('/api/regex/save', methods=['POST'])
 def api_save_regex():
     """
-    Save the generated stream-name regex into config.yaml for reuse.
+    Validate the generated stream-name regex.
+
+    Note: This endpoint intentionally does NOT persist anything to config.yaml.
+    The UI only displays the suggested regex for now; we can add persistence later.
 
     Payload:
       { "regex": "..." }
@@ -1821,12 +1824,7 @@ def api_save_regex():
             re.compile(regex)
         except re.error as exc:
             return jsonify({'success': False, 'error': f'Invalid regex: {exc}'}), 400
-
-        config = Config('config.yaml')
-        config.set('filters', 'refresh_stream_name_regex', regex.strip())
-        config.set('filters', 'refresh_stream_name_regex_saved_at', datetime.now().isoformat())
-        config.save()
-        return jsonify({'success': True, 'saved': True, 'regex': regex.strip()})
+        return jsonify({'success': True, 'saved': False, 'regex': regex.strip()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
