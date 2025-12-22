@@ -100,6 +100,30 @@
             filter: saturate(0.7);
         }
 
+        .progress-bar.indeterminate {
+            width: 30%;
+            animation: progressIndeterminate 1.3s infinite;
+        }
+
+        .progress-bar.indeterminate::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.35) 50%, transparent 100%);
+            animation: progressShimmer 1.1s linear infinite;
+        }
+
+        @keyframes progressIndeterminate {
+            0% { transform: translateX(-120%); }
+            50% { transform: translateX(-20%); }
+            100% { transform: translateX(120%); }
+        }
+
+        @keyframes progressShimmer {
+            0% { transform: translateX(-60%); }
+            100% { transform: translateX(60%); }
+        }
+
         .phase-indicator {
             display: flex;
             align-items: center;
@@ -335,6 +359,7 @@
             const isNumericComplete = total !== '?' && processed >= total;
             const percent = isNumericComplete ? 100 : Math.min(100, progress.percent || 0);
             const phase = getPhaseIndicator(progress.current_step);
+            const showIndeterminate = !isNumericComplete && total !== '?' && processed === 0;
             
             container.innerHTML = `
                 <div style="margin-bottom: 10px;">
@@ -343,9 +368,13 @@
                 </div>
                 
                 <div class="progress-container">
-                    <div class="progress-bar ${isNumericComplete ? 'muted' : ''}" style="width: ${percent}%">
-                        ${percent.toFixed(1)}%
-                    </div>
+                    ${
+                        showIndeterminate
+                        ? `<div class="progress-bar indeterminate"></div>`
+                        : `<div class="progress-bar ${isNumericComplete ? 'muted' : ''}" style="width: ${percent}%">
+                            ${percent.toFixed(1)}%
+                          </div>`
+                    }
                 </div>
                 ${isNumericComplete && phase ? `
                     <div class="phase-indicator phase-indicator--active" aria-live="polite">
