@@ -295,18 +295,30 @@ def _generate_minimalish_regex(include_strings, exclude_strings):
     include_tokens = set().union(*include_token_sets) if include_token_sets else set()
     exclude_tokens = set().union(*exclude_token_sets) if exclude_token_sets else set()
 
-    # Candidate negative tokens: appear in excludes, never in includes.
-    # (This is how we can get small exclusions like "dolby".)
-    stop = {
-        'the', 'and', 'for', 'with', 'from',
-        'hd', 'sd', 'fhd', 'uhd', '4k', 'h264', 'h265', 'hevc', 'aac',
+    # Stop words for POSITIVE inference only.
+    # We want positives to focus on "core identity" words (e.g., "sky", "sports", "f1"),
+    # not incidental tags (quality/codec/region etc).
+    stop_pos = {
+        'the', 'and', 'for', 'with', 'from', 'via',
+        # common tags/qualities
+        'hd', 'sd', 'fhd', 'uhd', '4k', 'h264', 'h265', 'hevc', 'aac', 'ac3',
+        'hdr', 'dolby', 'vision', 'atmos',
+        # common platform/provider prefixes
+        'uk', 'usa', 'us', 'ca', 'au', 'nz', 'now', 'vip',
     }
+
+    # Stop words for NEGATIVE inference: keep this list intentionally small.
+    # If a user unticks "uhd" or "hd", we *should* learn that as a negative token.
+    stop_neg = {'the', 'and', 'for', 'with', 'from', 'via'}
+
+    # Candidate negative tokens: appear in excludes, never in includes.
+    # (This is how we can get small exclusions like "vip", "dolby", "uhd".)
     candidate_neg = sorted(
         {
             t for t in exclude_tokens
             if t not in include_tokens
-            and t not in stop
-            and len(t) >= 3
+            and t not in stop_neg
+            and len(t) >= 2  # allow meaningful short tokens like "hd"
         },
         key=lambda x: (len(x), x)
     )
@@ -344,11 +356,39 @@ def _generate_minimalish_regex(include_strings, exclude_strings):
             # Literal exclusion: entire string (still case-insensitive due to (?i)).
             neg_literals.append(exclude[i])
 
-    # Positive tokens: words shared by ALL includes (helps narrow the match).
+    # Positive tokens: choose words that appear in "most" includes.
+    # Using strict intersection is often too brittle (NOW:/UK:/RAW variations),
+    # and it also drops short-but-meaningful tokens like "f1".
     pos_tokens = []
     if include_token_sets:
-        common = set.intersection(*include_token_sets) if include_token_sets else set()
-        pos_tokens = sorted([t for t in common if t not in stop and len(t) >= 3], key=lambda x: (len(x), x))
+        n_inc = len(include_token_sets)
+        counts = {}
+        for ts in include_token_sets:
+            for t in ts:
+                counts[t] = counts.get(t, 0) + 1
+
+        # Threshold: require presence in at least ~80% of included rows (or all, for small N).
+        if n_inc <= 2:
+            min_count = n_inc
+        else:
+            min_count = max(2, int((n_inc * 0.8) + 0.9999))
+
+        candidates = []
+        for t, c in counts.items():
+            if c < min_count:
+                continue
+            if t in stop_pos:
+                continue
+            if len(t) < 2:
+                continue
+            if t.isdigit():
+                continue
+            candidates.append((c, t))
+
+        # Prefer higher coverage, then shorter tokens (tend to be core words), then alpha.
+        candidates.sort(key=lambda item: (-item[0], len(item[1]), item[1]))
+        # Cap to keep regex readable.
+        pos_tokens = [t for _, t in candidates[:6]]
 
     def _build_regex(neg_toks, neg_lits, pos_toks):
         neg_parts = []
