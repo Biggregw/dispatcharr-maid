@@ -156,6 +156,13 @@
                         <input type="checkbox" id="plan-changed-only" checked />
                         Show changed only
                     </label>
+                    <label style="display:flex;align-items:center;gap:8px;color:#4a5568;font-weight:600;">
+                        <input type="checkbox" id="plan-force-apply" />
+                        Force apply (ignore channel drift)
+                    </label>
+                    <button class="btn btn-sm" type="button" style="background:#667eea;color:white;" onclick="applyPlanToDispatcharr()">
+                        Apply plan to Dispatcharr
+                    </button>
                     <span id="plan-status" class="muted small"></span>
                 </div>
 
@@ -721,6 +728,38 @@
                 changedOnlyEl.addEventListener('change', fetchAndRender);
             }
             await fetchAndRender();
+        }
+
+        async function applyPlanToDispatcharr() {
+            if (!jobId) {
+                alert('Select a specific run to apply its plan.');
+                return;
+            }
+            const force = Boolean(document.getElementById('plan-force-apply')?.checked);
+            if (!confirm(`Apply this plan to Dispatcharr now?\n\nThis will update channel stream lists.${force ? '\n\nForce apply is ON: the server will apply even if channels changed since the plan was generated.' : ''}`)) {
+                return;
+            }
+            try {
+                setPlanStatus('Starting apply job...');
+                const resp = await fetch(`/api/dispatcharr-plan/${encodeURIComponent(jobId)}/apply`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ force: !!force })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    setPlanStatus(data.error || 'Failed to start apply job.');
+                    alert(data.error || 'Failed to start apply job.');
+                    return;
+                }
+                const applyJobId = data.apply_job_id;
+                setPlanStatus(`Apply job started: ${applyJobId}`);
+                // Redirect to control panel to monitor progress.
+                window.location.href = `/?monitor_job_id=${encodeURIComponent(applyJobId)}`;
+            } catch (e) {
+                setPlanStatus(`Failed: ${e.message}`);
+                alert(`Failed to apply plan: ${e.message}`);
+            }
         }
 
         function filterStreamRows() {

@@ -1138,6 +1138,11 @@
                     <span>🚀</span>
                     <span>Quality Check (Plan Only)</span>
                 </button>
+
+                <button class="action-btn primary" onclick="startJob('full_cleanup', null, event)">
+                    <span>✅</span>
+                    <span>Quality Check & Cleanup (Apply)</span>
+                </button>
             </div>
 
             <div style="margin: 20px 0; padding: 20px; background: #f7fafc; border-radius: 8px; border-left: 4px solid #667eea;">
@@ -1296,6 +1301,23 @@
             loadSavedPatterns();
             initSavedRegexPresetDropdown();
             loadSavedRegexPresets();
+
+            // If we were redirected here to monitor a background apply job,
+            // start polling it immediately.
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const monitorJobId = params.get('monitor_job_id');
+                if (monitorJobId) {
+                    currentJobId = monitorJobId;
+                    document.getElementById('current-job-card')?.classList?.remove('hidden');
+                    if (jobCheckInterval) clearInterval(jobCheckInterval);
+                    jobCheckInterval = setInterval(() => checkJob(currentJobId), 2000);
+                    checkJob(currentJobId);
+                    maybeAutoScrollToCurrentJob(currentJobId);
+                }
+            } catch (e) {
+                // ignore
+            }
             
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
@@ -2267,6 +2289,7 @@
                 pattern_refresh_full_cleanup: 'Saved Pipeline (Refresh + QC + Cleanup)',
                 full_cleanup_plan: 'Quality Check (Plan Only)',
                 full_cleanup: 'Quality Check & Cleanup',
+                apply_plan: 'Apply Planned Changes',
                 full: 'Full Pipeline',
                 fetch: 'Fetch Streams',
                 analyze: 'Analyze Streams',
@@ -2865,6 +2888,7 @@
                     'pattern_refresh_full_cleanup': 'Saved Pipeline',
                     'full_cleanup_plan': 'Quality Check (Plan)',
                     'full_cleanup': 'Quality Check',
+                    'apply_plan': 'Apply Plan',
                     'full': 'Full Pipeline',
                     'fetch': 'Fetch',
                     'analyze': 'Analyze',

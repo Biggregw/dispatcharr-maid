@@ -1156,6 +1156,8 @@ def _job_get_stage_defs(job_type):
         return [('cleanup', 'Cleanup', 1.0)]
     if job_type == 'refresh_optimize':
         return [('refresh', 'Refresh', 1.0)]
+    if job_type == 'apply_plan':
+        return [('apply', 'Apply', 1.0)]
     return None
 
 
@@ -1517,8 +1519,8 @@ def run_job_worker(job, api, config):
             job.current_step = 'Fetching streams...'
             _job_set_stage(job, 'fetch', 'Fetch')
 
-            def fetch_progress(pdata):
-                progress_callback(job, pdata)
+            def fetch_progress(_pdata):
+                # Plan-only: do not emit progress counters (keeps UI simple).
                 return not job.cancel_requested
 
             fetch_streams(api, config, progress_callback=fetch_progress)
@@ -1535,8 +1537,8 @@ def run_job_worker(job, api, config):
             config.set('filters', 'stream_last_measured_days', 0)
             config.save()
 
-            def progress_wrapper(progress_data):
-                progress_callback(job, progress_data)
+            def progress_wrapper(_progress_data):
+                # Plan-only: do not emit progress counters (keeps UI simple).
                 return not job.cancel_requested
 
             analyzed_count = 0
@@ -1576,8 +1578,8 @@ def run_job_worker(job, api, config):
             _job_advance_stage(job)  # plan
             _job_set_stage(job, 'plan', 'Plan (no updates)', total=0)
 
-            def plan_progress(pdata):
-                progress_callback(job, pdata)
+            def plan_progress(_pdata):
+                # Plan-only: do not emit progress counters (keeps UI simple).
                 return not job.cancel_requested
 
             cleanup_stats, plan_rows = cleanup_streams_by_provider(
@@ -1630,6 +1632,88 @@ def run_job_worker(job, api, config):
                 'channels_changed': int(changed),
                 'total_streams_before': int(cleanup_stats.get('total_streams_before', 0) or 0),
                 'total_streams_after': int(cleanup_stats.get('total_streams_after', 0) or 0),
+            }
+
+        elif job.job_type == 'apply_plan':
+            # Apply a previously generated plan to Dispatcharr.
+            plan_path = getattr(job, 'plan_path', None)
+            force_apply = bool(getattr(job, 'force_apply', False))
+            source_job_id = getattr(job, 'source_job_id', None)
+            if not plan_path:
+                raise ValueError("apply_plan is missing plan_path")
+
+            job.current_step = 'Applying planned changes to Dispatcharr...'
+            _job_set_stage(job, 'apply', 'Apply', total=0)
+
+            try:
+                with open(plan_path, 'r', encoding='utf-8') as f:
+                    payload = json.load(f)
+            except Exception as exc:
+                raise ValueError(f"Unable to read plan file: {exc}") from exc
+
+            rows = payload.get('rows') if isinstance(payload, dict) else None
+            if not isinstance(rows, list):
+                rows = []
+
+            # Only apply rows that indicate a change.
+            rows = [r for r in rows if isinstance(r, dict) and r.get('changed') is True]
+            total = len(rows)
+            _job_update_stage_progress(job, processed=0, total=total, failed=0)
+
+            applied = 0
+            skipped_conflict = 0
+            failed_apply = 0
+
+            for idx, r in enumerate(rows, start=1):
+                if job.cancel_requested:
+                    job.status = 'cancelled'
+                    return
+
+                channel_id = r.get('channel_id')
+                before_ids = r.get('before_stream_ids') or []
+                after_ids = r.get('after_stream_ids') or []
+                try:
+                    channel_id_i = int(channel_id)
+                except Exception:
+                    failed_apply += 1
+                    _job_update_stage_progress(job, processed=idx, total=total, failed=failed_apply)
+                    continue
+
+                # Conflict detection: if the channel has changed since planning, skip unless force_apply.
+                if not force_apply:
+                    try:
+                        current_streams = api.fetch_channel_streams(channel_id_i) or []
+                        current_ids = [int(s.get('id')) for s in current_streams if isinstance(s, dict) and s.get('id') is not None]
+                    except Exception:
+                        current_ids = None
+                    try:
+                        expected_ids = [int(s) for s in before_ids]
+                    except Exception:
+                        expected_ids = list(before_ids)
+                    if current_ids is not None and current_ids != expected_ids:
+                        skipped_conflict += 1
+                        _job_update_stage_progress(job, processed=idx, total=total, failed=failed_apply)
+                        continue
+
+                # Apply update
+                try:
+                    after_ids_i = [int(s) for s in after_ids]
+                    api.update_channel_streams(channel_id_i, after_ids_i)
+                    applied += 1
+                except Exception:
+                    failed_apply += 1
+
+                _job_update_stage_progress(job, processed=idx, total=total, failed=failed_apply)
+
+            job.result_summary = job.result_summary or {}
+            job.result_summary['apply_plan'] = {
+                'source_job_id': source_job_id,
+                'plan_path': str(plan_path),
+                'force_apply': bool(force_apply),
+                'channels_to_apply': int(total),
+                'channels_applied': int(applied),
+                'channels_skipped_conflict': int(skipped_conflict),
+                'channels_failed': int(failed_apply),
             }
 
         elif job.job_type in ['full', 'full_cleanup']:
@@ -3570,6 +3654,71 @@ def api_dispatcharr_plan(job_id):
             'changed_only': bool(changed_only),
             'meta': meta,
             'rows': sliced,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dispatcharr-plan/<job_id>/apply', methods=['POST'])
+def api_dispatcharr_plan_apply(job_id):
+    """Start a background job to apply a previously generated plan to Dispatcharr."""
+    try:
+        job_id = str(job_id or '').strip()
+        if not job_id:
+            return jsonify({'success': False, 'error': 'job_id is required'}), 400
+
+        payload = request.get_json(silent=True) or {}
+        force_apply = bool(payload.get('force', False))
+
+        entry = _get_job_entry(job_id)
+        workspace = None
+        if isinstance(entry, Job):
+            workspace = entry.workspace
+        elif isinstance(entry, dict):
+            workspace = entry.get('workspace')
+
+        if not workspace:
+            return jsonify({'success': False, 'error': 'Job workspace not found'}), 404
+
+        ws = Path(str(workspace))
+        plan_path = ws / 'logs' / 'dispatcharr_plan.json'
+        if not plan_path.exists():
+            return jsonify({'success': False, 'error': 'No dispatcharr plan available for this job'}), 404
+
+        apply_job_id = str(uuid.uuid4())
+        # Create a job entry for tracking; reuse the plan workspace so the apply job has context.
+        apply_job = Job(
+            apply_job_id,
+            'apply_plan',
+            groups=[],
+            channels=[],
+            group_names='Apply plan',
+            channel_names=f'From {job_id}',
+            workspace=str(ws),
+        )
+        apply_job.source_job_id = job_id
+        apply_job.plan_path = str(plan_path)
+        apply_job.force_apply = bool(force_apply)
+
+        api = DispatcharrAPI()
+        api.login()
+        config = Config(ws / 'config.yaml', working_dir=ws)
+
+        apply_job.thread = threading.Thread(
+            target=run_job_worker,
+            args=(apply_job, api, config),
+            daemon=True
+        )
+
+        with job_lock:
+            jobs[apply_job_id] = apply_job
+
+        apply_job.thread.start()
+
+        return jsonify({
+            'success': True,
+            'apply_job_id': apply_job_id,
+            'job': apply_job.to_dict(),
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
