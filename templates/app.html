@@ -843,6 +843,43 @@
             height: 18px;
             display: block;
         }
+
+        /* Saved pipeline preset delete button (Step 1) */
+        .btn-icon-danger {
+            border: 2px solid #e2e8f0;
+            background: #fff;
+            padding: 10px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #718096;
+            height: 44px; /* matches select height */
+            min-width: 44px;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .btn-icon-danger svg {
+            width: 20px;
+            height: 20px;
+            display: block;
+        }
+
+        .btn-icon-danger:hover {
+            background: #fed7d7;
+            border-color: #feb2b2;
+            color: #742a2a;
+        }
+
+        .btn-icon-danger:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            background: #fff;
+            border-color: #e2e8f0;
+            color: #718096;
+        }
     </style>
 </head>
 <body>
@@ -885,6 +922,12 @@
                 <select id="saved-pattern-select" style="flex: 1; min-width: 220px; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em;">
                     <option value="">— Select saved preset —</option>
                 </select>
+                <button class="btn-icon-danger" id="btn-delete-saved-preset" type="button" onclick="deleteSelectedSavedPattern(event)" disabled
+                        title="Delete selected preset" aria-label="Delete selected preset">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M9 3h6m-8 4h10m-9 0 1 14h6l1-14M10 7v12m4-12v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
                 <button class="btn btn-next" id="btn-run-saved-pipeline" onclick="runSavedPatternPipeline(event)" disabled>
                     ▶ Run Saved Pipeline
                 </button>
@@ -1485,6 +1528,7 @@
         async function onSavedPatternSelected() {
             const select = document.getElementById('saved-pattern-select');
             const runBtn = document.getElementById('btn-run-saved-pipeline');
+            const delBtn = document.getElementById('btn-delete-saved-preset');
             const preview = document.getElementById('saved-pattern-preview');
             const nameEl = document.getElementById('saved-pattern-preview-name');
             const countEl = document.getElementById('saved-pattern-preview-count');
@@ -1492,10 +1536,12 @@
             const patternId = select?.value || '';
             if (!patternId) {
                 if (runBtn) runBtn.disabled = true;
+                if (delBtn) delBtn.disabled = true;
                 if (preview) preview.classList.add('hidden');
                 return;
             }
             if (runBtn) runBtn.disabled = false;
+            if (delBtn) delBtn.disabled = false;
 
             const pattern = savedPatterns.find(p => p.id === patternId);
             if (nameEl) nameEl.textContent = pattern?.name || 'Saved pattern';
@@ -1567,6 +1613,24 @@
             } catch (e) {
                 alert('Failed to start saved pipeline: ' + e.message);
             }
+        }
+
+        async function deleteSelectedSavedPattern(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+
+            const select = document.getElementById('saved-pattern-select');
+            const patternId = select?.value || '';
+            if (!patternId) return;
+
+            const pattern = savedPatterns.find(p => String(p?.id) === String(patternId));
+            await deleteRegexPreset(patternId, pattern?.name || 'Saved preset');
+
+            // Best-effort reset in case the browser holds a stale selected value.
+            if (select) select.value = '';
+            await onSavedPatternSelected();
         }
         
         // Load channel groups
