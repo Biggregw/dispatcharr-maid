@@ -1234,6 +1234,55 @@
         let refreshJobId = null;
         let lastTerminalJobId = null;
         const terminalStatuses = ['completed', 'failed', 'cancelled'];
+
+        // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
+        // card into the center of the viewport once (and only once).
+        let autoScrollToCurrentJobRequested = false;
+        let lastAutoScrollToken = null;
+
+        function requestAutoScrollToCurrentJob() {
+            autoScrollToCurrentJobRequested = true;
+        }
+
+        function scrollElementToViewportCenter(el) {
+            if (!el) return;
+            try {
+                // Modern browsers support centering directly.
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            } catch (e) {
+                // Fall back to manual centering.
+            }
+            const rect = el.getBoundingClientRect();
+            const absoluteTop = rect.top + (window.pageYOffset || document.documentElement.scrollTop || 0);
+            const targetTop = Math.max(0, absoluteTop - (window.innerHeight / 2) + (rect.height / 2));
+            window.scrollTo({ top: targetTop, behavior: 'smooth' });
+        }
+
+        function maybeAutoScrollToCurrentJob(token = null) {
+            if (!autoScrollToCurrentJobRequested) return;
+            const card = document.getElementById('current-job-card');
+            if (!card || card.classList.contains('hidden')) {
+                // Card not visible yet; keep the request pending.
+                return;
+            }
+
+            const effectiveToken = token !== null
+                ? String(token)
+                : (currentJobId ? String(currentJobId) : 'current-job');
+            if (lastAutoScrollToken === effectiveToken) {
+                autoScrollToCurrentJobRequested = false;
+                return;
+            }
+
+            requestAnimationFrame(() => {
+                const cardNow = document.getElementById('current-job-card');
+                if (!cardNow || cardNow.classList.contains('hidden')) return;
+                scrollElementToViewportCenter(cardNow);
+                lastAutoScrollToken = effectiveToken;
+                autoScrollToCurrentJobRequested = false;
+            });
+        }
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
@@ -2276,6 +2325,9 @@
 
                 // Immediate UI feedback (so it doesn't look like nothing is happening)
                 renderOptimisticStartingJob(jobType, groupNames, channelNames);
+                // User initiated a job — bring the Current Job card into view (centered).
+                requestAutoScrollToCurrentJob();
+                maybeAutoScrollToCurrentJob('starting');
                 
                 const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
                 const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
@@ -2327,6 +2379,7 @@
                         renderCurrentJob(reconciled);
                         updateRefreshProgress(reconciled);
                     }
+                    maybeAutoScrollToCurrentJob(currentJobId);
                     
                     // Start monitoring
                     if (jobCheckInterval) clearInterval(jobCheckInterval);
@@ -2400,6 +2453,7 @@
 
                     renderCurrentJob(reconciledJob);
                     updateRefreshProgress(reconciledJob);
+                    maybeAutoScrollToCurrentJob(job.job_id);
 
                     // If completed, stop checking
                     if (isTerminal) {
