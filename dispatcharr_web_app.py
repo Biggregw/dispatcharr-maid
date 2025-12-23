@@ -2539,11 +2539,15 @@ def api_save_regex():
         exclude_4k = data.get('exclude_4k')
         exclude_4k_b = bool(exclude_4k) if exclude_4k is not None else None
 
+        now_iso = datetime.now().isoformat()
+        normalized_name = name.strip()
         preset = {
+            # id/created_at may be overridden if this is a name-based overwrite
             'id': str(uuid.uuid4()),
-            'name': name.strip(),
+            'name': normalized_name,
             'regex': regex.strip(),
-            'created_at': datetime.now().isoformat()
+            'created_at': now_iso,
+            'updated_at': now_iso
         }
         if group_ids is not None:
             preset['groups'] = group_ids
@@ -2560,7 +2564,10 @@ def api_save_regex():
             # De-dupe by name (case-insensitive) by replacing the existing entry.
             replaced = False
             for i, p in enumerate(presets):
-                if isinstance(p, dict) and str(p.get('name', '')).casefold() == preset['name'].casefold():
+                if isinstance(p, dict) and str(p.get('name', '')).strip().casefold() == preset['name'].casefold():
+                    # Overwrite-in-place: keep stable id/created_at so any stored references keep working.
+                    preset['id'] = str(p.get('id') or preset['id'])
+                    preset['created_at'] = p.get('created_at') or preset['created_at']
                     presets[i] = preset
                     replaced = True
                     break
@@ -2568,7 +2575,7 @@ def api_save_regex():
                 presets.insert(0, preset)
             _save_stream_name_regex_presets(presets[:200])
 
-        return jsonify({'success': True, 'saved': True, 'preset': preset})
+        return jsonify({'success': True, 'saved': True, 'replaced': replaced, 'preset': preset})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
