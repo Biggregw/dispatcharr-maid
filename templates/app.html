@@ -769,12 +769,14 @@
 
             <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom: 15px;">
                 <select id="saved-pattern-select" style="flex: 1; min-width: 220px; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em;">
-                    <option value="">— Select saved pattern —</option>
+                    <option value="">— Select saved preset —</option>
                 </select>
                 <button class="btn btn-next" id="btn-run-saved-pipeline" onclick="runSavedPatternPipeline(event)" disabled>
                     ▶ Run Saved Pipeline
                 </button>
             </div>
+
+            <div id="saved-pattern-status" class="alert alert-info hidden" style="margin-top: 10px;"></div>
 
             <div id="saved-pattern-preview" class="selection-summary hidden" style="margin-top: 10px;">
                 <div class="summary-row">
@@ -1117,13 +1119,23 @@
 
         async function loadSavedPatterns() {
             try {
-                const resp = await fetch(`/api/channel-selection-patterns?ts=${Date.now()}`, { cache: 'no-store' });
+                // Saved presets are stored alongside regex presets.
+                const resp = await fetch(`/api/regex/presets?ts=${Date.now()}`, { cache: 'no-store' });
                 const data = await resp.json();
-                if (!data.success) return;
-                savedPatterns = Array.isArray(data.patterns) ? data.patterns : [];
+                if (!data.success) {
+                    showSavedPatternStatus(data.error || 'Unable to load saved patterns.', true);
+                    savedPatterns = [];
+                    renderSavedPatterns();
+                    return;
+                }
+                const presets = Array.isArray(data.presets) ? data.presets : [];
+                // Only show presets that can drive the pipeline (must have groups saved).
+                savedPatterns = presets.filter(p => Array.isArray(p?.groups) && p.groups.length > 0);
                 renderSavedPatterns();
             } catch (e) {
-                // ignore
+                showSavedPatternStatus(`Unable to load saved patterns: ${e.message}`, true);
+                savedPatterns = [];
+                renderSavedPatterns();
             }
         }
 
@@ -1131,7 +1143,22 @@
             const select = document.getElementById('saved-pattern-select');
             if (!select) return;
             const current = select.value;
-            select.innerHTML = '<option value="">— Select saved pattern —</option>' + savedPatterns.map(p => {
+
+            if (!Array.isArray(savedPatterns) || savedPatterns.length === 0) {
+                select.innerHTML = '<option value="">— Select saved preset —</option><option value="" disabled>(No saved presets yet — save one from the “Save Regex” button in the preview)</option>';
+                select.value = '';
+                select.onchange = () => onSavedPatternSelected();
+                onSavedPatternSelected();
+                // If there was no explicit error shown, show a helpful hint.
+                const status = document.getElementById('saved-pattern-status');
+                if (status && status.classList.contains('hidden')) {
+                    showSavedPatternStatus('No saved presets yet. Run a stream preview, click “Save Regex”, and it will appear here.', false);
+                }
+                return;
+            }
+
+            hideSavedPatternStatus();
+            select.innerHTML = '<option value="">— Select saved preset —</option>' + savedPatterns.map(p => {
                 const name = p.name || 'Unnamed';
                 const created = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
                 return `<option value="${p.id}">${name}${created ? ` • ${created}` : ''}</option>`;
@@ -1139,6 +1166,24 @@
             select.value = current || '';
             select.onchange = () => onSavedPatternSelected();
             onSavedPatternSelected();
+        }
+
+        function showSavedPatternStatus(message, isError) {
+            const el = document.getElementById('saved-pattern-status');
+            if (!el) return;
+            el.textContent = message || '';
+            el.classList.remove('hidden');
+            el.classList.toggle('alert-error', !!isError);
+            el.classList.toggle('alert-info', !isError);
+        }
+
+        function hideSavedPatternStatus() {
+            const el = document.getElementById('saved-pattern-status');
+            if (!el) return;
+            el.classList.add('hidden');
+            el.textContent = '';
+            el.classList.remove('alert-error');
+            el.classList.add('alert-info');
         }
 
         async function onSavedPatternSelected() {
@@ -1162,14 +1207,22 @@
             if (preview) preview.classList.remove('hidden');
 
             try {
-                const resp = await fetch('/api/channel-selection-patterns/resolve', {
+                const resp = await fetch('/api/regex/presets/resolve', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ pattern_id: patternId })
+                    body: JSON.stringify({ preset_id: patternId })
                 });
                 const data = await resp.json();
                 if (data.success) {
                     if (countEl) countEl.textContent = `${data.count} channels`;
+                    // If preset stored suggested settings, apply them.
+                    const preset = data.preset;
+                    const spp = preset?.streams_per_provider;
+                    const ex4k = preset?.exclude_4k;
+                    const sppInput = document.getElementById('streamsPerProvider');
+                    const ex4kCb = document.getElementById('exclude4K');
+                    if (sppInput && typeof spp === 'number' && spp >= 1) sppInput.value = String(spp);
+                    if (ex4kCb && typeof ex4k === 'boolean') ex4kCb.checked = ex4k;
                 } else {
                     if (countEl) countEl.textContent = data.error || 'Unable to resolve';
                 }
@@ -1189,7 +1242,7 @@
             // Start job directly with the saved pattern id.
             const payload = {
                 job_type: 'pattern_refresh_full_cleanup',
-                selection_pattern_id: patternId,
+                regex_preset_id: patternId,
                 streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
                 exclude_4k: document.getElementById('exclude4K')?.checked || false
             };
@@ -1583,10 +1636,18 @@
                 }
 
                 const regex = String(genData.regex).trim();
+                // Also persist current group/channel selection so the preset can be used as a "Saved Pipeline" preset.
                 const saveResp = await fetch('/api/regex/save', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ name, regex })
+                    body: JSON.stringify({
+                        name,
+                        regex,
+                        groups: (Array.isArray(selectedGroups) && selectedGroups.length > 0) ? selectedGroups : undefined,
+                        channels: Array.isArray(selectedChannels) ? selectedChannels : null,
+                        streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
+                        exclude_4k: document.getElementById('exclude4K')?.checked || false
+                    })
                 });
                 const saveData = await saveResp.json();
                 if (!saveData.success) {
@@ -1597,8 +1658,9 @@
                 const input = document.getElementById('streamNameRegexOverride');
                 if (input) input.value = regex;
 
-                // Refresh dropdown.
+                // Refresh dropdowns.
                 await loadSavedRegexPresets();
+                await loadSavedPatterns();
                 // Best-effort select the newly saved preset.
                 const presetId = saveData.preset?.id;
                 const select = document.getElementById('saved-regex-select');
