@@ -376,7 +376,24 @@ def _ensure_provider_map(api, config):
 
 def _job_ran_analysis(job_type):
     """Return True if the job type includes an analysis step."""
-    return job_type in {'full', 'full_cleanup', 'analyze'}
+    if not job_type:
+        return False
+
+    # Legacy/single-stage job types
+    if job_type in {'full', 'full_cleanup', 'analyze'}:
+        return True
+
+    # Multi-stage pipelines: infer from the stage definitions
+    try:
+        stage_defs = _job_get_stage_defs(job_type)
+    except Exception:
+        stage_defs = None
+    if stage_defs:
+        try:
+            return any(key == 'analyze' for key, _name, _w in stage_defs)
+        except Exception:
+            return False
+    return False
 
 
 def _provider_names_path(config):
@@ -736,20 +753,38 @@ def _get_job_results(job_id):
         else:
             config = Config('config.yaml')
 
-    # Treat "missing" as None (an empty dict is still a valid payload).
-    # If the summary is missing, try reconstructing from the job workspace.
-    if results is None or (isinstance(results, dict) and not results and _job_ran_analysis(job_type)):
+    analysis_expected = _job_ran_analysis(job_type) if job_type else False
+
+    def _has_analysis_summary(payload):
+        # We consider an analysis summary present if it includes a numeric total.
+        # (Pattern pipeline jobs may store other keys like "pattern_pipeline" without analysis totals.)
+        if not isinstance(payload, dict):
+            return False
+        total = payload.get('total')
+        return isinstance(total, (int, float))
+
+    # If analysis is expected but the saved result payload doesn't contain analysis totals,
+    # reconstruct the summary from the job workspace CSVs.
+    if analysis_expected and not _has_analysis_summary(results):
         try:
             summary = generate_job_summary(config, specific_channel_ids=specific_channel_ids)
         except Exception:
             summary = None
-        if summary:
-            results = summary
+
+        if isinstance(summary, dict) and summary:
+            # Preserve any non-summary keys already stored on the job (e.g. pattern_pipeline, cleanup_stats).
+            if isinstance(results, dict) and results:
+                merged = dict(summary)
+                for key, value in results.items():
+                    if key not in merged:
+                        merged[key] = value
+                results = merged
+            else:
+                results = summary
         elif results is None:
             return None, None, None, None, 'No results available'
 
-    analysis_ran = _job_ran_analysis(job_type) if job_type else False
-    return results, analysis_ran, job_type, config, None
+    return results, analysis_expected, job_type, config, None
 
 
 class Job:
