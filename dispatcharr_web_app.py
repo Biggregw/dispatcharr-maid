@@ -790,7 +790,7 @@ def _get_job_results(job_id):
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None):
+    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -804,6 +804,7 @@ class Job:
         self.exclude_4k = exclude_4k  # Exclude 4K/UHD streams during refresh
         self.exclude_plus_one = exclude_plus_one
         self.selected_stream_ids = selected_stream_ids
+        self.stream_name_regex = stream_name_regex
         self.stream_name_regex_override = stream_name_regex_override
         self.selection_pattern_id = selection_pattern_id
         self.selection_pattern_name = selection_pattern_name
@@ -844,6 +845,7 @@ class Job:
             'regex_preset_id': self.regex_preset_id,
             'regex_preset_name': self.regex_preset_name,
             'base_search_text': self.base_search_text,
+            'stream_name_regex': self.stream_name_regex,
             'stream_name_regex_override': self.stream_name_regex_override,
             'selected_stream_ids': self.selected_stream_ids,
             'exclude_plus_one': self.exclude_plus_one,
@@ -1123,8 +1125,8 @@ def run_job_worker(job, api, config):
 
                 # Use global config default regex for refresh (if set); job may override.
                 filters = config.get('filters') or {}
-                stream_name_regex = None
-                if isinstance(filters, dict):
+                stream_name_regex = getattr(job, 'stream_name_regex', None)
+                if stream_name_regex is None and isinstance(filters, dict):
                     stream_name_regex = filters.get('refresh_stream_name_regex')
 
                 for idx, channel_id in enumerate(channels_to_refresh, start=1):
@@ -1133,13 +1135,19 @@ def run_job_worker(job, api, config):
                         return
 
                     job.current_step = f'Refresh: refreshing channel streams ({idx}/{len(channels_to_refresh)})...'
+                    # Only apply per-channel base/include/exclude overrides when refreshing a single channel.
+                    base_search_text = job.base_search_text if (len(channels_to_refresh) == 1) else None
+                    include_filter = job.include_filter if (len(channels_to_refresh) == 1) else None
+                    exclude_filter = None
+                    if len(channels_to_refresh) == 1:
+                        exclude_filter = _build_exclude_filter(job.exclude_filter, job.exclude_plus_one)
                     result = refresh_channel_streams(
                         api,
                         config,
                         int(channel_id),
-                        base_search_text=None,
-                        include_filter=None,
-                        exclude_filter=None,
+                        base_search_text=base_search_text,
+                        include_filter=include_filter,
+                        exclude_filter=exclude_filter,
                         exclude_4k=bool(job.exclude_4k),
                         allowed_stream_ids=None,
                         preview=False,
@@ -1444,8 +1452,8 @@ def run_job_worker(job, api, config):
             _job_set_stage(job, 'refresh', 'Refresh', total=1)
             effective_exclude_filter = _build_exclude_filter(job.exclude_filter, job.exclude_plus_one)
             filters = config.get('filters') or {}
-            stream_name_regex = None
-            if isinstance(filters, dict):
+            stream_name_regex = getattr(job, 'stream_name_regex', None)
+            if stream_name_regex is None and isinstance(filters, dict):
                 stream_name_regex = filters.get('refresh_stream_name_regex')
 
             refresh_result = refresh_channel_streams(
@@ -1482,6 +1490,7 @@ def run_job_worker(job, api, config):
                 'include_filter': job.include_filter,
                 'exclude_filter': effective_exclude_filter,
                 'base_search_text': refresh_result.get('base_search_text'),
+                'stream_name_regex': getattr(job, 'stream_name_regex', None),
                 'stream_name_regex_override': job.stream_name_regex_override
             }
             
@@ -2542,6 +2551,7 @@ def api_start_job():
         exclude_4k = data.get('exclude_4k', False)
         exclude_plus_one = data.get('exclude_plus_one', False)
         selected_stream_ids = data.get('selected_stream_ids')
+        stream_name_regex = data.get('stream_name_regex')
         stream_name_regex_override = data.get('stream_name_regex_override')
         
         if not job_type:
@@ -2559,9 +2569,29 @@ def api_start_job():
                 if not isinstance(groups, list) or not groups:
                     return jsonify({'success': False, 'error': 'Saved preset must include at least one group'}), 400
 
-                # If the preset contains a regex, use it as the per-channel refresh override.
-                if not stream_name_regex_override and isinstance(preset.get('regex'), str) and preset.get('regex', '').strip():
-                    stream_name_regex_override = preset.get('regex').strip()
+                # Apply preset-suggested refresh settings when present.
+                # Backwards compatible: older presets behave like "override" unless explicitly marked.
+                preset_mode = str(preset.get('regex_mode') or '').strip().lower()
+                preset_regex = preset.get('regex')
+                if isinstance(preset_regex, str) and preset_regex.strip():
+                    if preset_mode == 'filter':
+                        if not stream_name_regex:
+                            stream_name_regex = preset_regex.strip()
+                    else:
+                        if not stream_name_regex_override:
+                            stream_name_regex_override = preset_regex.strip()
+
+                # Optional: preset may also store the refresh filter fields from the UI.
+                if base_search_text is None and isinstance(preset.get('base_search_text'), str):
+                    base_search_text = preset.get('base_search_text')
+                if include_filter is None and isinstance(preset.get('include_filter'), str):
+                    include_filter = preset.get('include_filter')
+                if exclude_filter is None and isinstance(preset.get('exclude_filter'), str):
+                    exclude_filter = preset.get('exclude_filter')
+                if exclude_plus_one is False and preset.get('exclude_plus_one') is True:
+                    exclude_plus_one = True
+                if exclude_4k is False and preset.get('exclude_4k') is True:
+                    exclude_4k = True
 
                 api = DispatcharrAPI()
                 api.login()
@@ -2612,6 +2642,7 @@ def api_start_job():
             channel_names,
             str(workspace),
             selected_stream_ids,
+            stream_name_regex,
             stream_name_regex_override,
             selection_pattern_id=selection_pattern_id,
             selection_pattern_name=selection_pattern_name,
@@ -3081,7 +3112,18 @@ def api_generate_regex():
         if not isinstance(include, list) or not isinstance(exclude, list):
             return jsonify({'success': False, 'error': '"include" and "exclude" must be lists'}), 400
 
-        regex = _generate_minimalish_regex(include, exclude)
+        mode = (data.get('mode') or '').strip().lower()
+        if mode == 'exact':
+            # Exact-match regex that only matches the included stream names.
+            # Useful for reproducing a preview selection precisely.
+            if not include:
+                return jsonify({'success': False, 'error': '"include" must be a non-empty list for mode=exact'}), 400
+            parts = [re.escape(str(s)) for s in include if str(s)]
+            if not parts:
+                return jsonify({'success': False, 'error': '"include" must contain at least one non-empty string'}), 400
+            regex = r'^(?:' + r'|'.join(parts) + r')$'
+        else:
+            regex = _generate_minimalish_regex(include, exclude)
         return jsonify({'success': True, 'regex': regex})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -3150,6 +3192,23 @@ def api_save_regex():
         exclude_4k = data.get('exclude_4k')
         exclude_4k_b = bool(exclude_4k) if exclude_4k is not None else None
 
+        # Optional: store refresh filter settings alongside the regex.
+        base_search_text = data.get('base_search_text')
+        include_filter = data.get('include_filter')
+        exclude_filter = data.get('exclude_filter')
+        exclude_plus_one = data.get('exclude_plus_one')
+        regex_mode = (data.get('regex_mode') or '').strip().lower() or None
+        if base_search_text is not None and not isinstance(base_search_text, str):
+            return jsonify({'success': False, 'error': '"base_search_text" must be a string or null'}), 400
+        if include_filter is not None and not isinstance(include_filter, str):
+            return jsonify({'success': False, 'error': '"include_filter" must be a string or null'}), 400
+        if exclude_filter is not None and not isinstance(exclude_filter, str):
+            return jsonify({'success': False, 'error': '"exclude_filter" must be a string or null'}), 400
+        if exclude_plus_one is not None and not isinstance(exclude_plus_one, bool):
+            return jsonify({'success': False, 'error': '"exclude_plus_one" must be a boolean or null'}), 400
+        if regex_mode is not None and regex_mode not in ('override', 'filter'):
+            return jsonify({'success': False, 'error': '"regex_mode" must be "override" or "filter" when provided'}), 400
+
         now_iso = datetime.now().isoformat()
         normalized_name = name.strip()
         preset = {
@@ -3160,6 +3219,8 @@ def api_save_regex():
             'created_at': now_iso,
             'updated_at': now_iso
         }
+        if regex_mode:
+            preset['regex_mode'] = regex_mode
         if group_ids is not None:
             preset['groups'] = group_ids
         if channels is not None:
@@ -3169,6 +3230,14 @@ def api_save_regex():
             preset['streams_per_provider'] = streams_per_provider_i
         if exclude_4k_b is not None:
             preset['exclude_4k'] = exclude_4k_b
+        if base_search_text is not None:
+            preset['base_search_text'] = base_search_text
+        if include_filter is not None:
+            preset['include_filter'] = include_filter
+        if exclude_filter is not None:
+            preset['exclude_filter'] = exclude_filter
+        if exclude_plus_one is not None:
+            preset['exclude_plus_one'] = bool(exclude_plus_one)
 
         with _regex_presets_lock:
             presets = _load_stream_name_regex_presets()
