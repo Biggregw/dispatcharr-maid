@@ -3298,6 +3298,27 @@ def api_list_regex_presets():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@app.route('/api/regex/presets/<preset_id>', methods=['DELETE'])
+def api_delete_regex_preset(preset_id):
+    """Delete a saved stream-name regex preset by id."""
+    try:
+        preset_id = str(preset_id or '').strip()
+        if not preset_id:
+            return jsonify({'success': False, 'error': 'Preset id is required'}), 400
+
+        with _regex_presets_lock:
+            presets = _load_stream_name_regex_presets()
+            before = len(presets)
+            kept = [p for p in presets if not (isinstance(p, dict) and str(p.get('id')) == preset_id)]
+            if len(kept) == before:
+                return jsonify({'success': False, 'error': 'Preset not found'}), 404
+            _save_stream_name_regex_presets(kept[:200])
+
+        return jsonify({'success': True, 'deleted': True, 'preset_id': preset_id})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/config')
 def api_get_config():
     """Get current configuration"""
