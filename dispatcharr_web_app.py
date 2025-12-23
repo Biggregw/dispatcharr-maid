@@ -1561,39 +1561,131 @@ def cleanup_streams_by_provider(
         except Exception as e:
             logging.warning(f"Could not load scores: {e}")
 
-    # Performance: fetch provider IDs for all streams once (avoid N+1 API calls)
-    stream_provider_map = {}
-    try:
-        if not _should_continue():
-            stats['cancelled'] = True
-            return stats
-        # Use a larger page size to reduce API round-trips during cleanup.
-        stream_provider_map = api.fetch_stream_provider_map(limit=1000)
-    except Exception as e:
-        logging.warning(
-            f"Could not build stream provider map; falling back to per-stream lookups: {e}"
-        )
-    
+    # Fetch channels early so we can show totals immediately (mobile UX),
+    # then do the potentially long provider-map step with incremental progress.
     if not _should_continue():
         stats['cancelled'] = True
         return stats
 
     channels = api.fetch_channels()
-    
-    # Filter by specific channels if provided, otherwise use groups
+
+    # Filter by specific channels if provided, otherwise use groups.
+    # Normalize IDs to int to avoid "0 matched" when one side is str.
+    specific_ids = None
     if specific_channel_ids:
+        try:
+            specific_ids = {int(x) for x in specific_channel_ids}
+        except Exception:
+            specific_ids = {x for x in specific_channel_ids}
+
+    if specific_ids is not None:
         filtered_channels = [
-            ch for ch in channels 
-            if ch.get('id') in specific_channel_ids
+            ch for ch in channels
+            if isinstance(ch, dict) and ch.get('id') is not None and (int(ch.get('id')) in specific_ids)
         ]
     else:
+        try:
+            group_ids = {int(x) for x in (selected_group_ids or [])}
+        except Exception:
+            group_ids = set(selected_group_ids or [])
         filtered_channels = [
-            ch for ch in channels 
-            if ch.get('channel_group_id') in selected_group_ids
+            ch for ch in channels
+            if isinstance(ch, dict) and ch.get('channel_group_id') in group_ids
         ]
 
     stats['channels_total'] = len(filtered_channels)
-    _progress(0, stats['channels_total'])
+
+    # Provider-map is the common "stuck at 95%" culprit; represent it as a fixed chunk of work
+    # and update progress as we page through the streams endpoint.
+    provider_steps = 10 if stats['channels_total'] <= 50 else 25
+    total_work = int(stats['channels_total'] + provider_steps)
+    _progress(0, total_work)
+
+    # Performance: fetch provider IDs for all streams once (avoid N+1 API calls),
+    # but do it in a cancellable, progress-reporting loop.
+    stream_provider_map = {}
+    provider_done = 0
+    try:
+        if not _should_continue():
+            stats['cancelled'] = True
+            return stats
+
+        limit = 1000  # reduce API round-trips during cleanup
+        next_url = f'/api/channels/streams/?limit={int(limit)}'
+        seen_next = set()
+        total_count = None
+        fetched_count = 0
+
+        while next_url:
+            if not _should_continue():
+                stats['cancelled'] = True
+                return stats
+
+            payload = api.get(next_url)
+            if isinstance(payload, dict) and 'results' in payload:
+                results = payload.get('results') or []
+                next_link = payload.get('next')
+                if payload.get('count') is not None:
+                    try:
+                        total_count = int(payload.get('count'))
+                    except Exception:
+                        pass
+            elif isinstance(payload, list):
+                results = payload
+                next_link = None
+            else:
+                raise ValueError("Unexpected streams response shape; expected dict or list.")
+
+            for stream in results:
+                if not isinstance(stream, dict):
+                    continue
+                stream_id = stream.get('id')
+                m3u_account = stream.get('m3u_account')
+                if stream_id is None or m3u_account is None:
+                    continue
+                try:
+                    stream_provider_map[int(stream_id)] = m3u_account
+                except Exception:
+                    continue
+
+            fetched_count += len(results)
+
+            # Incremental progress for the provider-map chunk (provider_steps)
+            target_done = provider_done
+            if total_count and total_count > 0:
+                frac = min(1.0, max(0.0, float(fetched_count) / float(total_count)))
+                target_done = int(round(frac * provider_steps))
+            else:
+                # No total available; progress by pages up to provider_steps.
+                target_done = min(provider_steps, provider_done + 1)
+
+            if target_done > provider_done:
+                provider_done = target_done
+                _progress(provider_done, total_work)
+
+            if next_link:
+                next_url = next_link.split('/api/')[-1]
+                next_url = '/api/' + str(next_url).lstrip('/')
+                # Safety guard against API returning the same next URL repeatedly.
+                if next_url in seen_next:
+                    logging.warning("Streams pagination returned a repeated next URL; stopping provider-map fetch.")
+                    break
+                seen_next.add(next_url)
+            else:
+                next_url = None
+
+        # Ensure the provider-map chunk is marked complete.
+        if provider_done < provider_steps:
+            provider_done = provider_steps
+            _progress(provider_done, total_work)
+    except Exception as e:
+        logging.warning(
+            f"Could not build stream provider map; falling back to per-stream lookups: {e}"
+        )
+        # Still advance past the provider-map chunk so overall progress doesn't stall.
+        if provider_done < provider_steps:
+            provider_done = provider_steps
+            _progress(provider_done, total_work)
     
     for idx, channel in enumerate(filtered_channels, start=1):
         if not _should_continue():
@@ -1604,7 +1696,7 @@ def cleanup_streams_by_provider(
         stream_ids = channel.get('streams', [])
         
         if not stream_ids or len(stream_ids) <= streams_per_provider:
-            _progress(idx, stats['channels_total'])
+            _progress(provider_done + idx, total_work)
             continue
         
         stats['channels_processed'] += 1
@@ -1640,7 +1732,7 @@ def cleanup_streams_by_provider(
             })
 
         if stats.get('cancelled'):
-            _progress(idx, stats['channels_total'])
+            _progress(provider_done + idx, total_work)
             break
         
         # Keep top N streams from each provider, grouped by rank
@@ -1674,7 +1766,7 @@ def cleanup_streams_by_provider(
         else:
             stats['total_streams_after'] += len(stream_ids)
 
-        _progress(idx, stats['channels_total'])
+        _progress(provider_done + idx, total_work)
     
     return stats
 
