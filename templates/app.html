@@ -1604,7 +1604,11 @@
                 const channelElement = channelId
                     ? document.querySelector(`.channel-item[data-channel-id="${channelId}"]`)
                     : null;
-                defaultName = channelElement?.dataset?.channelNumber || '';
+                // Prefer a human-friendly default preset name.
+                // `baseSearchText` is often the "base" channel name (e.g., "BBC One") even when the channel display name includes regions.
+                const baseSearchText = (channelElement?.dataset?.baseSearchText || '').trim();
+                const channelDisplayName = (channelElement?.querySelector?.('.channel-name')?.textContent || '').trim();
+                defaultName = baseSearchText || channelDisplayName || channelElement?.dataset?.channelNumber || '';
             } catch (e) {
                 defaultName = '';
             }
