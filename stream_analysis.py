@@ -492,53 +492,6 @@ def _log_raw_response(tag, response, config):
     logging.info("%s raw response saved to %s", tag, raw_path)
 
 
-def _normalize_provider_map(payload):
-    """Normalize Dispatcharr M3U account payloads into id -> name mapping."""
-    if isinstance(payload, dict) and 'results' in payload:
-        payload = payload['results']
-    if not isinstance(payload, list):
-        raise ValueError("M3U accounts payload is not a list or paginated result.")
-
-    provider_map = {}
-    for entry in payload:
-        if not isinstance(entry, dict):
-            raise ValueError("M3U account entry is not an object.")
-        if 'id' not in entry or 'name' not in entry:
-            raise ValueError("M3U account entry missing required 'id' or 'name' fields.")
-        provider_map[str(entry['id'])] = entry['name']
-
-    if not provider_map:
-        raise ValueError("No provider accounts found in M3U accounts response.")
-
-    return provider_map
-
-
-def _fetch_provider_map(api, config, endpoint):
-    """Fetch provider accounts from Dispatcharr and return id -> name mapping."""
-    response = api.get_raw(endpoint)
-    _log_raw_response('m3u_accounts', response, config)
-
-    content_type = response.headers.get('Content-Type', '')
-    if 'application/json' not in content_type:
-        raise ValueError(
-            f"M3U accounts response is not JSON (Content-Type: {content_type})."
-        )
-
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise ValueError("Failed to parse M3U accounts JSON response.") from exc
-
-    return _normalize_provider_map(payload)
-
-
-def _write_provider_map(path, provider_map):
-    """Write provider mapping to disk for downstream summaries."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as handle:
-        json.dump(provider_map, handle, indent=2)
-
-
 def _fetch_stream_provider_map(api, config):
     """Fetch all streams once and build a stream_id -> m3u_account mapping."""
     stream_provider_map = {}
@@ -1296,7 +1249,7 @@ def reorder_streams(api, config, input_csv=None):
     
     logging.info("Reordering complete!")
 
-def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None):
+def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None):
     """
     Find and add all matching streams from all providers for a specific channel
     
@@ -1429,9 +1382,22 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     
     logging.info(f"Refreshing channel {channel_id} from all providers...")
     
-    # Get channel details
-    all_channels = api.fetch_channels()
-    target_channel = next((ch for ch in all_channels if ch['id'] == channel_id), None)
+    # Get channel details (allow caller-provided cache to avoid N API calls).
+    if isinstance(all_channels_override, list):
+        all_channels = all_channels_override
+    else:
+        all_channels = api.fetch_channels()
+
+    target_channel = None
+    for ch in all_channels:
+        if not isinstance(ch, dict) or ch.get('id') is None:
+            continue
+        try:
+            if int(ch.get('id')) == int(channel_id):
+                target_channel = ch
+                break
+        except Exception:
+            continue
     
     if not target_channel:
         logging.error(f"Channel {channel_id} not found")
@@ -1449,7 +1415,6 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if exclude_filter:
             logging.info(f"Exclude filter: {exclude_filter}")
 
-    # Precompute match constants once (used inside the stream loop)
     # Precompute match constants once (used inside the stream loop).
     # In override mode these values are unused, but we still set safe defaults.
     _selected_normalized = normalize(strip_quality(search_name))

@@ -1118,6 +1118,9 @@ def run_job_worker(job, api, config):
                     'total_streams_removed': 0
                 }
 
+                # Avoid N calls to /api/channels/channels/ by caching channel metadata once.
+                all_channels = api.fetch_channels()
+
                 # Use global config default regex for refresh (if set); job may override.
                 filters = config.get('filters') or {}
                 stream_name_regex = None
@@ -1142,7 +1145,8 @@ def run_job_worker(job, api, config):
                         preview=False,
                         stream_name_regex=stream_name_regex,
                         stream_name_regex_override=getattr(job, 'stream_name_regex_override', None),
-                        all_streams_override=all_streams
+                        all_streams_override=all_streams,
+                        all_channels_override=all_channels,
                     )
                     if isinstance(result, dict) and result.get('error'):
                         refresh_stats['channels_failed'] += 1
@@ -1585,6 +1589,8 @@ def cleanup_streams_by_provider(
     # Load scored streams to get quality rankings
     scored_file = config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
     stream_scores = {}
+    # Best-effort stream_id -> m3u_account cache to avoid expensive provider-map fetches.
+    stream_provider_map = {}
     
     if os.path.exists(scored_file):
         try:
@@ -1603,8 +1609,33 @@ def cleanup_streams_by_provider(
                 score_series = score_series.reindex(df.index).fillna(0)[mask].fillna(0).astype(float)
 
                 stream_scores = dict(zip(sid_series.tolist(), score_series.tolist()))
+
+                # Also cache provider IDs if present in the scored CSV.
+                if 'm3u_account' in df.columns:
+                    provider_series = df['m3u_account'].reindex(df.index)[mask]
+                    for sid, provider_id in zip(sid_series.tolist(), provider_series.tolist()):
+                        if provider_id in ("", None) or (isinstance(provider_id, float) and pd.isna(provider_id)):
+                            continue
+                        stream_provider_map.setdefault(int(sid), provider_id)
         except Exception as e:
             logging.warning(f"Could not load scores: {e}")
+
+    # Fall back to measurements CSV for provider IDs when scored CSV isn't available.
+    measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
+    if os.path.exists(measurements_file):
+        try:
+            df_map = pd.read_csv(measurements_file, usecols=['stream_id', 'm3u_account'])
+            sid_series = pd.to_numeric(df_map.get('stream_id'), errors='coerce')
+            if sid_series is not None and 'm3u_account' in df_map.columns:
+                mask = sid_series.notna()
+                sid_series = sid_series[mask].astype(int)
+                provider_series = df_map['m3u_account'].reindex(df_map.index)[mask]
+                for sid, provider_id in zip(sid_series.tolist(), provider_series.tolist()):
+                    if provider_id in ("", None) or (isinstance(provider_id, float) and pd.isna(provider_id)):
+                        continue
+                    stream_provider_map.setdefault(int(sid), provider_id)
+        except Exception:
+            logging.debug("Could not load provider IDs from measurements CSV", exc_info=True)
 
     # Fetch channels early so we can show totals immediately (mobile UX),
     # then do the potentially long provider-map step with incremental progress.
@@ -1652,7 +1683,7 @@ def cleanup_streams_by_provider(
     # and appears as "stuck at ~99%" in the UI. Prefer a scoped provider-map for the streams
     # in the selected channels (fast for 1–few channels), and apply a hard time budget to
     # avoid blocking cleanup forever.
-    stream_provider_map = {}
+    # NOTE: stream_provider_map may already contain values from CSV outputs.
     provider_done = 0
     try:
         if not _should_continue():
@@ -1678,118 +1709,142 @@ def cleanup_streams_by_provider(
         except Exception:
             needed_stream_ids = []
 
-        # Heuristic: for small selections, a scoped map is much faster than paginating
-        # through the entire streams endpoint.
-        use_scoped_map = bool(needed_stream_ids) and (
-            (specific_channel_ids is not None)
-            or (stats['channels_total'] <= 25)
-            or (len(needed_stream_ids) <= 1500)
-        )
+        # Only map what's missing (if we already have provider IDs from CSV outputs).
+        missing_stream_ids = [sid for sid in needed_stream_ids if sid not in stream_provider_map]
 
-        if use_scoped_map:
-            # Scoped provider-map: only map stream IDs present in selected channels.
-            # This avoids a full `/streams` crawl when the job is targeting a small set.
-            mapped = 0
-            for sid in needed_stream_ids:
-                if not _should_continue():
-                    stats['cancelled'] = True
-                    return stats
-                if (time.time() - provider_map_start) > provider_map_budget_s:
-                    logging.warning(
-                        "Provider-map budget exceeded (%ss); continuing with partial map.",
-                        provider_map_budget_s,
-                    )
-                    break
-
-                try:
-                    stream_details = api.fetch_stream_details(sid)
-                except Exception:
-                    stream_details = None
-
-                if isinstance(stream_details, dict):
-                    m3u_account = stream_details.get('m3u_account')
-                    if m3u_account is not None:
-                        stream_provider_map[int(sid)] = m3u_account
-
-                mapped += 1
-                # Incremental progress for provider-map chunk.
-                frac = min(1.0, max(0.0, float(mapped) / float(len(needed_stream_ids) or 1)))
-                target_done = int(round(frac * provider_steps))
-                if target_done > provider_done:
-                    provider_done = target_done
-                    _progress(provider_done, total_work)
+        if not missing_stream_ids:
+            # Nothing to do: mark provider-map chunk complete immediately.
+            provider_done = provider_steps
+            _progress(provider_done, total_work)
         else:
-            # Global provider-map: crawl streams endpoint in a cancellable loop.
-            # Apply a time budget so this can't block cleanup indefinitely.
-            limit = 500  # smaller pages reduce long server-side response times
-            next_url = f'/api/channels/streams/?limit={int(limit)}'
-            seen_next = set()
-            total_count = None
-            fetched_count = 0
+            # Heuristic: for small selections, a scoped map is much faster than paginating
+            # through the entire streams endpoint.
+            use_scoped_map = (
+                (specific_channel_ids is not None)
+                or (stats['channels_total'] <= 25)
+                or (len(missing_stream_ids) <= 1500)
+            )
 
-            while next_url:
-                if not _should_continue():
-                    stats['cancelled'] = True
-                    return stats
-                if (time.time() - provider_map_start) > provider_map_budget_s:
-                    logging.warning(
-                        "Provider-map budget exceeded (%ss); continuing with partial map.",
-                        provider_map_budget_s,
-                    )
-                    break
-
-                payload = api.get(next_url, timeout=30)
-                if isinstance(payload, dict) and 'results' in payload:
-                    results = payload.get('results') or []
-                    next_link = payload.get('next')
-                    if payload.get('count') is not None:
-                        try:
-                            total_count = int(payload.get('count'))
-                        except Exception:
-                            pass
-                elif isinstance(payload, list):
-                    results = payload
-                    next_link = None
-                else:
-                    raise ValueError("Unexpected streams response shape; expected dict or list.")
-
-                for stream in results:
-                    if not isinstance(stream, dict):
-                        continue
-                    stream_id = stream.get('id')
-                    m3u_account = stream.get('m3u_account')
-                    if stream_id is None or m3u_account is None:
-                        continue
-                    try:
-                        stream_provider_map[int(stream_id)] = m3u_account
-                    except Exception:
-                        continue
-
-                fetched_count += len(results)
-
-                # Incremental progress for the provider-map chunk (provider_steps)
-                target_done = provider_done
-                if total_count and total_count > 0:
-                    frac = min(1.0, max(0.0, float(fetched_count) / float(total_count)))
-                    target_done = int(round(frac * provider_steps))
-                else:
-                    # No total available; progress by pages up to provider_steps.
-                    target_done = min(provider_steps, provider_done + 1)
-
-                if target_done > provider_done:
-                    provider_done = target_done
-                    _progress(provider_done, total_work)
-
-                if next_link:
-                    next_url = next_link.split('/api/')[-1]
-                    next_url = '/api/' + str(next_url).lstrip('/')
-                    # Safety guard against API returning the same next URL repeatedly.
-                    if next_url in seen_next:
-                        logging.warning("Streams pagination returned a repeated next URL; stopping provider-map fetch.")
+            if use_scoped_map:
+                # Scoped provider-map: only map stream IDs present in selected channels.
+                # This avoids a full `/streams` crawl when the job is targeting a small set.
+                mapped = 0
+                for sid in missing_stream_ids:
+                    if not _should_continue():
+                        stats['cancelled'] = True
+                        return stats
+                    if (time.time() - provider_map_start) > provider_map_budget_s:
+                        logging.warning(
+                            "Provider-map budget exceeded (%ss); continuing with partial map.",
+                            provider_map_budget_s,
+                        )
                         break
-                    seen_next.add(next_url)
-                else:
-                    next_url = None
+
+                    try:
+                        stream_details = api.fetch_stream_details(sid)
+                    except Exception:
+                        stream_details = None
+
+                    if isinstance(stream_details, dict):
+                        m3u_account = stream_details.get('m3u_account')
+                        if m3u_account is not None:
+                            stream_provider_map[int(sid)] = m3u_account
+
+                    mapped += 1
+                    # Incremental progress for provider-map chunk.
+                    frac = min(1.0, max(0.0, float(mapped) / float(len(missing_stream_ids) or 1)))
+                    target_done = int(round(frac * provider_steps))
+                    if target_done > provider_done:
+                        provider_done = target_done
+                        _progress(provider_done, total_work)
+            else:
+                # Global provider-map: crawl streams endpoint in a cancellable loop.
+                # Apply a time budget so this can't block cleanup indefinitely.
+                limit = 500  # smaller pages reduce long server-side response times
+                next_url = f'/api/channels/streams/?limit={int(limit)}'
+                seen_next = set()
+                total_count = None
+                fetched_count = 0
+
+                missing_set = None
+                try:
+                    if missing_stream_ids and len(missing_stream_ids) <= 100000:
+                        missing_set = set(missing_stream_ids)
+                except Exception:
+                    missing_set = None
+
+                while next_url:
+                    if not _should_continue():
+                        stats['cancelled'] = True
+                        return stats
+                    if (time.time() - provider_map_start) > provider_map_budget_s:
+                        logging.warning(
+                            "Provider-map budget exceeded (%ss); continuing with partial map.",
+                            provider_map_budget_s,
+                        )
+                        break
+
+                    payload = api.get(next_url, timeout=30)
+                    if isinstance(payload, dict) and 'results' in payload:
+                        results = payload.get('results') or []
+                        next_link = payload.get('next')
+                        if payload.get('count') is not None:
+                            try:
+                                total_count = int(payload.get('count'))
+                            except Exception:
+                                pass
+                    elif isinstance(payload, list):
+                        results = payload
+                        next_link = None
+                    else:
+                        raise ValueError("Unexpected streams response shape; expected dict or list.")
+
+                    for stream in results:
+                        if not isinstance(stream, dict):
+                            continue
+                        stream_id = stream.get('id')
+                        m3u_account = stream.get('m3u_account')
+                        if stream_id is None or m3u_account is None:
+                            continue
+                        try:
+                            sid = int(stream_id)
+                        except Exception:
+                            continue
+                        if missing_set is not None and sid not in missing_set:
+                            continue
+                        stream_provider_map[sid] = m3u_account
+                        if missing_set is not None:
+                            missing_set.discard(sid)
+                            if not missing_set:
+                                next_link = None
+                                next_url = None
+                                break
+
+                    fetched_count += len(results)
+
+                    # Incremental progress for the provider-map chunk (provider_steps)
+                    target_done = provider_done
+                    if total_count and total_count > 0:
+                        frac = min(1.0, max(0.0, float(fetched_count) / float(total_count)))
+                        target_done = int(round(frac * provider_steps))
+                    else:
+                        # No total available; progress by pages up to provider_steps.
+                        target_done = min(provider_steps, provider_done + 1)
+
+                    if target_done > provider_done:
+                        provider_done = target_done
+                        _progress(provider_done, total_work)
+
+                    if next_link:
+                        next_url = next_link.split('/api/')[-1]
+                        next_url = '/api/' + str(next_url).lstrip('/')
+                        # Safety guard against API returning the same next URL repeatedly.
+                        if next_url in seen_next:
+                            logging.warning("Streams pagination returned a repeated next URL; stopping provider-map fetch.")
+                            break
+                        seen_next.add(next_url)
+                    else:
+                        next_url = None
 
         # Ensure the provider-map chunk is marked complete.
         if provider_done < provider_steps:
@@ -2469,8 +2524,7 @@ def api_start_job():
     """Start a new job"""
     try:
         data = request.get_json()
-        print(f'DEBUG: Received job request: {data}')
-        import sys; sys.stdout.flush()
+        logging.debug("Received job request: %s", data)
         
         job_type = data.get('job_type')
         groups = data.get('groups', [])
