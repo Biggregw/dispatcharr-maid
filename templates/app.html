@@ -1239,9 +1239,14 @@
         // card into the center of the viewport once (and only once).
         let autoScrollToCurrentJobRequested = false;
         let lastAutoScrollToken = null;
+        let autoScrollRequestNonce = 0;
 
         function requestAutoScrollToCurrentJob() {
             autoScrollToCurrentJobRequested = true;
+            // Ensure each user-initiated request can scroll even if the caller
+            // reuses the same token value (e.g. "starting") across multiple clicks.
+            autoScrollRequestNonce += 1;
+            return `req-${autoScrollRequestNonce}`;
         }
 
         function scrollElementToViewportCenter(el) {
@@ -1635,8 +1640,8 @@
             // UI feedback
             renderOptimisticStartingJob('pattern_refresh_full_cleanup', pattern?.name || 'Saved pattern', 'Resolving channels…');
             // User initiated a job — bring the Current Job card into view (centered).
-            requestAutoScrollToCurrentJob();
-            maybeAutoScrollToCurrentJob('starting');
+            const scrollToken = requestAutoScrollToCurrentJob();
+            maybeAutoScrollToCurrentJob(scrollToken);
 
             // Start job directly with the saved pattern id.
             const payload = {
@@ -2344,8 +2349,8 @@
                 // Immediate UI feedback (so it doesn't look like nothing is happening)
                 renderOptimisticStartingJob(jobType, groupNames, channelNames);
                 // User initiated a job — bring the Current Job card into view (centered).
-                requestAutoScrollToCurrentJob();
-                maybeAutoScrollToCurrentJob('starting');
+                const scrollToken = requestAutoScrollToCurrentJob();
+                maybeAutoScrollToCurrentJob(scrollToken);
                 
                 const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
                 const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
