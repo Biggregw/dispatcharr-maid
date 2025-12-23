@@ -1604,7 +1604,23 @@
                 const channelElement = channelId
                     ? document.querySelector(`.channel-item[data-channel-id="${channelId}"]`)
                     : null;
-                defaultName = channelElement?.dataset?.channelNumber || '';
+                // Prefer a human-friendly default preset name.
+                // `baseSearchText` is often the "base" channel name (e.g., "BBC One") even when the channel display name includes regions.
+                const baseSearchText = (channelElement?.dataset?.baseSearchText || '').trim();
+                const channelDisplayName = (channelElement?.querySelector?.('.channel-name')?.textContent || '').trim();
+                const channelName = baseSearchText || channelDisplayName || channelElement?.dataset?.channelNumber || '';
+                const groupName = (channelElement?.closest?.('.channel-group-section')
+                    ?.querySelector?.('.channel-group-title')
+                    ?.textContent || '').trim();
+
+                if (channelName && groupName) {
+                    // Avoid duplication if the group is already part of the channelName.
+                    defaultName = channelName.toLowerCase().includes(groupName.toLowerCase())
+                        ? channelName
+                        : `${channelName} ${groupName}`;
+                } else {
+                    defaultName = channelName;
+                }
             } catch (e) {
                 defaultName = '';
             }
