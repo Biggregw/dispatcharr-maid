@@ -1598,7 +1598,18 @@
                 return;
             }
 
-            const name = (prompt('Name this regex preset (for Regex Override):') || '').trim();
+            let defaultName = '';
+            try {
+                const channelId = (selectedChannels && selectedChannels.length === 1) ? selectedChannels[0] : null;
+                const channelElement = channelId
+                    ? document.querySelector(`.channel-item[data-channel-id="${channelId}"]`)
+                    : null;
+                defaultName = channelElement?.dataset?.channelNumber || '';
+            } catch (e) {
+                defaultName = '';
+            }
+
+            const name = (prompt('Name this regex preset (for Regex Override):', defaultName) || '').trim();
             if (!name) return;
 
             const byId = new Map((refreshPreviewStreams || []).map(s => [String(s.id), s]));
@@ -1668,7 +1679,7 @@
                     select.value = presetId;
                 }
 
-                alert('Saved regex preset.');
+                alert(saveData.replaced ? 'Saved regex preset (overwrote existing preset with same name).' : 'Saved regex preset.');
             } catch (e) {
                 alert(`Unable to save regex: ${e.message}`);
             } finally {
