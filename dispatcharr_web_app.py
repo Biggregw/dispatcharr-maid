@@ -86,6 +86,118 @@ def _render_auth_error(error_message):
 jobs = {}  # {job_id: Job}
 job_lock = threading.Lock()
 
+_patterns_lock = threading.Lock()
+
+
+def _channel_selection_patterns_path():
+    # Keep patterns with other persisted UI state.
+    return Path('logs/channel_selection_patterns.json')
+
+
+def _load_channel_selection_patterns():
+    path = _channel_selection_patterns_path()
+    if not path.exists():
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+        if isinstance(data, list):
+            return data
+        return []
+    except Exception:
+        return []
+
+
+def _save_channel_selection_patterns(patterns):
+    path = _channel_selection_patterns_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as handle:
+        json.dump(patterns, handle, indent=2)
+
+
+def _get_pattern_by_id(pattern_id):
+    if not pattern_id:
+        return None
+    with _patterns_lock:
+        patterns = _load_channel_selection_patterns()
+    for p in patterns:
+        if isinstance(p, dict) and str(p.get('id')) == str(pattern_id):
+            return p
+    return None
+
+
+def _resolve_channels_for_pattern(api, pattern):
+    """
+    Resolve a saved selection pattern to concrete channel IDs + details.
+    Pattern schema:
+      {
+        id, name,
+        groups: [int],
+        channel_name_regex: str|None,
+        channel_number_regex: str|None
+      }
+    """
+    if not isinstance(pattern, dict):
+        raise ValueError("Pattern must be an object.")
+    groups = pattern.get('groups') or []
+    if not isinstance(groups, list):
+        groups = []
+    group_ids = []
+    for g in groups:
+        try:
+            group_ids.append(int(g))
+        except Exception:
+            continue
+    allowed_groups = set(group_ids) if group_ids else None
+
+    channel_name_regex = pattern.get('channel_name_regex')
+    channel_number_regex = pattern.get('channel_number_regex')
+    name_re = None
+    num_re = None
+    if isinstance(channel_name_regex, str) and channel_name_regex.strip():
+        name_re = re.compile(channel_name_regex.strip(), flags=re.IGNORECASE)
+    if isinstance(channel_number_regex, str) and channel_number_regex.strip():
+        num_re = re.compile(channel_number_regex.strip())
+
+    all_channels = api.fetch_channels()
+    candidates = [
+        ch for ch in all_channels
+        if isinstance(ch, dict)
+        and ch.get('id') is not None
+        and (allowed_groups is None or ch.get('channel_group_id') in allowed_groups)
+    ]
+
+    details = []
+    for ch in candidates:
+        name = str(ch.get('name') or '')
+        num = str(ch.get('channel_number') or '')
+        # If no regex provided, the pattern means "all channels in groups".
+        if name_re is None and num_re is None:
+            matched = True
+        else:
+            matched = (name_re and name_re.search(name)) or (num_re and num_re.search(num))
+        if matched:
+            cid = int(ch['id'])
+            details.append({
+                'id': cid,
+                'name': ch.get('name', 'Unknown'),
+                'channel_number': ch.get('channel_number'),
+                'channel_group_id': ch.get('channel_group_id')
+            })
+
+    def _sort_key(item):
+        num_val = item.get('channel_number')
+        try:
+            num_i = int(num_val)
+        except (TypeError, ValueError):
+            num_i = 10**9
+        name_val = (item.get('name') or '')
+        return (num_i, name_val.casefold(), name_val)
+
+    details.sort(key=_sort_key)
+    channel_ids = [d['id'] for d in details]
+    return channel_ids, details
+
 
 def _get_latest_job_with_workspace():
     """Return the most recent job that has an assigned workspace"""
@@ -506,7 +618,7 @@ def _get_job_results(job_id):
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex_override=None):
+    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -521,6 +633,8 @@ class Job:
         self.exclude_plus_one = exclude_plus_one
         self.selected_stream_ids = selected_stream_ids
         self.stream_name_regex_override = stream_name_regex_override
+        self.selection_pattern_id = selection_pattern_id
+        self.selection_pattern_name = selection_pattern_name
         self.status = 'queued'  # queued, running, completed, failed, cancelled
         self.progress = 0
         self.total = 0
@@ -543,6 +657,8 @@ class Job:
             'channels': self.channels,
             'group_names': self.group_names,
             'channel_names': self.channel_names,
+            'selection_pattern_id': self.selection_pattern_id,
+            'selection_pattern_name': self.selection_pattern_name,
             'base_search_text': self.base_search_text,
             'stream_name_regex_override': self.stream_name_regex_override,
             'selected_stream_ids': self.selected_stream_ids,
@@ -606,6 +722,10 @@ def run_job_worker(job, api, config):
         
         # Update config with selected groups and channels
         config.set('filters', 'channel_group_ids', job.groups)
+
+        # Propagate exclude_4k to the job workspace config so scoring/reorder can honor it.
+        # (This is stored per-job workspace and does not affect the base config.yaml.)
+        config.set('filters', 'exclude_4k', bool(getattr(job, 'exclude_4k', False)))
         
         # Add specific channel IDs if selected
         if job.channels:
@@ -624,7 +744,145 @@ def run_job_worker(job, api, config):
         # ==================================================================
         
         # Execute based on job type
-        if job.job_type in ['full', 'full_cleanup']:
+        if job.job_type == 'pattern_refresh_full_cleanup':
+            task_name = "Refresh + Quality Check & Cleanup"
+            logging.info("TASK_START: Refresh + Quality Check & Cleanup")
+
+            # Phase 1: refresh streams for each selected channel
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                return
+
+            # Fetch all streams once for reuse across per-channel refresh calls.
+            job.current_step = 'Preparing provider streams cache...'
+            all_streams = []
+            next_url = '/api/channels/streams/?limit=100'
+            while next_url:
+                result = api.get(next_url)
+                if not result or 'results' not in result:
+                    break
+                all_streams.extend(result['results'])
+                if result.get('next'):
+                    next_url = result['next'].split('/api/')[-1]
+                    next_url = '/api/' + next_url
+                else:
+                    next_url = None
+
+            channels_to_refresh = job.channels or []
+            job.total = len(channels_to_refresh)
+            job.progress = 0
+            refresh_stats = {
+                'channels_total': len(channels_to_refresh),
+                'channels_refreshed': 0,
+                'channels_failed': 0,
+                'total_streams_added': 0,
+                'total_streams_removed': 0
+            }
+
+            # Use global config default regex for refresh (if set); job may override.
+            filters = config.get('filters') or {}
+            stream_name_regex = None
+            if isinstance(filters, dict):
+                stream_name_regex = filters.get('refresh_stream_name_regex')
+
+            for idx, channel_id in enumerate(channels_to_refresh, start=1):
+                if job.cancel_requested:
+                    job.status = 'cancelled'
+                    return
+
+                job.current_step = f'Refreshing channel streams ({idx}/{len(channels_to_refresh)})...'
+                result = refresh_channel_streams(
+                    api,
+                    config,
+                    int(channel_id),
+                    base_search_text=None,
+                    include_filter=None,
+                    exclude_filter=None,
+                    exclude_4k=bool(job.exclude_4k),
+                    allowed_stream_ids=None,
+                    preview=False,
+                    stream_name_regex=stream_name_regex,
+                    stream_name_regex_override=None,
+                    all_streams_override=all_streams
+                )
+                if isinstance(result, dict) and result.get('error'):
+                    refresh_stats['channels_failed'] += 1
+                else:
+                    refresh_stats['channels_refreshed'] += 1
+                    refresh_stats['total_streams_added'] += int(result.get('added', 0) or 0)
+                    refresh_stats['total_streams_removed'] += int(result.get('removed', 0) or 0)
+
+                job.progress = idx
+
+            # Phase 2: quality check & cleanup (existing pipeline)
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                return
+
+            job.current_step = 'Fetching streams...'
+            fetch_streams(api, config)
+
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                return
+
+            job.current_step = 'Analyzing streams (forcing fresh analysis)...'
+            original_days = config.get('filters', 'stream_last_measured_days', 1)
+            config.set('filters', 'stream_last_measured_days', 0)
+            config.save()
+
+            def progress_wrapper(progress_data):
+                progress_callback(job, progress_data)
+                return not job.cancel_requested
+
+            analyzed_count = 0
+            try:
+                analyzed_count = analyze_streams(
+                    config,
+                    progress_callback=progress_wrapper,
+                    force_full_analysis=True
+                ) or 0
+            finally:
+                config.set('filters', 'stream_last_measured_days', original_days)
+                config.save()
+
+            if not analyzed_count:
+                logging.warning("Pattern pipeline analysis executed zero streams; stopping before scoring/cleanup.")
+                job.status = 'failed'
+                job.current_step = 'Error: Analysis executed zero streams'
+                return
+
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                return
+
+            job.current_step = 'Scoring streams...'
+            score_streams(api, config, update_stats=True)
+
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                return
+
+            job.current_step = 'Reordering streams...'
+            reorder_streams(api, config)
+
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                return
+
+            job.current_step = f'Cleaning up (keeping top {job.streams_per_provider} per provider)...'
+            cleanup_stats = cleanup_streams_by_provider(api, job.groups, config, job.streams_per_provider, job.channels)
+
+            job.result_summary = job.result_summary or {}
+            job.result_summary['pattern_pipeline'] = {
+                'pattern_id': job.selection_pattern_id,
+                'pattern_name': job.selection_pattern_name,
+                'refresh_stats': refresh_stats
+            }
+            job.result_summary['cleanup_stats'] = cleanup_stats
+            job.result_summary['final_stream_count'] = cleanup_stats.get('total_streams_after', 0)
+
+        elif job.job_type in ['full', 'full_cleanup']:
             if job.job_type == 'full_cleanup':
                 task_name = "Quality Check & Cleanup"
                 logging.info("TASK_START: Quality Check & Cleanup")
@@ -1526,6 +1784,8 @@ def api_start_job():
         job_type = data.get('job_type')
         groups = data.get('groups', [])
         channels = data.get('channels')  # Optional: specific channel IDs
+        selection_pattern_id = data.get('selection_pattern_id')
+        selection_pattern_name = None
         group_names = data.get('group_names', 'Unknown')
         channel_names = data.get('channel_names', 'All channels')
         base_search_text = data.get('base_search_text')
@@ -1537,15 +1797,57 @@ def api_start_job():
         selected_stream_ids = data.get('selected_stream_ids')
         stream_name_regex_override = data.get('stream_name_regex_override')
         
-        if not job_type or not groups:
+        if not job_type:
+            return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
+
+        # If this is the pattern pipeline job, resolve groups/channels from the saved pattern.
+        if job_type == 'pattern_refresh_full_cleanup':
+            pattern = _get_pattern_by_id(selection_pattern_id)
+            if not pattern:
+                return jsonify({'success': False, 'error': 'selection_pattern_id not found'}), 400
+            selection_pattern_name = pattern.get('name') or 'Saved pattern'
+            groups = pattern.get('groups') or []
+            if not isinstance(groups, list) or not groups:
+                return jsonify({'success': False, 'error': 'Saved pattern must include at least one group'}), 400
+
+            api = DispatcharrAPI()
+            api.login()
+            resolved_ids, resolved_details = _resolve_channels_for_pattern(api, pattern)
+            if not resolved_ids:
+                return jsonify({'success': False, 'error': 'Saved pattern matched 0 channels'}), 400
+
+            channels = resolved_ids
+            group_names = selection_pattern_name
+            channel_names = f'{len(channels)} channels (pattern)'
+
+        if not groups:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
         
         # Create job
         job_id = str(uuid.uuid4())
         workspace, config_path = create_job_workspace(job_id)
-        job = Job(job_id, job_type, groups, channels, base_search_text, include_filter, exclude_filter, streams_per_provider, exclude_4k, exclude_plus_one, group_names, channel_names, str(workspace), selected_stream_ids, stream_name_regex_override)
+        job = Job(
+            job_id,
+            job_type,
+            groups,
+            channels,
+            base_search_text,
+            include_filter,
+            exclude_filter,
+            streams_per_provider,
+            exclude_4k,
+            exclude_plus_one,
+            group_names,
+            channel_names,
+            str(workspace),
+            selected_stream_ids,
+            stream_name_regex_override,
+            selection_pattern_id=selection_pattern_id,
+            selection_pattern_name=selection_pattern_name
+        )
 
         # Initialize API and config
+        # For pattern jobs we already created an API above (to resolve), but we can re-login safely here.
         api = DispatcharrAPI()
         api.login()
         config = Config(config_path, working_dir=workspace)
@@ -1566,6 +1868,162 @@ def api_start_job():
         
         return jsonify({'success': True, 'job_id': job_id, 'job': job.to_dict()})
     
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/channel-selection-patterns', methods=['GET'])
+def api_list_channel_selection_patterns():
+    try:
+        with _patterns_lock:
+            patterns = _load_channel_selection_patterns()
+        # Return newest first.
+        patterns = [p for p in patterns if isinstance(p, dict)]
+        patterns.sort(key=lambda p: (p.get('created_at') or ''), reverse=True)
+        return jsonify({'success': True, 'patterns': patterns})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/channel-selection-patterns', methods=['POST'])
+def api_create_channel_selection_pattern():
+    """
+    Create a saved channel selection pattern.
+
+    Payload:
+      {
+        "name": "Sky Sports",
+        "groups": [1,2],
+        "channels": [123,456] | null,     # optional; if provided, server computes exact-match regex
+        "channel_name_regex": "..." | null,  # optional if channels provided
+        "channel_number_regex": "..." | null # optional if channels provided
+      }
+    """
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'success': False, 'error': '"name" is required'}), 400
+
+        groups = data.get('groups') or []
+        if not isinstance(groups, list) or not groups:
+            return jsonify({'success': False, 'error': '"groups" must be a non-empty list'}), 400
+        group_ids = []
+        for g in groups:
+            try:
+                group_ids.append(int(g))
+            except Exception:
+                return jsonify({'success': False, 'error': f'Invalid group id: {g}'}), 400
+
+        channels = data.get('channels')
+        if channels is not None and not isinstance(channels, list):
+            return jsonify({'success': False, 'error': '"channels" must be a list or null'}), 400
+
+        channel_name_regex = data.get('channel_name_regex')
+        channel_number_regex = data.get('channel_number_regex')
+
+        # If channels are provided, compute exact-match regex from Dispatcharr metadata.
+        if channels:
+            channel_ids = []
+            for c in channels:
+                try:
+                    channel_ids.append(int(c))
+                except Exception:
+                    return jsonify({'success': False, 'error': f'Invalid channel id: {c}'}), 400
+
+            api = DispatcharrAPI()
+            api.login()
+            all_channels = api.fetch_channels()
+            by_id = {int(ch.get('id')): ch for ch in all_channels if isinstance(ch, dict) and ch.get('id') is not None}
+            missing = [cid for cid in channel_ids if cid not in by_id]
+            if missing:
+                return jsonify({'success': False, 'error': f'{len(missing)} channel id(s) not found in Dispatcharr'}), 400
+
+            names = []
+            numbers = []
+            for cid in channel_ids:
+                ch = by_id[cid]
+                nm = ch.get('name') or ''
+                if isinstance(nm, str) and nm.strip():
+                    names.append(nm.strip())
+                num = ch.get('channel_number')
+                if num is not None and str(num).strip() != '':
+                    numbers.append(str(num).strip())
+
+            channel_name_regex = _build_exact_match_regex(names)
+            channel_number_regex = _build_exact_match_regex(numbers)
+        else:
+            # Validate provided regexes if any (save-time validation).
+            try:
+                if isinstance(channel_name_regex, str) and channel_name_regex.strip():
+                    re.compile(channel_name_regex.strip(), flags=re.IGNORECASE)
+            except re.error as exc:
+                return jsonify({'success': False, 'error': f'Invalid channel_name_regex: {exc}'}), 400
+            try:
+                if isinstance(channel_number_regex, str) and channel_number_regex.strip():
+                    re.compile(channel_number_regex.strip())
+            except re.error as exc:
+                return jsonify({'success': False, 'error': f'Invalid channel_number_regex: {exc}'}), 400
+
+        pattern = {
+            'id': str(uuid.uuid4()),
+            'name': name,
+            'groups': group_ids,
+            'channel_name_regex': channel_name_regex.strip() if isinstance(channel_name_regex, str) and channel_name_regex.strip() else None,
+            'channel_number_regex': channel_number_regex.strip() if isinstance(channel_number_regex, str) and channel_number_regex.strip() else None,
+            'created_at': datetime.now().isoformat()
+        }
+
+        with _patterns_lock:
+            patterns = _load_channel_selection_patterns()
+            # De-dupe by name (case-insensitive) by replacing the existing entry.
+            replaced = False
+            for i, p in enumerate(patterns):
+                if isinstance(p, dict) and str(p.get('name', '')).casefold() == name.casefold():
+                    patterns[i] = pattern
+                    replaced = True
+                    break
+            if not replaced:
+                patterns.insert(0, pattern)
+            _save_channel_selection_patterns(patterns[:200])
+
+        return jsonify({'success': True, 'pattern': pattern})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/channel-selection-patterns/<pattern_id>', methods=['DELETE'])
+def api_delete_channel_selection_pattern(pattern_id):
+    try:
+        with _patterns_lock:
+            patterns = _load_channel_selection_patterns()
+            before = len(patterns)
+            patterns = [p for p in patterns if not (isinstance(p, dict) and str(p.get('id')) == str(pattern_id))]
+            if len(patterns) == before:
+                return jsonify({'success': False, 'error': 'Pattern not found'}), 404
+            _save_channel_selection_patterns(patterns)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/channel-selection-patterns/resolve', methods=['POST'])
+def api_resolve_channel_selection_pattern():
+    """
+    Resolve a saved pattern to concrete channels.
+    Payload: { "pattern_id": "..." }
+    """
+    try:
+        data = request.get_json() or {}
+        pattern_id = data.get('pattern_id')
+        pattern = _get_pattern_by_id(pattern_id)
+        if not pattern:
+            return jsonify({'success': False, 'error': 'Pattern not found'}), 404
+
+        api = DispatcharrAPI()
+        api.login()
+        ids, details = _resolve_channels_for_pattern(api, pattern)
+        return jsonify({'success': True, 'pattern': pattern, 'count': len(ids), 'channel_ids': ids, 'channels': details})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
