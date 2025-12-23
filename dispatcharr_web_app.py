@@ -879,142 +879,153 @@ def run_job_worker(job, api, config):
         
         # Execute based on job type
         if job.job_type == 'pattern_refresh_full_cleanup':
-            task_name = "Refresh + Quality Check & Cleanup"
-            logging.info("TASK_START: Refresh + Quality Check & Cleanup")
+            # Emit two separate tasks so logs look like a user ran:
+            #  1) Refresh
+            #  2) Quality Check & Cleanup
+            refresh_task_name = "Refresh Channel Streams"
+            quality_task_name = "Quality Check & Cleanup"
 
-            # Phase 1: refresh streams for each selected channel
-            if job.cancel_requested:
-                job.status = 'cancelled'
-                return
-
-            # Fetch all streams once for reuse across per-channel refresh calls.
-            job.current_step = 'Preparing provider streams cache...'
-            all_streams = []
-            next_url = '/api/channels/streams/?limit=100'
-            while next_url:
-                result = api.get(next_url)
-                if not result or 'results' not in result:
-                    break
-                all_streams.extend(result['results'])
-                if result.get('next'):
-                    next_url = result['next'].split('/api/')[-1]
-                    next_url = '/api/' + next_url
-                else:
-                    next_url = None
-
-            channels_to_refresh = job.channels or []
-            job.total = len(channels_to_refresh)
-            job.progress = 0
-            refresh_stats = {
-                'channels_total': len(channels_to_refresh),
-                'channels_refreshed': 0,
-                'channels_failed': 0,
-                'total_streams_added': 0,
-                'total_streams_removed': 0
-            }
-
-            # Use global config default regex for refresh (if set); job may override.
-            filters = config.get('filters') or {}
-            stream_name_regex = None
-            if isinstance(filters, dict):
-                stream_name_regex = filters.get('refresh_stream_name_regex')
-
-            for idx, channel_id in enumerate(channels_to_refresh, start=1):
+            logging.info("TASK_START: %s", refresh_task_name)
+            try:
+                # Phase 1: refresh streams for each selected channel
                 if job.cancel_requested:
                     job.status = 'cancelled'
                     return
 
-                job.current_step = f'Refreshing channel streams ({idx}/{len(channels_to_refresh)})...'
-                result = refresh_channel_streams(
-                    api,
-                    config,
-                    int(channel_id),
-                    base_search_text=None,
-                    include_filter=None,
-                    exclude_filter=None,
-                    exclude_4k=bool(job.exclude_4k),
-                    allowed_stream_ids=None,
-                    preview=False,
-                    stream_name_regex=stream_name_regex,
-                    stream_name_regex_override=getattr(job, 'stream_name_regex_override', None),
-                    all_streams_override=all_streams
-                )
-                if isinstance(result, dict) and result.get('error'):
-                    refresh_stats['channels_failed'] += 1
-                else:
-                    refresh_stats['channels_refreshed'] += 1
-                    refresh_stats['total_streams_added'] += int(result.get('added', 0) or 0)
-                    refresh_stats['total_streams_removed'] += int(result.get('removed', 0) or 0)
+                # Fetch all streams once for reuse across per-channel refresh calls.
+                job.current_step = 'Refresh: preparing provider streams cache...'
+                all_streams = []
+                next_url = '/api/channels/streams/?limit=100'
+                while next_url:
+                    result = api.get(next_url)
+                    if not result or 'results' not in result:
+                        break
+                    all_streams.extend(result['results'])
+                    if result.get('next'):
+                        next_url = result['next'].split('/api/')[-1]
+                        next_url = '/api/' + next_url
+                    else:
+                        next_url = None
 
-                job.progress = idx
+                channels_to_refresh = job.channels or []
+                job.total = len(channels_to_refresh)
+                job.progress = 0
+                refresh_stats = {
+                    'channels_total': len(channels_to_refresh),
+                    'channels_refreshed': 0,
+                    'channels_failed': 0,
+                    'total_streams_added': 0,
+                    'total_streams_removed': 0
+                }
+
+                # Use global config default regex for refresh (if set); job may override.
+                filters = config.get('filters') or {}
+                stream_name_regex = None
+                if isinstance(filters, dict):
+                    stream_name_regex = filters.get('refresh_stream_name_regex')
+
+                for idx, channel_id in enumerate(channels_to_refresh, start=1):
+                    if job.cancel_requested:
+                        job.status = 'cancelled'
+                        return
+
+                    job.current_step = f'Refresh: refreshing channel streams ({idx}/{len(channels_to_refresh)})...'
+                    result = refresh_channel_streams(
+                        api,
+                        config,
+                        int(channel_id),
+                        base_search_text=None,
+                        include_filter=None,
+                        exclude_filter=None,
+                        exclude_4k=bool(job.exclude_4k),
+                        allowed_stream_ids=None,
+                        preview=False,
+                        stream_name_regex=stream_name_regex,
+                        stream_name_regex_override=getattr(job, 'stream_name_regex_override', None),
+                        all_streams_override=all_streams
+                    )
+                    if isinstance(result, dict) and result.get('error'):
+                        refresh_stats['channels_failed'] += 1
+                    else:
+                        refresh_stats['channels_refreshed'] += 1
+                        refresh_stats['total_streams_added'] += int(result.get('added', 0) or 0)
+                        refresh_stats['total_streams_removed'] += int(result.get('removed', 0) or 0)
+
+                    job.progress = idx
+            finally:
+                logging.info("TASK_END: %s", refresh_task_name)
 
             # Phase 2: quality check & cleanup (existing pipeline)
-            if job.cancel_requested:
-                job.status = 'cancelled'
-                return
-
-            job.current_step = 'Fetching streams...'
-            fetch_streams(api, config)
-
-            if job.cancel_requested:
-                job.status = 'cancelled'
-                return
-
-            job.current_step = 'Analyzing streams (forcing fresh analysis)...'
-            original_days = config.get('filters', 'stream_last_measured_days', 1)
-            config.set('filters', 'stream_last_measured_days', 0)
-            config.save()
-
-            def progress_wrapper(progress_data):
-                progress_callback(job, progress_data)
-                return not job.cancel_requested
-
-            analyzed_count = 0
+            logging.info("TASK_START: %s", quality_task_name)
             try:
-                analyzed_count = analyze_streams(
-                    config,
-                    progress_callback=progress_wrapper,
-                    force_full_analysis=True
-                ) or 0
-            finally:
-                config.set('filters', 'stream_last_measured_days', original_days)
+                if job.cancel_requested:
+                    job.status = 'cancelled'
+                    return
+
+                job.current_step = 'Quality: fetching streams...'
+                fetch_streams(api, config)
+
+                if job.cancel_requested:
+                    job.status = 'cancelled'
+                    return
+
+                job.current_step = 'Quality: analyzing streams (forcing fresh analysis)...'
+                original_days = config.get('filters', 'stream_last_measured_days', 1)
+                config.set('filters', 'stream_last_measured_days', 0)
                 config.save()
 
-            if not analyzed_count:
-                logging.warning("Pattern pipeline analysis executed zero streams; stopping before scoring/cleanup.")
-                job.status = 'failed'
-                job.current_step = 'Error: Analysis executed zero streams'
-                return
+                def progress_wrapper(progress_data):
+                    progress_callback(job, progress_data)
+                    return not job.cancel_requested
 
-            if job.cancel_requested:
-                job.status = 'cancelled'
-                return
+                analyzed_count = 0
+                try:
+                    analyzed_count = analyze_streams(
+                        config,
+                        progress_callback=progress_wrapper,
+                        force_full_analysis=True
+                    ) or 0
+                finally:
+                    config.set('filters', 'stream_last_measured_days', original_days)
+                    config.save()
 
-            job.current_step = 'Scoring streams...'
-            score_streams(api, config, update_stats=True)
+                if not analyzed_count:
+                    logging.warning("Pattern pipeline analysis executed zero streams; stopping before scoring/cleanup.")
+                    job.status = 'failed'
+                    job.current_step = 'Error: Analysis executed zero streams'
+                    return
 
-            if job.cancel_requested:
-                job.status = 'cancelled'
-                return
+                if job.cancel_requested:
+                    job.status = 'cancelled'
+                    return
 
-            job.current_step = 'Reordering streams...'
-            reorder_streams(api, config)
+                job.current_step = 'Quality: scoring streams...'
+                score_streams(api, config, update_stats=True)
 
-            if job.cancel_requested:
-                job.status = 'cancelled'
-                return
+                if job.cancel_requested:
+                    job.status = 'cancelled'
+                    return
 
-            job.current_step = f'Cleaning up (keeping top {job.streams_per_provider} per provider)...'
-            cleanup_stats = cleanup_streams_by_provider(api, job.groups, config, job.streams_per_provider, job.channels)
+                job.current_step = 'Quality: reordering streams...'
+                reorder_streams(api, config)
 
-            job.result_summary = job.result_summary or {}
-            job.result_summary['pattern_pipeline'] = {
-                'pattern_id': job.selection_pattern_id,
-                'pattern_name': job.selection_pattern_name,
-                'refresh_stats': refresh_stats
-            }
-            job.result_summary['cleanup_stats'] = cleanup_stats
-            job.result_summary['final_stream_count'] = cleanup_stats.get('total_streams_after', 0)
+                if job.cancel_requested:
+                    job.status = 'cancelled'
+                    return
+
+                job.current_step = f'Quality: cleaning up (keeping top {job.streams_per_provider} per provider)...'
+                cleanup_stats = cleanup_streams_by_provider(api, job.groups, config, job.streams_per_provider, job.channels)
+
+                job.result_summary = job.result_summary or {}
+                job.result_summary['pattern_pipeline'] = {
+                    'pattern_id': job.selection_pattern_id,
+                    'pattern_name': job.selection_pattern_name,
+                    'refresh_stats': refresh_stats
+                }
+                job.result_summary['cleanup_stats'] = cleanup_stats
+                job.result_summary['final_stream_count'] = cleanup_stats.get('total_streams_after', 0)
+            finally:
+                logging.info("TASK_END: %s", quality_task_name)
 
         elif job.job_type in ['full', 'full_cleanup']:
             if job.job_type == 'full_cleanup':
