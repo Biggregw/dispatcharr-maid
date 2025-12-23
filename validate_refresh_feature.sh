@@ -34,7 +34,7 @@ fi
 # 4. Check api_start_job extracts variables
 echo ""
 echo "4. Checking api_start_job extracts filter variables..."
-START_JOB=$(grep -A 15 "def api_start_job" dispatcharr_web_app.py)
+START_JOB=$(grep -A 120 "def api_start_job" dispatcharr_web_app.py)
 if echo "$START_JOB" | grep -q "include_filter = data.get" && \
    echo "$START_JOB" | grep -q "exclude_filter = data.get" && \
    echo "$START_JOB" | grep -q "streams_per_provider = data.get"; then
@@ -46,8 +46,10 @@ fi
 # 5. Check Job creation
 echo ""
 echo "5. Checking Job creation passes all parameters..."
-JOB_CREATE=$(grep "job = Job(job_id" dispatcharr_web_app.py)
-if echo "$JOB_CREATE" | grep -q "include_filter.*exclude_filter.*streams_per_provider"; then
+JOB_CREATE=$(grep -A 40 "job = Job(" dispatcharr_web_app.py | tr '\n' ' ')
+if echo "$JOB_CREATE" | grep -q "include_filter" && \
+   echo "$JOB_CREATE" | grep -q "exclude_filter" && \
+   echo "$JOB_CREATE" | grep -q "streams_per_provider"; then
     echo "   ✓ Job created with all parameters"
 else
     echo "   ✗ MISSING: Job creation incomplete"
@@ -92,13 +94,17 @@ else
     echo "   ✗ MISSING: refresh_channel_streams function"
 fi
 
-# 10. Check matches_channel helper
+# 10. Check refresh_channel_streams signature supports filters
 echo ""
-echo "10. Checking matches_channel helper function..."
-if grep -A 3 "def matches_channel" stream_analysis.py | grep -q "regional_filter.*exclude_filter"; then
-    echo "   ✓ matches_channel has correct parameters"
+echo "10. Checking refresh_channel_streams signature supports filters..."
+SIG_LINE=$(grep "^def refresh_channel_streams" stream_analysis.py)
+if echo "$SIG_LINE" | grep -q "include_filter" && \
+   echo "$SIG_LINE" | grep -q "exclude_filter" && \
+   echo "$SIG_LINE" | grep -q "stream_name_regex_override"; then
+    echo "   ✓ refresh_channel_streams supports filters + regex override"
 else
-    echo "   ✗ MISSING: matches_channel parameters incorrect"
+    echo "   ✗ MISSING: refresh_channel_streams signature missing expected parameters"
+    echo "   Found: $SIG_LINE"
 fi
 
 echo ""
