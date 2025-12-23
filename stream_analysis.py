@@ -1204,7 +1204,7 @@ def reorder_streams(api, config, input_csv=None):
     
     logging.info("Reordering complete!")
 
-def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None):
+def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None):
     """
     Find and add all matching streams from all providers for a specific channel
     
@@ -1370,23 +1370,26 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     current_stream_ids = {s['id'] for s in current_streams} if current_streams else set()
     logging.info(f"Channel currently has {len(current_stream_ids)} streams")
     
-    # Fetch ALL streams from ALL providers (paginated)
-    logging.info("Searching all providers...")
-    all_streams = []
-    next_url = '/api/channels/streams/?limit=100'
-    
-    while next_url:
-        result = api.get(next_url)
-        if not result or 'results' not in result:
-            break
-        
-        all_streams.extend(result['results'])
-        
-        if result.get('next'):
-            next_url = result['next'].split('/api/')[-1]
-            next_url = '/api/' + next_url
-        else:
-            next_url = None
+    # Fetch ALL streams from ALL providers (paginated) unless a shared cache is provided.
+    if isinstance(all_streams_override, list):
+        all_streams = all_streams_override
+    else:
+        logging.info("Searching all providers...")
+        all_streams = []
+        next_url = '/api/channels/streams/?limit=100'
+
+        while next_url:
+            result = api.get(next_url)
+            if not result or 'results' not in result:
+                break
+
+            all_streams.extend(result['results'])
+
+            if result.get('next'):
+                next_url = result['next'].split('/api/')[-1]
+                next_url = '/api/' + next_url
+            else:
+                next_url = None
     
     logging.info(f"Checking {len(all_streams)} streams from all providers...")
     
