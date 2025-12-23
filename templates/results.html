@@ -57,7 +57,9 @@
         
         <div class="nav-buttons">
             <a href="/" class="btn">← Back to Control Panel</a>
-            <a href="/api/results/csv" class="btn">📥 Export CSV</a>
+            <a href="/api/results/csv" class="btn" id="export-csv-link">📥 Export CSV</a>
+            <span style="display:inline-block;color:white;font-weight:600;margin-left:10px;">Run:</span>
+            <select id="job-picker" class="input" style="display:inline-block; width:auto; min-width: 320px; max-width: 520px; margin-left:8px;"></select>
         </div>
         
         <div class="card">
@@ -81,6 +83,11 @@
                 </div>
             </div>
             <div id="capacity-warning" class="capacity-warning" style="display:none;"></div>
+        </div>
+
+        <div class="card" id="run-meta-card" style="display:none;">
+            <h2>🧾 Run Details</h2>
+            <div id="run-meta-body" class="muted small"></div>
         </div>
         
         <div class="card" id="detailed-breakdown-card">
@@ -216,6 +223,122 @@
             return `<span title="Provider ${escapeHtml(pid)}">${escapeHtml(String(label))}</span>`;
         }
 
+        function setExportLink() {
+            const link = document.getElementById('export-csv-link');
+            if (!link) return;
+            link.href = jobId ? `/api/results/csv?job_id=${encodeURIComponent(jobId)}` : '/api/results/csv';
+        }
+
+        function fmtIso(iso) {
+            if (!iso) return '';
+            try {
+                const d = new Date(iso);
+                if (Number.isNaN(d.getTime())) return String(iso);
+                return d.toLocaleString();
+            } catch {
+                return String(iso);
+            }
+        }
+
+        function renderJobMeta(meta) {
+            const card = document.getElementById('run-meta-card');
+            const body = document.getElementById('run-meta-body');
+            if (!card || !body) return;
+            if (!meta || typeof meta !== 'object') {
+                card.style.display = 'none';
+                body.innerHTML = '';
+                return;
+            }
+
+            const selection = meta.selection || {};
+            const groupIds = Array.isArray(selection.channel_group_ids) ? selection.channel_group_ids : [];
+            const channelIds = Array.isArray(selection.specific_channel_ids) ? selection.specific_channel_ids : [];
+            const nameRegex = selection.channel_name_regex || '';
+            const numRegex = selection.channel_number_regex || '';
+            const refreshRegex = selection.refresh_stream_name_regex || '';
+
+            const selectionLines = [];
+            if (groupIds.length) selectionLines.push(`<div><strong>Groups (config)</strong>: ${escapeHtml(groupIds.join(', '))}</div>`);
+            if (channelIds.length) selectionLines.push(`<div><strong>Specific channels (config)</strong>: ${escapeHtml(channelIds.slice(0, 50).join(', '))}${channelIds.length > 50 ? '…' : ''}</div>`);
+            if (nameRegex) selectionLines.push(`<div><strong>Channel name regex</strong>: <code>${escapeHtml(nameRegex)}</code></div>`);
+            if (numRegex) selectionLines.push(`<div><strong>Channel number regex</strong>: <code>${escapeHtml(numRegex)}</code></div>`);
+            if (refreshRegex) selectionLines.push(`<div><strong>Refresh stream regex</strong>: <code>${escapeHtml(refreshRegex)}</code></div>`);
+
+            const chosen = [];
+            if (meta.group_names) chosen.push(`<div><strong>Selected</strong>: ${escapeHtml(String(meta.group_names))}${meta.channel_names ? ` — ${escapeHtml(String(meta.channel_names))}` : ''}</div>`);
+            if (meta.regex_preset_name) chosen.push(`<div><strong>Preset</strong>: ${escapeHtml(String(meta.regex_preset_name))}</div>`);
+            if (meta.selection_pattern_name) chosen.push(`<div><strong>Pattern</strong>: ${escapeHtml(String(meta.selection_pattern_name))}</div>`);
+
+            const runLines = [
+                `<div><strong>Job</strong>: ${escapeHtml(String(meta.job_id || 'latest'))}</div>`,
+                meta.job_type ? `<div><strong>Type</strong>: ${escapeHtml(String(meta.job_type))}</div>` : '',
+                meta.status ? `<div><strong>Status</strong>: ${escapeHtml(String(meta.status))}</div>` : '',
+                meta.started_at ? `<div><strong>Started</strong>: ${escapeHtml(fmtIso(meta.started_at))}</div>` : '',
+                meta.completed_at ? `<div><strong>Completed</strong>: ${escapeHtml(fmtIso(meta.completed_at))}</div>` : '',
+                meta.config_hash ? `<div><strong>Config hash</strong>: <code>${escapeHtml(String(meta.config_hash))}</code></div>` : '',
+            ].filter(Boolean);
+
+            const refreshLines = [];
+            if (meta.base_search_text) refreshLines.push(`<div><strong>Base search</strong>: ${escapeHtml(String(meta.base_search_text))}</div>`);
+            if (meta.include_filter) refreshLines.push(`<div><strong>Include filter</strong>: ${escapeHtml(String(meta.include_filter))}</div>`);
+            if (meta.exclude_filter) refreshLines.push(`<div><strong>Exclude filter</strong>: ${escapeHtml(String(meta.exclude_filter))}</div>`);
+            if (meta.exclude_plus_one === true) refreshLines.push(`<div><strong>Exclude +1</strong>: true</div>`);
+            if (meta.exclude_4k === true) refreshLines.push(`<div><strong>Exclude 4K</strong>: true</div>`);
+            if (typeof meta.streams_per_provider === 'number') refreshLines.push(`<div><strong>Streams per provider</strong>: ${escapeHtml(String(meta.streams_per_provider))}</div>`);
+            if (meta.stream_name_regex) refreshLines.push(`<div><strong>Stream regex (filter)</strong>: <code>${escapeHtml(String(meta.stream_name_regex))}</code></div>`);
+            if (meta.stream_name_regex_override) refreshLines.push(`<div><strong>Stream regex (override)</strong>: <code>${escapeHtml(String(meta.stream_name_regex_override))}</code></div>`);
+
+            const sections = []
+                .concat(chosen.length ? [`<div style="margin-bottom:10px;">${chosen.join('')}</div>`] : [])
+                .concat(runLines.length ? [`<div style="margin-bottom:10px;">${runLines.join('')}</div>`] : [])
+                .concat(selectionLines.length ? [`<div style="margin-bottom:10px;">${selectionLines.join('')}</div>`] : [])
+                .concat(refreshLines.length ? [`<div>${refreshLines.join('')}</div>`] : []);
+
+            body.innerHTML = sections.length ? sections.join('') : '<div class="muted">No run metadata available.</div>';
+            card.style.display = '';
+        }
+
+        async function loadJobPicker() {
+            const picker = document.getElementById('job-picker');
+            if (!picker) return;
+
+            // Default option (no job_id => latest)
+            picker.innerHTML = `<option value="">Latest</option>`;
+
+            try {
+                const resp = await fetch('/api/job-history');
+                const data = await resp.json();
+                const history = (data && data.success && Array.isArray(data.history)) ? data.history : [];
+
+                // Only show completed jobs first (others can appear but won't have stable results).
+                const completed = history.filter(j => j && typeof j === 'object' && j.status === 'completed');
+                completed.forEach((j) => {
+                    const id = j.job_id;
+                    if (!id) return;
+                    const started = fmtIso(j.started_at);
+                    const typ = j.job_type || 'job';
+                    const sel = (j.group_names || '').toString();
+                    const label = `${started} — ${typ}${sel ? ` — ${sel}` : ''}`.trim();
+                    const opt = document.createElement('option');
+                    opt.value = id;
+                    opt.textContent = label;
+                    picker.appendChild(opt);
+                });
+            } catch {
+                // ignore picker load failures; page still works
+            }
+
+            // Select current job.
+            picker.value = jobId || '';
+            picker.addEventListener('change', (e) => {
+                const v = e.target && e.target.value ? String(e.target.value) : '';
+                window.location.href = v ? `/results?job_id=${encodeURIComponent(v)}` : '/results';
+            });
+        }
+
+        setExportLink();
+        loadJobPicker();
+
         function refreshStreamProviderLabels() {
             document.querySelectorAll('#stream-tbody .stream-row').forEach((row) => {
                 const pid = row.getAttribute('data-provider-id') || '';
@@ -235,6 +358,7 @@
                 const r = data.results;
                 providerNames = data.provider_names || {};
                 providerMetadata = data.provider_metadata || {};
+                renderJobMeta(data.job_meta || null);
                 if (streamsLoaded) refreshStreamProviderLabels();
                 const jobType = r.job_type || data.job_type;
                 const analyzedStreams = typeof data.analyzed_streams === 'number'

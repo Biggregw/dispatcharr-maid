@@ -32,3 +32,10 @@ dispatcharr:
   container_name: "dispatcharr"  # Optional: Docker container name for manage.py exec
   # docker_container: "dispatcharr"  # Required for provider metadata discovery when Dispatcharr runs in Docker
   refresh_provider_data: false  # Set true to overwrite provider_map/provider_metadata
+
+# Optional web settings (used by the web UI/server)
+web:
+  # Optional retention policy for job workspaces + job history.
+  # Set to 0/blank to disable. If set (e.g. 30), jobs older than N days are pruned.
+  # You can also set env DISPATCHARR_MAID_RESULTS_RETENTION_DAYS which takes precedence.
+  results_retention_days: 0
