@@ -182,6 +182,9 @@
         const jobId = params.get('job_id');
         const resultsUrl = jobId ? `/api/results/job/${encodeURIComponent(jobId)}` : '/api/results/detailed';
         let streamsLoaded = false;
+        // Populated from the detailed results payload; reused by the Streams tab.
+        let providerNames = {};
+        let providerMetadata = {};
 
         function escapeHtml(str) {
             const s = String(str ?? '');
@@ -204,6 +207,23 @@
             `;
         }
 
+        function providerLabelHtml(providerId) {
+            if ((providerId ?? '') === '') return '';
+            const pid = String(providerId);
+            const label = Object.prototype.hasOwnProperty.call(providerNames, pid)
+                ? providerNames[pid]
+                : `Provider ${pid}`;
+            return `<span title="Provider ${escapeHtml(pid)}">${escapeHtml(String(label))}</span>`;
+        }
+
+        function refreshStreamProviderLabels() {
+            document.querySelectorAll('#stream-tbody .stream-row').forEach((row) => {
+                const pid = row.getAttribute('data-provider-id') || '';
+                const cell = row.querySelector('td:nth-child(6)');
+                if (cell) cell.innerHTML = providerLabelHtml(pid);
+            });
+        }
+
         fetch(resultsUrl)
             .then(r => r.json())
             .then(data => {
@@ -213,8 +233,9 @@
                 }
                 
                 const r = data.results;
-                const providerNames = data.provider_names || {};
-                const providerMetadata = data.provider_metadata || {};
+                providerNames = data.provider_names || {};
+                providerMetadata = data.provider_metadata || {};
+                if (streamsLoaded) refreshStreamProviderLabels();
                 const jobType = r.job_type || data.job_type;
                 const analyzedStreams = typeof data.analyzed_streams === 'number'
                     ? data.analyzed_streams
@@ -434,10 +455,10 @@
                     const status = escapeHtml(s.status || '');
                     const quality = (typeof s.quality_score === 'number') ? s.quality_score.toFixed(1) : (s.quality_score ?? '');
                     const resolution = escapeHtml(s.resolution || '');
-                    const provider = (s.provider_id ?? '') === '' ? '' : escapeHtml(String(s.provider_id));
+                    const provider = providerLabelHtml(s.provider_id);
                     const checkboxId = `use-stream-${escapeHtml(String(s.stream_id ?? Math.random()))}`;
                     return `
-                        <tr class="stream-row" data-stream-name="${escapeHtml(String(s.stream_name || '')).toLowerCase()}">
+                        <tr class="stream-row" data-stream-name="${escapeHtml(String(s.stream_name || '')).toLowerCase()}" data-provider-id="${escapeHtml(String(s.provider_id ?? ''))}">
                             <td><input type="checkbox" id="${checkboxId}" class="stream-use-cb" checked onchange="updateStreamsCount()" /></td>
                             <td><label for="${checkboxId}" style="cursor:pointer;"><strong>${name}</strong></label></td>
                             <td>${status}</td>
