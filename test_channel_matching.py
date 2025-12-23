@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Test channel matching logic"""
 import re
+import pytest
 
 def normalize(text):
     """Remove spaces and lowercase"""
@@ -34,9 +35,24 @@ def matches_channel(selected_channel, stream_name, regional_filter=None):
     # Normalize stream name
     stream_normalized = normalize(stream_name)
     
-    # Check containment
+    # Check containment (with a fallback when no regional filter is applied).
+    #
+    # Rationale: users may select a region-specific channel name (e.g. "BBC One Yorkshire")
+    # but still want to match generic or other-region streams when *no* regional filter is set.
     if selected_normalized not in stream_normalized:
-        return False, f"'{selected_normalized}' not in '{stream_normalized}'"
+        if not regional_filter:
+            # Progressively drop trailing words (usually region qualifiers) until we match.
+            words = selected_base.split()
+            while len(words) > 1:
+                words = words[:-1]
+                candidate = normalize(" ".join(words))
+                if candidate and candidate in stream_normalized:
+                    selected_normalized = candidate
+                    break
+            else:
+                return False, f"'{selected_normalized}' not in '{stream_normalized}'"
+        else:
+            return False, f"'{selected_normalized}' not in '{stream_normalized}'"
     
     # Check for +1/+2 mismatch
     selected_has_timeshift = re.search(r'\+\d', selected_channel)
@@ -65,12 +81,7 @@ def matches_channel(selected_channel, stream_name, regional_filter=None):
     
     return True, "Match!"
 
-# Test cases
-print("="*70)
-print("CHANNEL MATCHING TEST")
-print("="*70)
-
-test_cases = [
+TEST_CASES = [
     # (selected_channel, regional_filter, stream_name, expected_match)
     ("BBC One Yorkshire HD", "york*", "BBC One Yorkshire SD", True),
     ("BBC One Yorkshire HD", "york*", "UK: BBC One Yorkshire 4K", True),
@@ -89,18 +100,34 @@ test_cases = [
     ("Sky Sports", "", "SkySportsHD", True),
 ]
 
-for selected, regional, stream, expected in test_cases:
-    result, reason = matches_channel(selected, stream, regional or None)
-    status = "✓" if result == expected else "✗ FAIL"
-    
-    print(f"\n{status} Selected: '{selected}'")
-    if regional:
-        print(f"   Regional: '{regional}'")
-    print(f"   Stream: '{stream}'")
-    print(f"   Result: {result} ({reason})")
-    if result != expected:
-        print(f"   EXPECTED: {expected}")
 
-print("\n" + "="*70)
-print("TEST COMPLETE")
-print("="*70)
+@pytest.mark.parametrize(
+    ("selected_channel", "regional_filter", "stream_name", "expected_match"),
+    TEST_CASES,
+)
+def test_matches_channel(selected_channel, regional_filter, stream_name, expected_match):
+    result, _reason = matches_channel(selected_channel, stream_name, regional_filter or None)
+    assert result == expected_match
+
+
+if __name__ == "__main__":
+    # Keep the old interactive printout behavior for manual runs.
+    print("=" * 70)
+    print("CHANNEL MATCHING TEST")
+    print("=" * 70)
+
+    for selected, regional, stream, expected in TEST_CASES:
+        result, reason = matches_channel(selected, stream, regional or None)
+        status = "✓" if result == expected else "✗ FAIL"
+
+        print(f"\n{status} Selected: '{selected}'")
+        if regional:
+            print(f"   Regional: '{regional}'")
+        print(f"   Stream: '{stream}'")
+        print(f"   Result: {result} ({reason})")
+        if result != expected:
+            print(f"   EXPECTED: {expected}")
+
+    print("\n" + "=" * 70)
+    print("TEST COMPLETE")
+    print("=" * 70)
