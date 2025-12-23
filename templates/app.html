@@ -880,6 +880,19 @@
 
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
+                        Saved Regex Presets
+                    </label>
+                    <select id="saved-regex-select"
+                            style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
+                        <option value="">— Select saved regex —</option>
+                    </select>
+                    <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
+                        Selecting a preset fills “Regex Override”. Saving presets happens from the preview dialog.
+                    </span>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
                         Base Search Text
                     </label>
                     <input type="text" id="baseSearchText" placeholder="Exact search text used to find matching streams"
@@ -1031,6 +1044,7 @@
             </div>
             <div class="modal-actions">
                 <button class="btn btn-back" onclick="closeRefreshPreview()">Cancel</button>
+                <button type="button" class="btn btn-back" id="refresh-save-regex-button" onclick="saveRegexFromPreview(event)">Save Regex</button>
                 <button type="button" class="btn btn-next" id="refresh-submit-button" onclick="submitRefreshJob(event)">Add Selected Streams</button>
             </div>
         </div>
@@ -1084,10 +1098,50 @@
             loadGroups();
             loadJobHistory();
             loadSavedPatterns();
+            loadSavedRegexPresets();
             
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
         });
+
+        // Saved stream-name regex presets
+        let savedRegexPresets = [];
+
+        async function loadSavedRegexPresets() {
+            try {
+                const resp = await fetch('/api/regex/presets');
+                const data = await resp.json();
+                if (!data.success) return;
+                savedRegexPresets = Array.isArray(data.presets) ? data.presets : [];
+                renderSavedRegexPresets();
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        function renderSavedRegexPresets() {
+            const select = document.getElementById('saved-regex-select');
+            if (!select) return;
+            const current = select.value;
+            select.innerHTML = '<option value="">— Select saved regex —</option>' + savedRegexPresets.map(p => {
+                const name = p.name || 'Unnamed';
+                const created = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
+                return `<option value="${p.id}">${name}${created ? ` • ${created}` : ''}</option>`;
+            }).join('');
+            select.value = current || '';
+            select.onchange = () => onSavedRegexSelected();
+        }
+
+        function onSavedRegexSelected() {
+            const select = document.getElementById('saved-regex-select');
+            const presetId = select?.value || '';
+            if (!presetId) return;
+            const preset = savedRegexPresets.find(p => p.id === presetId);
+            const input = document.getElementById('streamNameRegexOverride');
+            if (input && preset?.regex) {
+                input.value = preset.regex;
+            }
+        }
 
         // Saved pattern selection
         let savedPatterns = [];
@@ -1563,6 +1617,90 @@
                     </div>
                 </label>
             `).join('');
+        }
+
+        async function saveRegexFromPreview(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+
+            const checkboxes = Array.from(document.querySelectorAll('.refresh-stream-checkbox'));
+            if (!checkboxes.length || !refreshPreviewStreams.length) {
+                alert('No preview streams available to generate a regex from.');
+                return;
+            }
+
+            const name = (prompt('Name this regex preset (for Regex Override):') || '').trim();
+            if (!name) return;
+
+            const byId = new Map((refreshPreviewStreams || []).map(s => [String(s.id), s]));
+            const include = [];
+            const exclude = [];
+
+            for (const cb of checkboxes) {
+                const stream = byId.get(String(cb.value));
+                const streamName = stream?.name;
+                if (!streamName) continue;
+                if (cb.checked) include.push(streamName);
+                else exclude.push(streamName);
+            }
+
+            if (!include.length) {
+                alert('Please leave at least one stream checked before saving a regex.');
+                return;
+            }
+
+            const saveBtn = document.getElementById('refresh-save-regex-button');
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = 'Saving...';
+            }
+
+            try {
+                const genResp = await fetch('/api/regex/generate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ include, exclude })
+                });
+                const genData = await genResp.json();
+                if (!genData.success || !genData.regex) {
+                    throw new Error(genData.error || 'Failed to generate regex.');
+                }
+
+                const regex = String(genData.regex).trim();
+                const saveResp = await fetch('/api/regex/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ name, regex })
+                });
+                const saveData = await saveResp.json();
+                if (!saveData.success) {
+                    throw new Error(saveData.error || 'Failed to save regex preset.');
+                }
+
+                // Fill the override input immediately.
+                const input = document.getElementById('streamNameRegexOverride');
+                if (input) input.value = regex;
+
+                // Refresh dropdown.
+                await loadSavedRegexPresets();
+                // Best-effort select the newly saved preset.
+                const presetId = saveData.preset?.id;
+                const select = document.getElementById('saved-regex-select');
+                if (select && presetId) {
+                    select.value = presetId;
+                }
+
+                alert('Saved regex preset.');
+            } catch (e) {
+                alert(`Unable to save regex: ${e.message}`);
+            } finally {
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = 'Save Regex';
+                }
+            }
         }
 
         async function showRefreshPreview() {

@@ -87,11 +87,38 @@ jobs = {}  # {job_id: Job}
 job_lock = threading.Lock()
 
 _patterns_lock = threading.Lock()
+_regex_presets_lock = threading.Lock()
 
 
 def _channel_selection_patterns_path():
     # Keep patterns with other persisted UI state.
     return Path('logs/channel_selection_patterns.json')
+
+
+def _stream_name_regex_presets_path():
+    # Persisted UI state for stream-name regex overrides.
+    return Path('logs/stream_name_regex_presets.json')
+
+
+def _load_stream_name_regex_presets():
+    path = _stream_name_regex_presets_path()
+    if not path.exists():
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+        if isinstance(data, list):
+            return data
+        return []
+    except Exception:
+        return []
+
+
+def _save_stream_name_regex_presets(presets):
+    path = _stream_name_regex_presets_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as handle:
+        json.dump(presets, handle, indent=2)
 
 
 def _load_channel_selection_patterns():
@@ -2312,27 +2339,60 @@ def api_generate_regex():
 @app.route('/api/regex/save', methods=['POST'])
 def api_save_regex():
     """
-    Validate the generated stream-name regex.
-
-    Note: This endpoint intentionally does NOT persist anything to config.yaml.
-    The UI only displays the suggested regex for now; we can add persistence later.
+    Validate and save a stream-name regex preset (for Regex Override).
 
     Payload:
-      { "regex": "..." }
+      { "name": "...", "regex": "..." }
     """
     try:
         data = request.get_json() or {}
+        name = data.get('name')
         regex = data.get('regex')
         if not isinstance(regex, str) or not regex.strip():
             return jsonify({'success': False, 'error': '"regex" must be a non-empty string'}), 400
+        if not isinstance(name, str) or not name.strip():
+            return jsonify({'success': False, 'error': '"name" must be a non-empty string'}), 400
         try:
             re.compile(regex)
         except re.error as exc:
             return jsonify({'success': False, 'error': f'Invalid regex: {exc}'}), 400
-        return jsonify({'success': True, 'saved': False, 'regex': regex.strip()})
+
+        preset = {
+            'id': str(uuid.uuid4()),
+            'name': name.strip(),
+            'regex': regex.strip(),
+            'created_at': datetime.now().isoformat()
+        }
+
+        with _regex_presets_lock:
+            presets = _load_stream_name_regex_presets()
+            # De-dupe by name (case-insensitive) by replacing the existing entry.
+            replaced = False
+            for i, p in enumerate(presets):
+                if isinstance(p, dict) and str(p.get('name', '')).casefold() == preset['name'].casefold():
+                    presets[i] = preset
+                    replaced = True
+                    break
+            if not replaced:
+                presets.insert(0, preset)
+            _save_stream_name_regex_presets(presets[:200])
+
+        return jsonify({'success': True, 'saved': True, 'preset': preset})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@app.route('/api/regex/presets', methods=['GET'])
+def api_list_regex_presets():
+    """List saved stream-name regex presets (for Regex Override dropdown)."""
+    try:
+        with _regex_presets_lock:
+            presets = _load_stream_name_regex_presets()
+        presets = [p for p in presets if isinstance(p, dict)]
+        presets.sort(key=lambda p: (p.get('created_at') or ''), reverse=True)
+        return jsonify({'success': True, 'presets': presets})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/config')
 def api_get_config():
