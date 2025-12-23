@@ -466,7 +466,7 @@ def _get_job_results(job_id):
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None):
+    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex_override=None):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -480,6 +480,7 @@ class Job:
         self.exclude_4k = exclude_4k  # Exclude 4K/UHD streams during refresh
         self.exclude_plus_one = exclude_plus_one
         self.selected_stream_ids = selected_stream_ids
+        self.stream_name_regex_override = stream_name_regex_override
         self.status = 'queued'  # queued, running, completed, failed, cancelled
         self.progress = 0
         self.total = 0
@@ -503,6 +504,7 @@ class Job:
             'group_names': self.group_names,
             'channel_names': self.channel_names,
             'base_search_text': self.base_search_text,
+            'stream_name_regex_override': self.stream_name_regex_override,
             'selected_stream_ids': self.selected_stream_ids,
             'exclude_plus_one': self.exclude_plus_one,
             'status': self.status,
@@ -712,7 +714,8 @@ def run_job_worker(job, api, config):
                 effective_exclude_filter,
                 job.exclude_4k,
                 job.selected_stream_ids,
-                stream_name_regex=stream_name_regex
+                stream_name_regex=stream_name_regex,
+                stream_name_regex_override=job.stream_name_regex_override
             )
             
             if 'error' in refresh_result:
@@ -734,7 +737,8 @@ def run_job_worker(job, api, config):
                 'total_matching': refresh_result.get('total_matching', 0),
                 'include_filter': job.include_filter,
                 'exclude_filter': effective_exclude_filter,
-                'base_search_text': refresh_result.get('base_search_text')
+                'base_search_text': refresh_result.get('base_search_text'),
+                'stream_name_regex_override': job.stream_name_regex_override
             }
             
             # Small delay to ensure frontend polling catches the final status
@@ -1435,6 +1439,7 @@ def api_refresh_preview():
         exclude_plus_one = data.get('exclude_plus_one', False)
         exclude_4k = data.get('exclude_4k', False)
         stream_name_regex = data.get('stream_name_regex')
+        stream_name_regex_override = data.get('stream_name_regex_override')
 
         if not channel_id:
             return jsonify({'success': False, 'error': 'Channel ID is required'}), 400
@@ -1458,7 +1463,8 @@ def api_refresh_preview():
             effective_exclude_filter,
             exclude_4k,
             preview=True,
-            stream_name_regex=stream_name_regex
+            stream_name_regex=stream_name_regex,
+            stream_name_regex_override=stream_name_regex_override
         )
 
         if 'error' in preview:
@@ -1489,6 +1495,7 @@ def api_start_job():
         exclude_4k = data.get('exclude_4k', False)
         exclude_plus_one = data.get('exclude_plus_one', False)
         selected_stream_ids = data.get('selected_stream_ids')
+        stream_name_regex_override = data.get('stream_name_regex_override')
         
         if not job_type or not groups:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
@@ -1496,7 +1503,7 @@ def api_start_job():
         # Create job
         job_id = str(uuid.uuid4())
         workspace, config_path = create_job_workspace(job_id)
-        job = Job(job_id, job_type, groups, channels, base_search_text, include_filter, exclude_filter, streams_per_provider, exclude_4k, exclude_plus_one, group_names, channel_names, str(workspace), selected_stream_ids)
+        job = Job(job_id, job_type, groups, channels, base_search_text, include_filter, exclude_filter, streams_per_provider, exclude_4k, exclude_plus_one, group_names, channel_names, str(workspace), selected_stream_ids, stream_name_regex_override)
 
         # Initialize API and config
         api = DispatcharrAPI()

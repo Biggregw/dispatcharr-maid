@@ -841,6 +841,17 @@
 
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
+                        Regex Override (optional)
+                    </label>
+                    <input type="text" id="streamNameRegexOverride" placeholder="e.g., ^BBC One(?!.*4K).*$"
+                           style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
+                    <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
+                        If set, this regex becomes the ONLY match rule (Base Search Text / Include / Exclude / +1 are ignored). The 4K/UHD tick box still applies.
+                    </span>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
                         Base Search Text
                     </label>
                     <input type="text" id="baseSearchText" placeholder="Exact search text used to find matching streams"
@@ -1340,13 +1351,15 @@
             document.getElementById('refresh-preview-description').textContent = '';
 
             try {
+                const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
                 const payload = {
                     channel_id: selectedChannels[0],
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
                     exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
-                    exclude_4k: document.getElementById('exclude4K')?.checked || false
+                    exclude_4k: document.getElementById('exclude4K')?.checked || false,
+                    stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
                 };
 
                 const response = await fetch('/api/refresh-preview', {
@@ -1513,6 +1526,7 @@
                 // Immediate UI feedback (so it doesn't look like nothing is happening)
                 renderOptimisticStartingJob(jobType, groupNames, channelNames);
                 
+                const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
                 const payload = {
                     job_type: jobType,
                     groups: selectedGroups,
@@ -1525,7 +1539,8 @@
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
                     exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
                     exclude_4k: document.getElementById('exclude4K')?.checked || false,
-                    selected_stream_ids: selectedStreamIds
+                    selected_stream_ids: selectedStreamIds,
+                    stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
                 };
 
                 // Button loading state (best-effort)
@@ -1838,6 +1853,11 @@
                     if (job.result_summary.base_search_text) {
                         html += `<div style="margin-top: 15px; padding: 10px; background: #f0f4ff; border-radius: 5px;">
                             <strong>Base Search Text:</strong> ${job.result_summary.base_search_text}
+                        </div>`;
+                    }
+                    if (job.result_summary.stream_name_regex_override) {
+                        html += `<div style="margin-top: 15px; padding: 10px; background: #fefce8; border-radius: 5px;">
+                            <strong>Regex Override:</strong> <code>${job.result_summary.stream_name_regex_override}</code>
                         </div>`;
                     }
                     if (job.result_summary.include_filter || job.result_summary.exclude_filter) {

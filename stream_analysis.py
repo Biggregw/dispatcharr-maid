@@ -1204,7 +1204,7 @@ def reorder_streams(api, config, input_csv=None):
     
     logging.info("Reordering complete!")
 
-def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False, stream_name_regex=None):
+def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None):
     """
     Find and add all matching streams from all providers for a specific channel
     
@@ -1285,6 +1285,17 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             logging.error(f"Invalid stream_name_regex ignored: {exc}")
             _stream_name_re = None
 
+    # Optional regex OVERRIDE for stream name matching.
+    # When set, this replaces the base match + include/exclude (+ timeshift) rules.
+    _stream_name_override_re = None
+    if isinstance(stream_name_regex_override, str) and stream_name_regex_override.strip():
+        try:
+            _stream_name_override_re = re.compile(stream_name_regex_override.strip(), flags=re.IGNORECASE)
+            logging.info("Using stream-name REGEX OVERRIDE (base/include/exclude/+1 rules ignored).")
+        except re.error as exc:
+            logging.error(f"Invalid stream_name_regex_override: {exc}")
+            return {'error': f'Invalid regex override: {exc}'}
+
     # Precompute constants used for all stream comparisons (initialized later,
     # once `search_name` is known).
     _selected_normalized = None
@@ -1294,6 +1305,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     
     def matches_stream(stream_name):
         """Check if stream matches the selected channel (fast path; precomputed filters)."""
+        if _stream_name_override_re is not None:
+            return bool(_stream_name_override_re.search(stream_name))
+
         stream_normalized = normalize(stream_name)
         
         if _selected_normalized not in stream_normalized:
@@ -1337,16 +1351,19 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     if base_search_text is not None:
         logging.info(f"Using custom base search text: {search_name}")
     
-    if include_filter:
-        logging.info(f"Include filter: {include_filter}")
-    if exclude_filter:
-        logging.info(f"Exclude filter: {exclude_filter}")
+    if _stream_name_override_re is None:
+        if include_filter:
+            logging.info(f"Include filter: {include_filter}")
+        if exclude_filter:
+            logging.info(f"Exclude filter: {exclude_filter}")
 
     # Precompute match constants once (used inside the stream loop)
+    # Precompute match constants once (used inside the stream loop).
+    # In override mode these values are unused, but we still set safe defaults.
     _selected_normalized = normalize(strip_quality(search_name))
     _selected_has_timeshift = bool(_TIMESHIFT_RE.search(search_name))
-    _include_regexes = compile_wildcard_filter(include_filter)
-    _exclude_regexes = compile_wildcard_filter(exclude_filter)
+    _include_regexes = [] if _stream_name_override_re is not None else compile_wildcard_filter(include_filter)
+    _exclude_regexes = [] if _stream_name_override_re is not None else compile_wildcard_filter(exclude_filter)
     
     # Get current streams for this channel
     current_streams = api.fetch_channel_streams(channel_id)
