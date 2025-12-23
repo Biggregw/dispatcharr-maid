@@ -137,6 +137,17 @@ def _save_stream_name_regex_presets(presets):
     _atomic_json_write(path, presets)
 
 
+def _get_regex_preset_by_id(preset_id):
+    if not preset_id:
+        return None
+    with _regex_presets_lock:
+        presets = _load_stream_name_regex_presets()
+    for p in presets:
+        if isinstance(p, dict) and str(p.get('id')) == str(preset_id):
+            return p
+    return None
+
+
 def _load_channel_selection_patterns():
     path = _channel_selection_patterns_path()
     if not path.exists():
@@ -238,6 +249,84 @@ def _resolve_channels_for_pattern(api, pattern):
     details.sort(key=_sort_key)
     channel_ids = [d['id'] for d in details]
     return channel_ids, details
+
+
+def _resolve_channels_for_preset(api, preset):
+    """
+    Resolve a saved "pipeline preset" (stored alongside regex presets) to concrete channel IDs + details.
+
+    Preset schema (extended):
+      {
+        id, name, regex,
+        groups: [int],
+        channels: [int] | null
+      }
+    If channels is provided, return those exact channels (best-effort order by channel_number, name).
+    If channels is null/empty, return all channels in the selected groups.
+    """
+    if not isinstance(preset, dict):
+        raise ValueError("Preset must be an object.")
+
+    groups = preset.get('groups') or []
+    if not isinstance(groups, list):
+        groups = []
+    group_ids = []
+    for g in groups:
+        try:
+            group_ids.append(int(g))
+        except Exception:
+            continue
+    if not group_ids:
+        raise ValueError("Preset must include at least one group.")
+    allowed_groups = set(group_ids)
+
+    channels = preset.get('channels')
+    channel_ids_filter = None
+    if channels is not None:
+        if not isinstance(channels, list):
+            raise ValueError("Preset 'channels' must be a list or null.")
+        tmp = []
+        for c in channels:
+            try:
+                tmp.append(int(c))
+            except Exception:
+                continue
+        channel_ids_filter = set(tmp) if tmp else set()
+
+    all_channels = api.fetch_channels()
+    candidates = []
+    for ch in all_channels:
+        if not isinstance(ch, dict) or ch.get('id') is None:
+            continue
+        cid = int(ch.get('id'))
+        if ch.get('channel_group_id') not in allowed_groups:
+            continue
+        if channel_ids_filter is not None and cid not in channel_ids_filter:
+            continue
+        candidates.append(ch)
+
+    details = []
+    for ch in candidates:
+        cid = int(ch.get('id'))
+        details.append({
+            'id': cid,
+            'name': ch.get('name', 'Unknown'),
+            'channel_number': ch.get('channel_number'),
+            'channel_group_id': ch.get('channel_group_id')
+        })
+
+    def _sort_key(item):
+        num_val = item.get('channel_number')
+        try:
+            num_i = int(num_val)
+        except (TypeError, ValueError):
+            num_i = 10**9
+        name_val = (item.get('name') or '')
+        return (num_i, name_val.casefold(), name_val)
+
+    details.sort(key=_sort_key)
+    ids = [d['id'] for d in details]
+    return ids, details
 
 
 def _get_latest_job_with_workspace():
@@ -659,7 +748,7 @@ def _get_job_results(job_id):
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None):
+    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -676,6 +765,8 @@ class Job:
         self.stream_name_regex_override = stream_name_regex_override
         self.selection_pattern_id = selection_pattern_id
         self.selection_pattern_name = selection_pattern_name
+        self.regex_preset_id = regex_preset_id
+        self.regex_preset_name = regex_preset_name
         self.status = 'queued'  # queued, running, completed, failed, cancelled
         self.progress = 0
         self.total = 0
@@ -700,6 +791,8 @@ class Job:
             'channel_names': self.channel_names,
             'selection_pattern_id': self.selection_pattern_id,
             'selection_pattern_name': self.selection_pattern_name,
+            'regex_preset_id': self.regex_preset_id,
+            'regex_preset_name': self.regex_preset_name,
             'base_search_text': self.base_search_text,
             'stream_name_regex_override': self.stream_name_regex_override,
             'selected_stream_ids': self.selected_stream_ids,
@@ -843,7 +936,7 @@ def run_job_worker(job, api, config):
                     allowed_stream_ids=None,
                     preview=False,
                     stream_name_regex=stream_name_regex,
-                    stream_name_regex_override=None,
+                    stream_name_regex_override=getattr(job, 'stream_name_regex_override', None),
                     all_streams_override=all_streams
                 )
                 if isinstance(result, dict) and result.get('error'):
@@ -1826,7 +1919,9 @@ def api_start_job():
         groups = data.get('groups', [])
         channels = data.get('channels')  # Optional: specific channel IDs
         selection_pattern_id = data.get('selection_pattern_id')
+        regex_preset_id = data.get('regex_preset_id')
         selection_pattern_name = None
+        regex_preset_name = None
         group_names = data.get('group_names', 'Unknown')
         channel_names = data.get('channel_names', 'All channels')
         base_search_text = data.get('base_search_text')
@@ -1843,23 +1938,47 @@ def api_start_job():
 
         # If this is the pattern pipeline job, resolve groups/channels from the saved pattern.
         if job_type == 'pattern_refresh_full_cleanup':
-            pattern = _get_pattern_by_id(selection_pattern_id)
-            if not pattern:
-                return jsonify({'success': False, 'error': 'selection_pattern_id not found'}), 400
-            selection_pattern_name = pattern.get('name') or 'Saved pattern'
-            groups = pattern.get('groups') or []
-            if not isinstance(groups, list) or not groups:
-                return jsonify({'success': False, 'error': 'Saved pattern must include at least one group'}), 400
+            # Prefer pipeline presets (saved after stream preview), fall back to legacy selection patterns.
+            if regex_preset_id:
+                preset = _get_regex_preset_by_id(regex_preset_id)
+                if not preset:
+                    return jsonify({'success': False, 'error': 'regex_preset_id not found'}), 400
+                regex_preset_name = preset.get('name') or 'Saved preset'
+                groups = preset.get('groups') or []
+                if not isinstance(groups, list) or not groups:
+                    return jsonify({'success': False, 'error': 'Saved preset must include at least one group'}), 400
 
-            api = DispatcharrAPI()
-            api.login()
-            resolved_ids, resolved_details = _resolve_channels_for_pattern(api, pattern)
-            if not resolved_ids:
-                return jsonify({'success': False, 'error': 'Saved pattern matched 0 channels'}), 400
+                # If the preset contains a regex, use it as the per-channel refresh override.
+                if not stream_name_regex_override and isinstance(preset.get('regex'), str) and preset.get('regex', '').strip():
+                    stream_name_regex_override = preset.get('regex').strip()
 
-            channels = resolved_ids
-            group_names = selection_pattern_name
-            channel_names = f'{len(channels)} channels (pattern)'
+                api = DispatcharrAPI()
+                api.login()
+                resolved_ids, _resolved_details = _resolve_channels_for_preset(api, preset)
+                if not resolved_ids:
+                    return jsonify({'success': False, 'error': 'Saved preset matched 0 channels'}), 400
+
+                channels = resolved_ids
+                group_names = regex_preset_name
+                channel_names = f'{len(channels)} channels (preset)'
+            else:
+                pattern = _get_pattern_by_id(selection_pattern_id)
+                if not pattern:
+                    return jsonify({'success': False, 'error': 'selection_pattern_id not found'}), 400
+                selection_pattern_name = pattern.get('name') or 'Saved pattern'
+                groups = pattern.get('groups') or []
+                if not isinstance(groups, list) or not groups:
+                    return jsonify({'success': False, 'error': 'Saved pattern must include at least one group'}), 400
+
+                api = DispatcharrAPI()
+                api.login()
+                resolved_ids, _resolved_details = _resolve_channels_for_pattern(api, pattern)
+                if not resolved_ids:
+                    return jsonify({'success': False, 'error': 'Saved pattern matched 0 channels'}), 400
+
+                channels = resolved_ids
+                group_names = selection_pattern_name
+                channel_names = f'{len(channels)} channels (pattern)'
 
         if not groups:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
@@ -1884,7 +2003,9 @@ def api_start_job():
             selected_stream_ids,
             stream_name_regex_override,
             selection_pattern_id=selection_pattern_id,
-            selection_pattern_name=selection_pattern_name
+            selection_pattern_name=selection_pattern_name,
+            regex_preset_id=regex_preset_id,
+            regex_preset_name=regex_preset_name
         )
 
         # Initialize API and config
@@ -2361,7 +2482,14 @@ def api_save_regex():
     Validate and save a stream-name regex preset (for Regex Override).
 
     Payload:
-      { "name": "...", "regex": "..." }
+      {
+        "name": "...",
+        "regex": "...",
+        "groups": [1,2],            # optional; when provided, becomes a pipeline preset
+        "channels": [123,456]|null, # optional; null means all channels in groups
+        "streams_per_provider": 2,  # optional
+        "exclude_4k": true          # optional
+      }
     """
     try:
         data = request.get_json() or {}
@@ -2376,12 +2504,56 @@ def api_save_regex():
         except re.error as exc:
             return jsonify({'success': False, 'error': f'Invalid regex: {exc}'}), 400
 
+        groups = data.get('groups')
+        group_ids = None
+        if groups is not None:
+            if not isinstance(groups, list) or not groups:
+                return jsonify({'success': False, 'error': '"groups" must be a non-empty list when provided'}), 400
+            tmp = []
+            for g in groups:
+                try:
+                    tmp.append(int(g))
+                except Exception:
+                    return jsonify({'success': False, 'error': f'Invalid group id: {g}'}), 400
+            group_ids = tmp
+
+        channels = data.get('channels')
+        channel_ids = None
+        if channels is not None:
+            if not isinstance(channels, list):
+                return jsonify({'success': False, 'error': '"channels" must be a list or null'}), 400
+            tmp = []
+            for c in channels:
+                try:
+                    tmp.append(int(c))
+                except Exception:
+                    return jsonify({'success': False, 'error': f'Invalid channel id: {c}'}), 400
+            channel_ids = tmp
+
+        streams_per_provider = data.get('streams_per_provider')
+        try:
+            streams_per_provider_i = int(streams_per_provider) if streams_per_provider is not None else None
+        except Exception:
+            return jsonify({'success': False, 'error': '"streams_per_provider" must be an integer'}), 400
+
+        exclude_4k = data.get('exclude_4k')
+        exclude_4k_b = bool(exclude_4k) if exclude_4k is not None else None
+
         preset = {
             'id': str(uuid.uuid4()),
             'name': name.strip(),
             'regex': regex.strip(),
             'created_at': datetime.now().isoformat()
         }
+        if group_ids is not None:
+            preset['groups'] = group_ids
+        if channels is not None:
+            # Distinguish between omitted vs explicitly provided (empty list = no channels matched).
+            preset['channels'] = channel_ids
+        if streams_per_provider_i is not None:
+            preset['streams_per_provider'] = streams_per_provider_i
+        if exclude_4k_b is not None:
+            preset['exclude_4k'] = exclude_4k_b
 
         with _regex_presets_lock:
             presets = _load_stream_name_regex_presets()
@@ -2397,6 +2569,27 @@ def api_save_regex():
             _save_stream_name_regex_presets(presets[:200])
 
         return jsonify({'success': True, 'saved': True, 'preset': preset})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/regex/presets/resolve', methods=['POST'])
+def api_resolve_regex_preset():
+    """
+    Resolve a saved regex preset (pipeline preset) to concrete channels.
+    Payload: { "preset_id": "..." }
+    """
+    try:
+        data = request.get_json() or {}
+        preset_id = data.get('preset_id')
+        preset = _get_regex_preset_by_id(preset_id)
+        if not preset:
+            return jsonify({'success': False, 'error': 'Preset not found'}), 404
+
+        api = DispatcharrAPI()
+        api.login()
+        ids, details = _resolve_channels_for_preset(api, preset)
+        return jsonify({'success': True, 'preset': preset, 'count': len(ids), 'channel_ids': ids, 'channels': details})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
