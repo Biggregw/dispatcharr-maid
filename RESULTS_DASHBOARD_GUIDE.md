@@ -422,18 +422,25 @@ Generates print-friendly version:
 
 **Where results are stored:**
 ```
-~/Dispatcharr_Maid/csv/03_iptv_stream_measurements.csv
+jobs/<job_id>/csv/03_iptv_stream_measurements.csv
 ```
 
-**Retention:**
-- Only LAST run is shown in dashboard
-- CSV file is overwritten each run
-- To keep history: Copy CSV after each run
+**Viewing past runs:**
+- Use the **Run** dropdown on the Results page to switch between completed jobs
+- Or open directly with: `/results?job_id=<job_id>`
+- CSV export is **job-scoped** when a job is selected (the download filename includes the job id)
+
+**Retention policy (optional):**
+- By default, the server keeps the **last 50 jobs** in `logs/job_history.json`
+- You can enable automatic pruning of old job folders + history entries by setting either:
+  - `web.results_retention_days` in `config.yaml`, or
+  - `DISPATCHARR_MAID_RESULTS_RETENTION_DAYS` in the environment (takes precedence)
 
 **Backup your results:**
 ```bash
-cp csv/03_iptv_stream_measurements.csv \
-   csv/backup_$(date +%Y%m%d).csv
+# Replace <job_id> with the run you want to keep
+cp jobs/<job_id>/csv/03_iptv_stream_measurements.csv \
+   csv/backup_<job_id>_$(date +%Y%m%d).csv
 ```
 
 ---

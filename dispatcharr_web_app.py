@@ -7,9 +7,11 @@ Run everything from the browser - no CLI needed!
 
 import json
 import html
+import hashlib
 import logging
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -712,7 +714,7 @@ def _generate_minimalish_regex(include_strings, exclude_strings):
     return regex
 
 
-def _build_results_payload(results, analysis_ran, job_type, provider_names=None, provider_metadata=None, capacity_summary=None):
+def _build_results_payload(results, analysis_ran, job_type, provider_names=None, provider_metadata=None, capacity_summary=None, job_meta=None):
     payload = {
         'success': True,
         'results': results,
@@ -720,6 +722,8 @@ def _build_results_payload(results, analysis_ran, job_type, provider_names=None,
         'analyzed_streams': _extract_analyzed_streams(results),
         'job_type': job_type
     }
+    if job_meta is not None:
+        payload['job_meta'] = job_meta
     if provider_names is not None:
         payload['provider_names'] = provider_names
     if provider_metadata is not None:
@@ -727,6 +731,191 @@ def _build_results_payload(results, analysis_ran, job_type, provider_names=None,
     if capacity_summary is not None:
         payload['capacity_summary'] = capacity_summary
     return payload
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _read_results_retention_days():
+    """
+    Optional retention policy for old job workspaces/history.
+
+    Precedence:
+      1) env: DISPATCHARR_MAID_RESULTS_RETENTION_DAYS
+      2) config.yaml: web.results_retention_days
+    """
+    env_val = os.getenv('DISPATCHARR_MAID_RESULTS_RETENTION_DAYS')
+    if env_val:
+        days = _safe_int(env_val)
+        return days if days and days > 0 else None
+
+    # Avoid Config() here: it will create config.yaml if missing.
+    cfg_path = Path('config.yaml')
+    if not cfg_path.exists():
+        return None
+    try:
+        with open(cfg_path, 'r') as f:
+            data = yaml.safe_load(f) or {}
+        web_cfg = data.get('web') if isinstance(data, dict) else None
+        days = None
+        if isinstance(web_cfg, dict):
+            days = _safe_int(web_cfg.get('results_retention_days'))
+        return days if days and days > 0 else None
+    except Exception:
+        return None
+
+
+def _maybe_prune_job_history(history):
+    """
+    Prune job history entries and job workspaces older than the configured retention window.
+    Default is disabled.
+    """
+    retention_days = _read_results_retention_days()
+    if not retention_days:
+        return history, False
+
+    cutoff_ts = time.time() - (retention_days * 86400)
+
+    def _parse_ts(s):
+        if not isinstance(s, str) or not s.strip():
+            return None
+        try:
+            # Expect ISO strings (from Job.to_dict)
+            return datetime.fromisoformat(s).timestamp()
+        except Exception:
+            return None
+
+    kept = []
+    removed_any = False
+    for entry in history or []:
+        if not isinstance(entry, dict):
+            continue
+        ts = _parse_ts(entry.get('completed_at')) or _parse_ts(entry.get('started_at'))
+        if ts is not None and ts < cutoff_ts:
+            # Remove workspace if present.
+            workspace = entry.get('workspace')
+            if isinstance(workspace, str) and workspace:
+                try:
+                    shutil.rmtree(workspace, ignore_errors=True)
+                except Exception:
+                    pass
+            removed_any = True
+            continue
+        kept.append(entry)
+
+    return kept, removed_any
+
+
+def _compute_config_hash(config):
+    """Compute a stable hash of the job-scoped config.yaml (best-effort)."""
+    try:
+        cfg_path = getattr(config, 'config_file', None)
+        if not cfg_path:
+            return None
+        cfg_path = Path(cfg_path)
+        if not cfg_path.exists():
+            return None
+        data = cfg_path.read_bytes()
+        return hashlib.sha256(data).hexdigest()[:12]
+    except Exception:
+        return None
+
+
+def _extract_selection_from_config(config):
+    """Extract a small, user-facing selection summary from config.yaml."""
+    try:
+        filters = config.get('filters') or {}
+        if not isinstance(filters, dict):
+            filters = {}
+        out = {
+            'channel_group_ids': filters.get('channel_group_ids') or [],
+            'specific_channel_ids': filters.get('specific_channel_ids') or [],
+            'channel_name_regex': filters.get('channel_name_regex') or '',
+            'channel_number_regex': filters.get('channel_number_regex') or '',
+            'refresh_stream_name_regex': filters.get('refresh_stream_name_regex') or '',
+        }
+        # Normalize lists
+        for key in ('channel_group_ids', 'specific_channel_ids'):
+            if not isinstance(out[key], list):
+                out[key] = []
+        return out
+    except Exception:
+        return {}
+
+
+def _get_job_entry(job_id):
+    """Return a Job object (active) or a history dict (completed), if available."""
+    with job_lock:
+        job = jobs.get(job_id)
+    if job:
+        return job
+    history = get_job_history()
+    return next((entry for entry in history if isinstance(entry, dict) and entry.get('job_id') == job_id), None)
+
+
+def _build_job_meta(job_id, job_type, config):
+    """Build run metadata suitable for the results UI."""
+    entry = _get_job_entry(job_id) if job_id else None
+    meta = {
+        'job_id': job_id,
+        'job_type': job_type,
+        'config_hash': _compute_config_hash(config) if config else None,
+        'selection': _extract_selection_from_config(config) if config else {},
+    }
+    if entry is None:
+        return meta
+
+    if isinstance(entry, Job):
+        meta.update({
+            'status': entry.status,
+            'started_at': entry.started_at,
+            'completed_at': entry.completed_at,
+            'groups': entry.groups,
+            'channels': entry.channels,
+            'group_names': entry.group_names,
+            'channel_names': entry.channel_names,
+            'selection_pattern_id': entry.selection_pattern_id,
+            'selection_pattern_name': entry.selection_pattern_name,
+            'regex_preset_id': entry.regex_preset_id,
+            'regex_preset_name': entry.regex_preset_name,
+            'base_search_text': entry.base_search_text,
+            'include_filter': entry.include_filter,
+            'exclude_filter': entry.exclude_filter,
+            'exclude_plus_one': entry.exclude_plus_one,
+            'exclude_4k': entry.exclude_4k,
+            'streams_per_provider': entry.streams_per_provider,
+            'stream_name_regex': entry.stream_name_regex,
+            'stream_name_regex_override': entry.stream_name_regex_override,
+        })
+    elif isinstance(entry, dict):
+        # History entries are already dicts from Job.to_dict()
+        meta.update({
+            'status': entry.get('status'),
+            'started_at': entry.get('started_at'),
+            'completed_at': entry.get('completed_at'),
+            'groups': entry.get('groups'),
+            'channels': entry.get('channels'),
+            'group_names': entry.get('group_names'),
+            'channel_names': entry.get('channel_names'),
+            'selection_pattern_id': entry.get('selection_pattern_id'),
+            'selection_pattern_name': entry.get('selection_pattern_name'),
+            'regex_preset_id': entry.get('regex_preset_id'),
+            'regex_preset_name': entry.get('regex_preset_name'),
+            'base_search_text': entry.get('base_search_text'),
+            'include_filter': entry.get('include_filter'),
+            'exclude_filter': entry.get('exclude_filter'),
+            'exclude_plus_one': entry.get('exclude_plus_one'),
+            'exclude_4k': entry.get('exclude_4k'),
+            'streams_per_provider': entry.get('streams_per_provider'),
+            'stream_name_regex': entry.get('stream_name_regex'),
+            'stream_name_regex_override': entry.get('stream_name_regex_override'),
+        })
+
+    return meta
 
 
 def _get_job_results(job_id):
@@ -876,8 +1065,18 @@ def get_job_history():
     
     try:
         with open(history_file, 'r') as f:
-            return json.load(f)
-    except:
+            history = json.load(f)
+
+        # Optional retention: prune old jobs/workspaces.
+        pruned, changed = _maybe_prune_job_history(history if isinstance(history, list) else [])
+        if changed:
+            try:
+                with open(history_file, 'w') as f:
+                    json.dump(pruned, f, indent=2)
+            except Exception:
+                pass
+        return pruned if isinstance(pruned, list) else []
+    except Exception:
         return []
 
 
@@ -2892,13 +3091,15 @@ def api_job_results(job_id):
         provider_names = _load_provider_names(config) if config else {}
         provider_metadata = _load_provider_metadata(config) if config else {}
         capacity_summary = results.get('capacity_summary') if isinstance(results, dict) else None
+        job_meta = _build_job_meta(job_id, job_type, config)
         return jsonify(_build_results_payload(
             results,
             analysis_ran,
             job_type,
             provider_names,
             provider_metadata,
-            capacity_summary
+            capacity_summary,
+            job_meta=job_meta
         ))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -2915,13 +3116,15 @@ def api_job_scoped_results(job_id):
         provider_names = _load_provider_names(config) if config else {}
         provider_metadata = _load_provider_metadata(config) if config else {}
         capacity_summary = results.get('capacity_summary') if isinstance(results, dict) else None
+        job_meta = _build_job_meta(job_id, job_type, config)
         return jsonify(_build_results_payload(
             results,
             analysis_ran,
             job_type,
             provider_names,
             provider_metadata,
-            capacity_summary
+            capacity_summary,
+            job_meta=job_meta
         ))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -2942,13 +3145,15 @@ def api_detailed_results():
                 if isinstance(latest_job.result_summary, dict):
                     capacity_summary = latest_job.result_summary.get('capacity_summary')
                 provider_metadata = _load_provider_metadata(_build_config_from_job(latest_job))
+                job_meta = _build_job_meta(latest_job.job_id, latest_job.job_type, _build_config_from_job(latest_job))
                 return jsonify(_build_results_payload(
                     latest_job.result_summary,
                     _job_ran_analysis(latest_job.job_type),
                     latest_job.job_type,
                     provider_names,
                     provider_metadata,
-                    capacity_summary
+                    capacity_summary,
+                    job_meta=job_meta
                 ))
         
         # Fall back to CSV-based summary if no recent jobs
@@ -2956,9 +3161,11 @@ def api_detailed_results():
         if latest_job is None:
             config = Config('config.yaml')
             summary = generate_job_summary(config)
+            job_meta = _build_job_meta(None, None, config)
         else:
             config = _build_config_from_job(latest_job)
             summary = generate_job_summary(config)
+            job_meta = _build_job_meta(latest_job.job_id, latest_job.job_type, config)
         
         if not summary:
             return jsonify({'success': False, 'error': 'No results available'}), 404
@@ -2973,7 +3180,8 @@ def api_detailed_results():
             job_type,
             provider_names,
             provider_metadata,
-            capacity_summary
+            capacity_summary,
+            job_meta=job_meta
         ))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -2982,8 +3190,14 @@ def api_detailed_results():
 @app.route('/api/results/csv')
 def api_export_csv():
     """Export results as CSV"""
-    latest_job = _get_latest_job_with_workspace()
-    config = _build_config_from_job(latest_job)
+    job_id = request.args.get('job_id')
+    if job_id:
+        _results, _analysis_ran, _job_type, config, error = _get_job_results(job_id)
+        if error:
+            return jsonify({'success': False, 'error': error}), 404
+    else:
+        latest_job = _get_latest_job_with_workspace()
+        config = _build_config_from_job(latest_job)
     measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
     
     if not os.path.exists(measurements_file):
@@ -2995,10 +3209,11 @@ def api_export_csv():
             csv_data = f.read()
         
         from flask import Response
+        filename = f"stream_analysis_results_{job_id}.csv" if job_id else "stream_analysis_results.csv"
         return Response(
             csv_data,
             mimetype='text/csv',
-            headers={'Content-Disposition': 'attachment; filename=stream_analysis_results.csv'}
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
         )
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
