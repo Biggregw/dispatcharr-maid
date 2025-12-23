@@ -772,6 +772,14 @@ class Job:
         self.total = 0
         self.failed = 0
         self.current_step = ''
+        # Stage-based progress (for multi-step pipelines)
+        self.stage_key = None
+        self.stage_name = None
+        self.stage_progress = 0
+        self.stage_total = 0
+        self.overall_progress = 0.0
+        self._stage_defs = None  # internal only: list[(key,name,weight)]
+        self._stage_index = 0
         self.started_at = datetime.now().isoformat()
         self.completed_at = None
         self.error = None
@@ -802,6 +810,11 @@ class Job:
             'total': self.total,
             'failed': self.failed,
             'current_step': self.current_step,
+            'stage_key': self.stage_key,
+            'stage_name': self.stage_name,
+            'stage_progress': self.stage_progress,
+            'stage_total': self.stage_total,
+            'overall_progress': self.overall_progress,
             'started_at': self.started_at,
             'completed_at': self.completed_at,
             'error': self.error,
@@ -843,9 +856,153 @@ def save_job_to_history(job):
 
 def progress_callback(job, progress_data):
     """Callback function for progress updates"""
-    job.progress = progress_data.get('processed', 0)
-    job.total = progress_data.get('total', 0)
-    job.failed = progress_data.get('failed', 0)
+    processed = progress_data.get('processed', 0)
+    total = progress_data.get('total', 0)
+    failed = progress_data.get('failed', 0)
+    _job_update_stage_progress(job, processed=processed, total=total, failed=failed)
+
+
+def _job_get_stage_defs(job_type):
+    # Weights should sum to 1.0 for each job type.
+    if job_type == 'pattern_refresh_full_cleanup':
+        return [
+            ('refresh', 'Refresh', 0.25),
+            ('fetch', 'Fetch', 0.10),
+            ('analyze', 'Analyze', 0.50),
+            ('score', 'Score', 0.05),
+            ('reorder', 'Reorder', 0.05),
+            ('cleanup', 'Cleanup', 0.05),
+        ]
+    if job_type == 'full_cleanup':
+        return [
+            ('fetch', 'Fetch', 0.15),
+            ('analyze', 'Analyze', 0.65),
+            ('score', 'Score', 0.08),
+            ('reorder', 'Reorder', 0.06),
+            ('cleanup', 'Cleanup', 0.06),
+        ]
+    if job_type == 'full':
+        return [
+            ('fetch', 'Fetch', 0.20),
+            ('analyze', 'Analyze', 0.70),
+            ('score', 'Score', 0.05),
+            ('reorder', 'Reorder', 0.05),
+        ]
+    if job_type == 'analyze':
+        return [('analyze', 'Analyze', 1.0)]
+    if job_type == 'fetch':
+        return [('fetch', 'Fetch', 1.0)]
+    if job_type == 'score':
+        return [('score', 'Score', 1.0)]
+    if job_type == 'reorder':
+        return [('reorder', 'Reorder', 1.0)]
+    if job_type == 'cleanup':
+        return [('cleanup', 'Cleanup', 1.0)]
+    if job_type == 'refresh_optimize':
+        return [('refresh', 'Refresh', 1.0)]
+    return None
+
+
+def _job_init_stages(job):
+    stage_defs = _job_get_stage_defs(job.job_type)
+    job._stage_defs = stage_defs
+    job._stage_index = 0
+    if not stage_defs:
+        job.stage_key = None
+        job.stage_name = None
+        job.stage_progress = 0
+        job.stage_total = 0
+        job.overall_progress = 0.0
+        return
+    key, name, _w = stage_defs[0]
+    job.stage_key = key
+    job.stage_name = name
+    job.stage_progress = 0
+    job.stage_total = 0
+    job.overall_progress = 0.0
+
+
+def _job_set_stage(job, stage_key, stage_name=None, total=None):
+    if not job._stage_defs:
+        _job_init_stages(job)
+    job.stage_key = stage_key
+    job.stage_name = stage_name or stage_key
+    job.stage_progress = 0
+    job.stage_total = int(total) if isinstance(total, (int, float)) and total is not None else 0
+    job.progress = job.stage_progress
+    job.total = job.stage_total
+    _job_recompute_overall(job)
+
+
+def _job_advance_stage(job):
+    if not job._stage_defs:
+        return
+    job._stage_index = min(len(job._stage_defs), job._stage_index + 1)
+    if job._stage_index >= len(job._stage_defs):
+        # Completed all stages
+        job.overall_progress = 100.0
+        return
+    key, name, _w = job._stage_defs[job._stage_index]
+    job.stage_key = key
+    job.stage_name = name
+    job.stage_progress = 0
+    job.stage_total = 0
+    job.progress = 0
+    job.total = 0
+    _job_recompute_overall(job)
+
+
+def _job_update_stage_progress(job, processed=None, total=None, failed=None):
+    if processed is not None:
+        try:
+            job.stage_progress = int(processed)
+        except Exception:
+            pass
+    if total is not None:
+        try:
+            job.stage_total = int(total)
+        except Exception:
+            pass
+    if failed is not None:
+        try:
+            job.failed = int(failed)
+        except Exception:
+            pass
+
+    # Backward-compatible fields the UI already understands
+    job.progress = job.stage_progress
+    job.total = job.stage_total
+    _job_recompute_overall(job)
+
+
+def _job_recompute_overall(job):
+    if not job._stage_defs:
+        # Fall back to simple percent if possible
+        if getattr(job, 'total', 0):
+            try:
+                job.overall_progress = min(100.0, max(0.0, float(job.progress) / float(job.total) * 100.0))
+            except Exception:
+                job.overall_progress = 0.0
+        return
+
+    completed_weight = 0.0
+    for i, (_k, _n, w) in enumerate(job._stage_defs):
+        if i < job._stage_index:
+            completed_weight += float(w)
+
+    current_weight = 0.0
+    if job._stage_index < len(job._stage_defs):
+        current_weight = float(job._stage_defs[job._stage_index][2])
+
+    stage_fraction = 0.0
+    if getattr(job, 'stage_total', 0) and getattr(job, 'stage_progress', 0) is not None:
+        try:
+            stage_fraction = min(1.0, max(0.0, float(job.stage_progress) / float(job.stage_total)))
+        except Exception:
+            stage_fraction = 0.0
+
+    overall = (completed_weight + current_weight * stage_fraction) * 100.0
+    job.overall_progress = float(min(100.0, max(0.0, overall)))
 
 
 def run_job_worker(job, api, config):
@@ -853,6 +1010,7 @@ def run_job_worker(job, api, config):
     task_name = None
     try:
         job.status = 'running'
+        _job_init_stages(job)
         
         # Update config with selected groups and channels
         config.set('filters', 'channel_group_ids', job.groups)
@@ -894,6 +1052,7 @@ def run_job_worker(job, api, config):
 
                 # Fetch all streams once for reuse across per-channel refresh calls.
                 job.current_step = 'Refresh: preparing provider streams cache...'
+                _job_set_stage(job, 'refresh', 'Refresh', total=len(job.channels or []))
                 all_streams = []
                 next_url = '/api/channels/streams/?limit=100'
                 while next_url:
@@ -908,8 +1067,7 @@ def run_job_worker(job, api, config):
                         next_url = None
 
                 channels_to_refresh = job.channels or []
-                job.total = len(channels_to_refresh)
-                job.progress = 0
+                _job_update_stage_progress(job, processed=0, total=len(channels_to_refresh), failed=0)
                 refresh_stats = {
                     'channels_total': len(channels_to_refresh),
                     'channels_refreshed': 0,
@@ -951,7 +1109,7 @@ def run_job_worker(job, api, config):
                         refresh_stats['total_streams_added'] += int(result.get('added', 0) or 0)
                         refresh_stats['total_streams_removed'] += int(result.get('removed', 0) or 0)
 
-                    job.progress = idx
+                    _job_update_stage_progress(job, processed=idx, total=len(channels_to_refresh), failed=refresh_stats['channels_failed'])
             finally:
                 logging.info("TASK_END: %s", refresh_task_name)
 
@@ -963,13 +1121,40 @@ def run_job_worker(job, api, config):
                     return
 
                 job.current_step = 'Quality: fetching streams...'
-                fetch_streams(api, config)
+                _job_advance_stage(job)  # fetch
+
+                # Build a stream_id -> m3u_account map from the refresh cache to avoid
+                # refetching /api/channels/streams a second time.
+                stream_provider_map_override = {}
+                for s in all_streams:
+                    if not isinstance(s, dict):
+                        continue
+                    sid = s.get('id')
+                    acc = s.get('m3u_account')
+                    if sid is None or acc is None:
+                        continue
+                    try:
+                        stream_provider_map_override[int(sid)] = acc
+                    except Exception:
+                        continue
+
+                def fetch_progress(pdata):
+                    progress_callback(job, pdata)
+                    return not job.cancel_requested
+
+                fetch_streams(
+                    api,
+                    config,
+                    progress_callback=fetch_progress,
+                    stream_provider_map_override=stream_provider_map_override
+                )
 
                 if job.cancel_requested:
                     job.status = 'cancelled'
                     return
 
                 job.current_step = 'Quality: analyzing streams (forcing fresh analysis)...'
+                _job_advance_stage(job)  # analyze
                 original_days = config.get('filters', 'stream_last_measured_days', 1)
                 config.set('filters', 'stream_last_measured_days', 0)
                 config.save()
@@ -1000,21 +1185,30 @@ def run_job_worker(job, api, config):
                     return
 
                 job.current_step = 'Quality: scoring streams...'
+                _job_advance_stage(job)  # score
+                _job_set_stage(job, 'score', 'Score', total=1)
                 score_streams(api, config, update_stats=True)
+                _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
 
                 if job.cancel_requested:
                     job.status = 'cancelled'
                     return
 
                 job.current_step = 'Quality: reordering streams...'
+                _job_advance_stage(job)  # reorder
+                _job_set_stage(job, 'reorder', 'Reorder', total=1)
                 reorder_streams(api, config)
+                _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
 
                 if job.cancel_requested:
                     job.status = 'cancelled'
                     return
 
                 job.current_step = f'Quality: cleaning up (keeping top {job.streams_per_provider} per provider)...'
+                _job_advance_stage(job)  # cleanup
+                _job_set_stage(job, 'cleanup', 'Cleanup', total=1)
                 cleanup_stats = cleanup_streams_by_provider(api, job.groups, config, job.streams_per_provider, job.channels)
+                _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
 
                 job.result_summary = job.result_summary or {}
                 job.result_summary['pattern_pipeline'] = {
@@ -1037,7 +1231,13 @@ def run_job_worker(job, api, config):
                 return
             
             job.current_step = 'Fetching streams...'
-            fetch_streams(api, config)
+            _job_set_stage(job, 'fetch', 'Fetch')
+
+            def fetch_progress(pdata):
+                progress_callback(job, pdata)
+                return not job.cancel_requested
+
+            fetch_streams(api, config, progress_callback=fetch_progress)
             
             # Step 2: Analyze (FORCE re-analysis of all streams)
             if job.cancel_requested:
@@ -1045,6 +1245,7 @@ def run_job_worker(job, api, config):
                 return
             
             job.current_step = 'Analyzing streams (forcing fresh analysis)...'
+            _job_advance_stage(job)  # analyze
             
             # Save original setting and force re-analysis
             original_days = config.get('filters', 'stream_last_measured_days', 1)
@@ -1079,7 +1280,10 @@ def run_job_worker(job, api, config):
                 return
             
             job.current_step = 'Scoring streams...'
+            _job_advance_stage(job)  # score
+            _job_set_stage(job, 'score', 'Score', total=1)
             score_streams(api, config, update_stats=True)
+            _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
             
             # Step 4: Reorder
             if job.cancel_requested:
@@ -1087,7 +1291,10 @@ def run_job_worker(job, api, config):
                 return
             
             job.current_step = 'Reordering streams...'
+            _job_advance_stage(job)  # reorder
+            _job_set_stage(job, 'reorder', 'Reorder', total=1)
             reorder_streams(api, config)
+            _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
             
             # Step 5: Cleanup (if requested)
             if job.job_type == 'full_cleanup':
@@ -1096,7 +1303,10 @@ def run_job_worker(job, api, config):
                     return
                 
                 job.current_step = f'Cleaning up (keeping top {job.streams_per_provider} per provider)...'
+                _job_advance_stage(job)  # cleanup
+                _job_set_stage(job, 'cleanup', 'Cleanup', total=1)
                 cleanup_stats = cleanup_streams_by_provider(api, job.groups, config, job.streams_per_provider, job.channels)
+                _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
                 
                 # Add cleanup stats to result summary
                 if not job.result_summary:
@@ -1106,10 +1316,17 @@ def run_job_worker(job, api, config):
         
         elif job.job_type == 'fetch':
             job.current_step = 'Fetching streams...'
-            fetch_streams(api, config)
+            _job_set_stage(job, 'fetch', 'Fetch')
+
+            def fetch_progress(pdata):
+                progress_callback(job, pdata)
+                return not job.cancel_requested
+
+            fetch_streams(api, config, progress_callback=fetch_progress)
         
         elif job.job_type == 'analyze':
             job.current_step = 'Analyzing streams...'
+            _job_set_stage(job, 'analyze', 'Analyze')
             
             def progress_wrapper(progress_data):
                 progress_callback(job, progress_data)
@@ -1119,11 +1336,15 @@ def run_job_worker(job, api, config):
         
         elif job.job_type == 'score':
             job.current_step = 'Scoring streams...'
+            _job_set_stage(job, 'score', 'Score', total=1)
             score_streams(api, config, update_stats=True)
+            _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
         
         elif job.job_type == 'reorder':
             job.current_step = 'Reordering streams...'
+            _job_set_stage(job, 'reorder', 'Reorder', total=1)
             reorder_streams(api, config)
+            _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
         
         elif job.job_type == 'refresh_optimize':
             task_name = "Refresh Channel Streams"
@@ -1142,6 +1363,7 @@ def run_job_worker(job, api, config):
                 return
             
             job.current_step = 'Searching all providers for matching streams...'
+            _job_set_stage(job, 'refresh', 'Refresh', total=1)
             effective_exclude_filter = _build_exclude_filter(job.exclude_filter, job.exclude_plus_one)
             filters = config.get('filters') or {}
             stream_name_regex = None
@@ -1170,6 +1392,7 @@ def run_job_worker(job, api, config):
             removed = refresh_result.get('removed', 0)
             added = refresh_result.get('added', 0)
             job.current_step = f"Replaced {removed} old streams with {added} matching streams"
+            _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
             
             # Store refresh-specific summary (skip CSV-based summary)
             job.result_summary = {
@@ -1190,7 +1413,9 @@ def run_job_worker(job, api, config):
         
         elif job.job_type == 'cleanup':
             job.current_step = f'Cleaning up (keeping top {job.streams_per_provider} per provider)...'
+            _job_set_stage(job, 'cleanup', 'Cleanup', total=1)
             cleanup_stats = cleanup_streams_by_provider(api, job.groups, config, job.streams_per_provider, job.channels)
+            _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
             
             # Store cleanup stats for history
             job.result_summary = {
@@ -1202,6 +1427,8 @@ def run_job_worker(job, api, config):
         job.status = 'completed' if not job.cancel_requested else 'cancelled'
         job.current_step = 'Completed' if not job.cancel_requested else 'Cancelled'
         job.completed_at = datetime.now().isoformat()
+        if not job.cancel_requested:
+            job.overall_progress = 100.0
         
         # Generate analysis summary when analysis ran
         if _job_ran_analysis(job.job_type):

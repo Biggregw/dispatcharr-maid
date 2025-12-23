@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -589,8 +589,13 @@ def _fetch_stream_provider_map(api, config):
 
     return stream_provider_map
 
-def fetch_streams(api, config, output_file=None):
-    """Fetch streams for channels based on filters"""
+def fetch_streams(api, config, output_file=None, progress_callback=None, stream_provider_map_override=None):
+    """Fetch streams for channels based on filters.
+
+    Optionally accepts:
+      - progress_callback(dict): receives {'processed','total','failed'} updates.
+      - stream_provider_map_override(dict[int,int|str]): stream_id -> m3u_account to avoid refetching.
+    """
     logging.info("Fetching streams from Dispatcharr...")
 
     output_file = output_file or config.resolve_path('csv/02_grouped_channel_streams.csv')
@@ -612,7 +617,7 @@ def fetch_streams(api, config, output_file=None):
             force=bool(dispatcharr_cfg.get('refresh_provider_data', False))
         )
 
-    stream_provider_map = _fetch_stream_provider_map(api, config)
+    stream_provider_map = stream_provider_map_override or _fetch_stream_provider_map(api, config)
 
     # Fetch groups
     groups = api.fetch_channel_groups()
@@ -707,46 +712,84 @@ def fetch_streams(api, config, output_file=None):
             "channel_number", "channel_id", "channel_group_id",
             "stream_id", "stream_name", "stream_url", "m3u_account"
         ])
-        
-        for channel in final_channels:
+
+        # Fetch per-channel streams concurrently; write results sequentially.
+        dispatcharr_cfg = config.get('dispatcharr') or {}
+        fetch_workers = int(dispatcharr_cfg.get('fetch_workers', 6) or 6)
+        fetch_workers = max(1, min(32, fetch_workers))
+
+        total_channels = len(final_channels)
+        processed_channels = 0
+        failed_channels = 0
+
+        def _fetch_one(channel):
             channel_id = channel.get("id")
             channel_number = channel.get("channel_number")
-            channel_group_id = channel.get("channel_group_id")
             channel_name = channel.get("name", "")
-            
             logging.info(f"Fetching streams for channel {channel_number} - {channel_name}")
-            streams = api.fetch_channel_streams(channel_id)
-            
-            if not streams:
-                logging.warning(f"  No streams for channel {channel_number}")
-                continue
-            
-            for stream in streams:
-                stream_id = stream.get("id", "")
-                stream_lookup_id = None
+            return channel, api.fetch_channel_streams(channel_id)
+
+        with ThreadPoolExecutor(max_workers=fetch_workers) as executor:
+            future_to_channel = {executor.submit(_fetch_one, ch): ch for ch in final_channels}
+            for future in as_completed(future_to_channel):
+                channel = future_to_channel[future]
+                channel_id = channel.get("id")
+                channel_number = channel.get("channel_number")
+                channel_group_id = channel.get("channel_group_id")
+                channel_name = channel.get("name", "")
                 try:
-                    stream_lookup_id = int(stream_id)
-                except (TypeError, ValueError):
-                    stream_lookup_id = None
-                m3u_account = stream.get("m3u_account")
-                if m3u_account in ("", None):
-                    m3u_account = stream_provider_map.get(stream_lookup_id)
-                if m3u_account in ("", None):
-                    raise ValueError(
-                        f"Stream {stream_id} is missing m3u_account from Dispatcharr; "
-                        "cannot proceed without provider IDs."
+                    _channel, streams = future.result()
+                except Exception as exc:
+                    failed_channels += 1
+                    logging.warning(
+                        "Failed fetching streams for channel %s - %s: %s",
+                        channel_number,
+                        channel_name,
+                        exc,
                     )
-                writer.writerow([
-                    channel_number,
-                    channel_id,
-                    channel_group_id,
-                    stream_id,
-                    stream.get("name", ""),
-                    stream.get("url", ""),
-                    m3u_account
-                ])
-            
-            logging.info(f"  Saved {len(streams)} streams")
+                    streams = None
+
+                processed_channels += 1
+                if progress_callback:
+                    try:
+                        progress_callback({
+                            'processed': processed_channels,
+                            'total': total_channels,
+                            'failed': failed_channels,
+                        })
+                    except Exception:
+                        logging.debug("progress_callback failed during fetch_streams", exc_info=True)
+
+                if not streams:
+                    logging.warning(f"  No streams for channel {channel_number}")
+                    continue
+
+                for stream in streams:
+                    stream_id = stream.get("id", "")
+                    stream_lookup_id = None
+                    try:
+                        stream_lookup_id = int(stream_id)
+                    except (TypeError, ValueError):
+                        stream_lookup_id = None
+                    m3u_account = stream.get("m3u_account")
+                    if m3u_account in ("", None):
+                        m3u_account = stream_provider_map.get(stream_lookup_id)
+                    if m3u_account in ("", None):
+                        raise ValueError(
+                            f"Stream {stream_id} is missing m3u_account from Dispatcharr; "
+                            "cannot proceed without provider IDs."
+                        )
+                    writer.writerow([
+                        channel_number,
+                        channel_id,
+                        channel_group_id,
+                        stream_id,
+                        stream.get("name", ""),
+                        stream.get("url", ""),
+                        m3u_account
+                    ])
+
+                logging.info(f"  Saved {len(streams)} streams")
     
     logging.info(f"Done! Streams saved to {output_file}")
 
@@ -883,47 +926,96 @@ def analyze_streams(config, input_csv=None,
     try:
         with open(output_csv, 'a', newline='', encoding='utf-8') as f_out, \
              open(fails_csv, 'a', newline='', encoding='utf-8') as f_fails:
-            
+
             writer_out = csv.DictWriter(f_out, fieldnames=final_columns, extrasaction='ignore')
             writer_fails = csv.DictWriter(f_fails, fieldnames=final_columns, extrasaction='ignore')
-            
+
             if not output_exists or os.path.getsize(output_csv) == 0:
                 writer_out.writeheader()
             if not fails_exists or os.path.getsize(fails_csv) == 0:
                 writer_fails.writeheader()
-            
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = {
-                    executor.submit(_analyze_stream_task, row, config, progress_tracker, force_full_analysis): row
-                    for row in streams_to_analyze
-                }
-                
-                for future in futures:
-                    try:
-                        result_row = future.result()
-                        
-                        if result_row is None:  # Already processed
-                            continue
 
-                        analyzed_count += 1
-                        # Write to output
-                        writer_out.writerow(result_row)
-                        f_out.flush()
-                        
-                        # Write to fails if failed
-                        if result_row.get('status') != 'OK':
-                            writer_fails.writerow(result_row)
-                            f_fails.flush()
-                        
-                        # Update progress
-                        if progress_callback:
-                            progress_callback(progress_tracker.get_progress())
-                        else:
-                            progress_tracker.print_progress()
-                    
-                    except Exception as exc:
-                        original_row = futures[future]
-                        logging.error(f"Stream {original_row.get('stream_name')} generated exception: {exc}")
+            flush_every = int(analysis_cfg.get('flush_every', 25) or 25)
+            flush_every = max(1, min(5000, flush_every))
+
+            cancelled = False
+            it = iter(streams_to_analyze)
+            max_in_flight = max(1, workers * 4)
+
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = set()
+                future_to_row = {}
+
+                def _submit_next():
+                    row = next(it, None)
+                    if row is None:
+                        return False
+                    fut = executor.submit(_analyze_stream_task, row, config, progress_tracker, force_full_analysis)
+                    futures.add(fut)
+                    future_to_row[fut] = row
+                    return True
+
+                # Prime the queue
+                for _ in range(min(max_in_flight, len(streams_to_analyze))):
+                    if not _submit_next():
+                        break
+
+                while futures:
+                    done, _pending = wait(futures, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        futures.discard(future)
+                        original_row = future_to_row.pop(future, None) or {}
+                        try:
+                            result_row = future.result()
+
+                            if result_row is None:  # Already processed
+                                pass
+                            else:
+                                analyzed_count += 1
+                                writer_out.writerow(result_row)
+
+                                if result_row.get('status') != 'OK':
+                                    writer_fails.writerow(result_row)
+
+                                if analyzed_count % flush_every == 0:
+                                    f_out.flush()
+                                    f_fails.flush()
+
+                            # Update progress (and allow cancellation if callback returns False)
+                            if progress_callback:
+                                try:
+                                    keep_going = progress_callback(progress_tracker.get_progress())
+                                    if keep_going is False:
+                                        cancelled = True
+                                except Exception:
+                                    logging.debug("progress_callback failed during analysis", exc_info=True)
+                            else:
+                                progress_tracker.print_progress()
+
+                        except Exception as exc:
+                            logging.error(
+                                "Stream %s generated exception: %s",
+                                original_row.get('stream_name'),
+                                exc,
+                            )
+
+                        if cancelled:
+                            break
+
+                        # Backfill to keep the queue full
+                        while not cancelled and len(futures) < max_in_flight:
+                            if not _submit_next():
+                                break
+
+                    if cancelled:
+                        # Best-effort cancel of remaining tasks
+                        for fut in list(futures):
+                            fut.cancel()
+                        break
+
+            # Final flush
+            f_out.flush()
+            f_fails.flush()
         
         print()  # New line after progress
         logging.info("Analysis complete!")
