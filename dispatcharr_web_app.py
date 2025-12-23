@@ -107,18 +107,34 @@ def _load_stream_name_regex_presets():
     try:
         with open(path, 'r', encoding='utf-8') as handle:
             data = json.load(handle)
+        # Accept either the current format (a list of preset dicts)
+        # or a legacy/alternative envelope format: {"presets": [...]}.
         if isinstance(data, list):
             return data
+        if isinstance(data, dict) and isinstance(data.get('presets'), list):
+            return data.get('presets') or []
         return []
     except Exception:
         return []
 
 
+def _atomic_json_write(path: Path, payload):
+    """
+    Atomically write JSON to disk (temp file + replace).
+    Prevents empty/partial JSON files if the process is interrupted mid-write.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + '.tmp')
+    with open(tmp_path, 'w', encoding='utf-8') as handle:
+        json.dump(payload, handle, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, path)
+
+
 def _save_stream_name_regex_presets(presets):
     path = _stream_name_regex_presets_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as handle:
-        json.dump(presets, handle, indent=2)
+    _atomic_json_write(path, presets)
 
 
 def _load_channel_selection_patterns():
@@ -137,9 +153,7 @@ def _load_channel_selection_patterns():
 
 def _save_channel_selection_patterns(patterns):
     path = _channel_selection_patterns_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as handle:
-        json.dump(patterns, handle, indent=2)
+    _atomic_json_write(path, patterns)
 
 
 def _get_pattern_by_id(pattern_id):
