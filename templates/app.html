@@ -771,10 +771,15 @@
                 <select id="saved-pattern-select" style="flex: 1; min-width: 220px; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em;">
                     <option value="">— Select saved pattern —</option>
                 </select>
+                <button class="btn btn-back" id="btn-save-pattern" onclick="openSavePatternDialog(event)" disabled>
+                    💾 Save Pattern
+                </button>
                 <button class="btn btn-next" id="btn-run-saved-pipeline" onclick="runSavedPatternPipeline(event)" disabled>
                     ▶ Run Saved Pipeline
                 </button>
             </div>
+
+            <div id="saved-pattern-status" class="alert alert-info hidden" style="margin-top: 10px;"></div>
 
             <div id="saved-pattern-preview" class="selection-summary hidden" style="margin-top: 10px;">
                 <div class="summary-row">
@@ -1048,6 +1053,53 @@
 
     </div>
 
+    <!-- Save selection pattern -->
+    <div id="save-pattern-modal" class="modal-overlay hidden">
+        <div class="modal" style="max-width: 560px;">
+            <div class="modal-header">
+                <div>
+                    <div class="modal-title">Save selection pattern</div>
+                    <div class="preview-meta" id="save-pattern-meta"></div>
+                </div>
+                <button class="btn btn-back" onclick="closeSavePatternDialog()">✖</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 12px;">
+                    <label style="display: block; margin-bottom: 6px; color: #4b5563; font-weight: 600;">Name</label>
+                    <input type="text" id="save-pattern-name" placeholder="e.g., Sky Sports (my shortlist)"
+                           style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
+                </div>
+
+                <div style="padding: 12px; background: #f7fafc; border-radius: 8px; border-left: 4px solid #667eea;">
+                    <div style="font-weight: 700; color: #2d3748; margin-bottom: 6px;">What gets saved</div>
+                    <div style="color: #4a5568; font-size: 0.95em;">
+                        - Always saves the currently selected <strong>groups</strong>.<br>
+                        - Optionally saves an <strong>exact channel list</strong> (recommended if you picked specific channels in Step 2).
+                    </div>
+                </div>
+
+                <div style="margin-top: 12px;">
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="save-pattern-exact-channels"
+                               style="width: 18px; height: 18px; margin-right: 10px; cursor: pointer;">
+                        <span style="color: #4b5563; font-weight: 600;">
+                            Save exact selected channels only
+                        </span>
+                    </label>
+                    <span id="save-pattern-exact-help"
+                          style="display: block; margin-top: 5px; margin-left: 28px; color: #718096; font-size: 0.85em;">
+                    </span>
+                </div>
+
+                <div id="save-pattern-error" class="alert alert-error hidden" style="margin-top: 12px;"></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-back" onclick="closeSavePatternDialog()">Cancel</button>
+                <button class="btn btn-next" id="save-pattern-submit" onclick="submitSavePattern(event)">Save</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Global state
         let selectedGroups = [];
@@ -1119,18 +1171,42 @@
             try {
                 const resp = await fetch(`/api/channel-selection-patterns?ts=${Date.now()}`, { cache: 'no-store' });
                 const data = await resp.json();
-                if (!data.success) return;
+                if (!data.success) {
+                    showSavedPatternStatus(data.error || 'Unable to load saved patterns.', true);
+                    savedPatterns = [];
+                    renderSavedPatterns();
+                    return;
+                }
                 savedPatterns = Array.isArray(data.patterns) ? data.patterns : [];
                 renderSavedPatterns();
             } catch (e) {
-                // ignore
+                showSavedPatternStatus(`Unable to load saved patterns: ${e.message}`, true);
+                savedPatterns = [];
+                renderSavedPatterns();
             }
         }
 
         function renderSavedPatterns() {
             const select = document.getElementById('saved-pattern-select');
+            const saveBtn = document.getElementById('btn-save-pattern');
             if (!select) return;
             const current = select.value;
+            if (saveBtn) saveBtn.disabled = !(Array.isArray(selectedGroups) && selectedGroups.length > 0);
+
+            if (!Array.isArray(savedPatterns) || savedPatterns.length === 0) {
+                select.innerHTML = '<option value="">— Select saved pattern —</option><option value="" disabled>(No saved patterns yet — click “Save Pattern”)</option>';
+                select.value = '';
+                select.onchange = () => onSavedPatternSelected();
+                onSavedPatternSelected();
+                // If there was no explicit error shown, show a helpful hint.
+                const status = document.getElementById('saved-pattern-status');
+                if (status && status.classList.contains('hidden')) {
+                    showSavedPatternStatus('No saved patterns yet. Select groups (and optionally channels), then click “Save Pattern”.', false);
+                }
+                return;
+            }
+
+            hideSavedPatternStatus();
             select.innerHTML = '<option value="">— Select saved pattern —</option>' + savedPatterns.map(p => {
                 const name = p.name || 'Unnamed';
                 const created = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
@@ -1139,6 +1215,123 @@
             select.value = current || '';
             select.onchange = () => onSavedPatternSelected();
             onSavedPatternSelected();
+        }
+
+        function showSavedPatternStatus(message, isError) {
+            const el = document.getElementById('saved-pattern-status');
+            if (!el) return;
+            el.textContent = message || '';
+            el.classList.remove('hidden');
+            el.classList.toggle('alert-error', !!isError);
+            el.classList.toggle('alert-info', !isError);
+        }
+
+        function hideSavedPatternStatus() {
+            const el = document.getElementById('saved-pattern-status');
+            if (!el) return;
+            el.classList.add('hidden');
+            el.textContent = '';
+            el.classList.remove('alert-error');
+            el.classList.add('alert-info');
+        }
+
+        function openSavePatternDialog(event) {
+            if (event) event.preventDefault();
+            if (!Array.isArray(selectedGroups) || selectedGroups.length === 0) {
+                alert('Select at least one group first, then click “Save Pattern”.');
+                return;
+            }
+            const modal = document.getElementById('save-pattern-modal');
+            const meta = document.getElementById('save-pattern-meta');
+            const nameInput = document.getElementById('save-pattern-name');
+            const exactCheckbox = document.getElementById('save-pattern-exact-channels');
+            const exactHelp = document.getElementById('save-pattern-exact-help');
+            const err = document.getElementById('save-pattern-error');
+
+            const selectedChannelCount = Array.isArray(selectedChannels) ? selectedChannels.length : 0;
+            const canSaveExact = selectedChannelCount > 0;
+
+            if (meta) meta.textContent = `${selectedGroups.length} group(s) selected • ${selectedChannelCount ? `${selectedChannelCount} channel(s) selected` : 'no specific channels selected'}`;
+            if (exactCheckbox) {
+                exactCheckbox.checked = !!canSaveExact;
+                exactCheckbox.disabled = !canSaveExact;
+            }
+            if (exactHelp) {
+                exactHelp.textContent = canSaveExact
+                    ? 'This will save a pattern that matches exactly these channels (even if group contents change).'
+                    : 'To enable this, pick specific channels in Step 2 first.';
+            }
+            if (err) {
+                err.textContent = '';
+                err.classList.add('hidden');
+            }
+            if (nameInput) {
+                if (!nameInput.value) {
+                    nameInput.value = '';
+                }
+                nameInput.focus();
+            }
+            if (modal) modal.classList.remove('hidden');
+        }
+
+        function closeSavePatternDialog() {
+            const modal = document.getElementById('save-pattern-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        async function submitSavePattern(event) {
+            if (event) event.preventDefault();
+            const name = (document.getElementById('save-pattern-name')?.value || '').trim();
+            const exact = document.getElementById('save-pattern-exact-channels')?.checked || false;
+            const err = document.getElementById('save-pattern-error');
+            if (!name) {
+                if (err) {
+                    err.textContent = 'Name is required.';
+                    err.classList.remove('hidden');
+                }
+                return;
+            }
+            if (!Array.isArray(selectedGroups) || selectedGroups.length === 0) {
+                if (err) {
+                    err.textContent = 'Select at least one group first.';
+                    err.classList.remove('hidden');
+                }
+                return;
+            }
+            const channelsPayload = (exact && Array.isArray(selectedChannels) && selectedChannels.length > 0) ? selectedChannels : null;
+            try {
+                const resp = await fetch('/api/channel-selection-patterns', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name,
+                        groups: selectedGroups,
+                        channels: channelsPayload
+                    })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    if (err) {
+                        err.textContent = data.error || 'Failed to save pattern.';
+                        err.classList.remove('hidden');
+                    }
+                    return;
+                }
+                await loadSavedPatterns();
+                // Select the newly saved pattern if present.
+                const newId = data.pattern?.id;
+                const select = document.getElementById('saved-pattern-select');
+                if (select && newId) {
+                    select.value = newId;
+                    await onSavedPatternSelected();
+                }
+                closeSavePatternDialog();
+            } catch (e) {
+                if (err) {
+                    err.textContent = `Failed to save pattern: ${e.message}`;
+                    err.classList.remove('hidden');
+                }
+            }
         }
 
         async function onSavedPatternSelected() {
@@ -1284,6 +1477,9 @@
         function updateStep1Button() {
             const btn = document.getElementById('btn-next-1');
             btn.disabled = selectedGroups.length === 0;
+
+            const saveBtn = document.getElementById('btn-save-pattern');
+            if (saveBtn) saveBtn.disabled = selectedGroups.length === 0;
         }
         
         // Go to step 2
