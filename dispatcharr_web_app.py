@@ -1124,12 +1124,25 @@ def _job_get_stage_defs(job_type):
             ('reorder', 'Reorder', 0.06),
             ('cleanup', 'Cleanup', 0.06),
         ]
+    if job_type == 'full_cleanup_plan':
+        return [
+            ('fetch', 'Fetch', 0.20),
+            ('analyze', 'Analyze', 0.68),
+            ('score', 'Score', 0.07),
+            ('plan', 'Plan (no updates)', 0.05),
+        ]
     if job_type == 'full':
         return [
             ('fetch', 'Fetch', 0.20),
             ('analyze', 'Analyze', 0.70),
             ('score', 'Score', 0.05),
             ('reorder', 'Reorder', 0.05),
+        ]
+    if job_type == 'full_plan':
+        return [
+            ('fetch', 'Fetch', 0.22),
+            ('analyze', 'Analyze', 0.72),
+            ('score', 'Score', 0.06),
         ]
     if job_type == 'analyze':
         return [('analyze', 'Analyze', 1.0)]
@@ -1490,6 +1503,135 @@ def run_job_worker(job, api, config):
             finally:
                 logging.info("TASK_END: %s", quality_task_name)
 
+        elif job.job_type == 'full_cleanup_plan':
+            # Plan-only variant: run fetch/analyze/score, then compute the exact cleanup/reorder
+            # stream list per channel WITHOUT applying updates to Dispatcharr.
+            task_name = "Quality Check (Plan Only)"
+            logging.info("TASK_START: %s", task_name)
+
+            # Step 1: Fetch
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                return
+
+            job.current_step = 'Fetching streams...'
+            _job_set_stage(job, 'fetch', 'Fetch')
+
+            def fetch_progress(pdata):
+                progress_callback(job, pdata)
+                return not job.cancel_requested
+
+            fetch_streams(api, config, progress_callback=fetch_progress)
+
+            # Step 2: Analyze (FORCE re-analysis of all streams)
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                return
+
+            job.current_step = 'Analyzing streams (forcing fresh analysis)...'
+            _job_advance_stage(job)  # analyze
+
+            original_days = config.get('filters', 'stream_last_measured_days', 1)
+            config.set('filters', 'stream_last_measured_days', 0)
+            config.save()
+
+            def progress_wrapper(progress_data):
+                progress_callback(job, progress_data)
+                return not job.cancel_requested
+
+            analyzed_count = 0
+            try:
+                analyzed_count = analyze_streams(
+                    config,
+                    progress_callback=progress_wrapper,
+                    force_full_analysis=True
+                ) or 0
+            finally:
+                config.set('filters', 'stream_last_measured_days', original_days)
+                config.save()
+
+            if not analyzed_count:
+                logging.warning("Plan-only analysis executed zero streams; stopping before scoring/plan.")
+                job.status = 'failed'
+                job.current_step = 'Error: Analysis executed zero streams'
+                return
+
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                return
+
+            # Step 3: Score (local only; do not patch Dispatcharr stream stats)
+            job.current_step = 'Scoring streams (no Dispatcharr updates)...'
+            _job_advance_stage(job)  # score
+            _job_set_stage(job, 'score', 'Score', total=1)
+            score_streams(api, config, update_stats=False)
+            _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
+
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                return
+
+            # Step 4: Build plan (compute cleanup ordering without applying)
+            job.current_step = f'Planning cleanup (keeping top {job.streams_per_provider} per provider; no updates)...'
+            _job_advance_stage(job)  # plan
+            _job_set_stage(job, 'plan', 'Plan (no updates)', total=0)
+
+            def plan_progress(pdata):
+                progress_callback(job, pdata)
+                return not job.cancel_requested
+
+            cleanup_stats, plan_rows = cleanup_streams_by_provider(
+                api,
+                job.groups,
+                config,
+                job.streams_per_provider,
+                job.channels,
+                progress_callback=plan_progress,
+                should_continue=lambda: not job.cancel_requested,
+                dry_run=True,
+                return_plan=True,
+            )
+
+            if job.cancel_requested:
+                job.status = 'cancelled'
+                return
+
+            # Write plan to the job workspace for UI review (avoid bloating job history).
+            try:
+                plan_path = config.resolve_path('logs/dispatcharr_plan.json')
+                Path(plan_path).parent.mkdir(parents=True, exist_ok=True)
+                plan_payload = {
+                    'job_id': job.job_id,
+                    'generated_at': datetime.now().isoformat(),
+                    'streams_per_provider': int(job.streams_per_provider),
+                    'groups': job.groups,
+                    'channels': job.channels,
+                    'stats': cleanup_stats,
+                    'rows': plan_rows or [],
+                }
+                with open(plan_path, 'w', encoding='utf-8') as f:
+                    json.dump(plan_payload, f, indent=2)
+            except Exception:
+                logging.warning("Failed to write dispatcharr plan file", exc_info=True)
+
+            # Save a compact summary to history.
+            changed = 0
+            try:
+                changed = sum(1 for r in (plan_rows or []) if isinstance(r, dict) and r.get('changed'))
+            except Exception:
+                changed = 0
+
+            job.result_summary = job.result_summary or {}
+            job.result_summary['dispatcharr_plan'] = {
+                'available': True,
+                'path': 'logs/dispatcharr_plan.json',
+                'streams_per_provider': int(job.streams_per_provider),
+                'channels_total': int(cleanup_stats.get('channels_total', 0) or 0),
+                'channels_changed': int(changed),
+                'total_streams_before': int(cleanup_stats.get('total_streams_before', 0) or 0),
+                'total_streams_after': int(cleanup_stats.get('total_streams_after', 0) or 0),
+            }
+
         elif job.job_type in ['full', 'full_cleanup']:
             if job.job_type == 'full_cleanup':
                 task_name = "Quality Check & Cleanup"
@@ -1764,11 +1906,17 @@ def cleanup_streams_by_provider(
     specific_channel_ids=None,
     progress_callback=None,
     should_continue=None,
+    dry_run=False,
+    return_plan=False,
 ):
     """Keep only the top N streams from each provider for each channel, sorted by quality score.
 
     If provided, `progress_callback` is called with dicts like {'processed': x, 'total': y}.
     If provided, `should_continue` is called periodically; when it returns False, cleanup exits early.
+
+    If `dry_run` is True, no Dispatcharr updates are performed. When `return_plan` is True,
+    this returns a tuple of (stats, plan_rows) where plan_rows contains per-channel before/after
+    stream IDs and summary deltas.
     """
     
     # Track stats
@@ -1779,6 +1927,7 @@ def cleanup_streams_by_provider(
         'channels_total': 0,
         'cancelled': False,
     }
+    plan_rows = [] if return_plan else None
 
     def _should_continue():
         try:
@@ -1849,6 +1998,8 @@ def cleanup_streams_by_provider(
     # then do the potentially long provider-map step with incremental progress.
     if not _should_continue():
         stats['cancelled'] = True
+        if return_plan:
+            return stats, plan_rows
         return stats
 
     channels = api.fetch_channels()
@@ -1896,6 +2047,8 @@ def cleanup_streams_by_provider(
     try:
         if not _should_continue():
             stats['cancelled'] = True
+            if return_plan:
+                return stats, plan_rows
             return stats
 
         provider_map_budget_s = int(os.getenv('DISPATCHARR_CLEANUP_PROVIDER_MAP_MAX_SECONDS', '90') or 90)
@@ -1940,6 +2093,8 @@ def cleanup_streams_by_provider(
                 for sid in missing_stream_ids:
                     if not _should_continue():
                         stats['cancelled'] = True
+                        if return_plan:
+                            return stats, plan_rows
                         return stats
                     if (time.time() - provider_map_start) > provider_map_budget_s:
                         logging.warning(
@@ -1984,6 +2139,8 @@ def cleanup_streams_by_provider(
                 while next_url:
                     if not _should_continue():
                         stats['cancelled'] = True
+                        if return_plan:
+                            return stats, plan_rows
                         return stats
                     if (time.time() - provider_map_start) > provider_map_budget_s:
                         logging.warning(
@@ -2135,7 +2292,41 @@ def cleanup_streams_by_provider(
             rank_streams = sorted(streams_by_rank[rank], key=lambda x: x['score'], reverse=True)
             streams_to_keep.extend([s['id'] for s in rank_streams])
         
-        if streams_to_keep and len(streams_to_keep) < len(stream_ids):
+        # Build plan row (before/after) even when not applying.
+        before_ids = []
+        try:
+            before_ids = [int(s) for s in (stream_ids or [])]
+        except Exception:
+            before_ids = list(stream_ids or [])
+
+        after_ids = streams_to_keep[:] if streams_to_keep else before_ids[:]
+        changed = before_ids != after_ids
+
+        if return_plan:
+            removed = [sid for sid in before_ids if sid not in set(after_ids)]
+            added = [sid for sid in after_ids if sid not in set(before_ids)]
+            plan_rows.append({
+                'channel_id': int(channel_id) if channel_id is not None else channel_id,
+                'channel_number': channel.get('channel_number'),
+                'channel_name': channel.get('name'),
+                'channel_group_id': channel.get('channel_group_id'),
+                'streams_per_provider': int(streams_per_provider),
+                'before_count': len(before_ids),
+                'after_count': len(after_ids),
+                'changed': bool(changed),
+                'removed_count': len(removed),
+                'added_count': len(added),
+                # Keep lists for UI inspection (can be large; still useful for small jobs).
+                'before_stream_ids': before_ids,
+                'after_stream_ids': after_ids,
+                'removed_stream_ids': removed,
+                'added_stream_ids': added,
+            })
+
+        if dry_run:
+            # Don't mutate Dispatcharr; just record totals.
+            stats['total_streams_after'] += len(after_ids)
+        elif streams_to_keep and len(streams_to_keep) < len(stream_ids):
             try:
                 if _should_continue():
                     api.update_channel_streams(channel_id, streams_to_keep)
@@ -2148,6 +2339,8 @@ def cleanup_streams_by_provider(
 
         _progress(provider_done + idx, total_work)
     
+    if return_plan:
+        return stats, plan_rows
     return stats
 
 
@@ -3304,6 +3497,79 @@ def api_results_streams():
             'offset': offset_i,
             'limit': limit_i,
             'streams': rows
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dispatcharr-plan/<job_id>')
+def api_dispatcharr_plan(job_id):
+    """
+    Return a job-scoped Dispatcharr change plan (dry-run output).
+
+    Query params:
+      - limit: int (default 200, max 2000)
+      - offset: int (default 0)
+      - changed_only: bool-ish ("1"/"true") (default 1)
+    """
+    try:
+        job_id = str(job_id or '').strip()
+        if not job_id:
+            return jsonify({'success': False, 'error': 'job_id is required'}), 400
+
+        limit = request.args.get('limit', '200')
+        offset = request.args.get('offset', '0')
+        changed_only = str(request.args.get('changed_only', '1') or '1').strip().lower() in ('1', 'true', 'yes', 'y')
+
+        try:
+            limit_i = max(1, min(2000, int(limit)))
+        except (TypeError, ValueError):
+            limit_i = 200
+        try:
+            offset_i = max(0, int(offset))
+        except (TypeError, ValueError):
+            offset_i = 0
+
+        entry = _get_job_entry(job_id)
+        workspace = None
+        if isinstance(entry, Job):
+            workspace = entry.workspace
+        elif isinstance(entry, dict):
+            workspace = entry.get('workspace')
+
+        if not workspace:
+            return jsonify({'success': False, 'error': 'Job workspace not found'}), 404
+
+        ws = Path(str(workspace))
+        plan_path = ws / 'logs' / 'dispatcharr_plan.json'
+        if not plan_path.exists():
+            return jsonify({'success': False, 'error': 'No dispatcharr plan available for this job'}), 404
+
+        with open(plan_path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+
+        rows = payload.get('rows') if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            rows = []
+
+        if changed_only:
+            rows = [r for r in rows if isinstance(r, dict) and r.get('changed') is True]
+
+        total = len(rows)
+        sliced = rows[offset_i: offset_i + limit_i]
+
+        meta = {}
+        if isinstance(payload, dict):
+            meta = {k: payload.get(k) for k in ('job_id', 'generated_at', 'streams_per_provider', 'groups', 'channels', 'stats')}
+
+        return jsonify({
+            'success': True,
+            'total': int(total),
+            'offset': int(offset_i),
+            'limit': int(limit_i),
+            'changed_only': bool(changed_only),
+            'meta': meta,
+            'rows': sliced,
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

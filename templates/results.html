@@ -97,6 +97,7 @@
                 <button class="tab" onclick="showTab('providers')">Providers</button>
                 <button class="tab" onclick="showTab('channels')">Channels</button>
                 <button class="tab" onclick="showTab('errors')">Errors</button>
+                <button class="tab" onclick="showTab('plan')">Planned Changes</button>
             </div>
             
             <div id="providers-tab" class="tab-content">
@@ -140,6 +141,39 @@
             
             <div id="errors-tab" class="tab-content">
                 <div id="error-list"></div>
+            </div>
+
+            <div id="plan-tab" class="tab-content">
+                <div class="row" style="justify-content: space-between; margin-top: 6px;">
+                    <div class="muted small">
+                        Plan-only runs generate an exact <strong>before vs after</strong> stream list per channel, but do <strong>not</strong> update Dispatcharr.
+                    </div>
+                    <div class="pill" id="plan-count-pill">0 channels</div>
+                </div>
+
+                <div class="stream-tools">
+                    <label style="display:flex;align-items:center;gap:8px;color:#4a5568;font-weight:600;">
+                        <input type="checkbox" id="plan-changed-only" checked />
+                        Show changed only
+                    </label>
+                    <span id="plan-status" class="muted small"></span>
+                </div>
+
+                <div class="stream-table-wrap">
+                    <table id="plan-table">
+                        <thead>
+                            <tr>
+                                <th>Channel</th>
+                                <th>Before</th>
+                                <th>After</th>
+                                <th>Removed</th>
+                                <th>Added</th>
+                                <th>Preview (first 30)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="plan-tbody"></tbody>
+                    </table>
+                </div>
             </div>
 
             <div id="streams-tab" class="tab-content active">
@@ -189,6 +223,7 @@
         const jobId = params.get('job_id');
         const resultsUrl = jobId ? `/api/results/job/${encodeURIComponent(jobId)}` : '/api/results/detailed';
         let streamsLoaded = false;
+        let planLoaded = false;
         // Populated from the detailed results payload; reused by the Streams tab.
         let providerNames = {};
         let providerMetadata = {};
@@ -545,6 +580,9 @@
             if (tabName === 'streams' && !streamsLoaded) {
                 loadStreams();
             }
+            if (tabName === 'plan' && !planLoaded) {
+                loadPlan();
+            }
         }
 
         function setStreamStatus(msg) {
@@ -603,6 +641,86 @@
             } catch (e) {
                 if (loadingEl) loadingEl.textContent = `Failed to load streams: ${e.message}`;
             }
+        }
+
+        function setPlanStatus(msg) {
+            const el = document.getElementById('plan-status');
+            if (el) el.textContent = msg || '';
+        }
+
+        function setPlanCount(n) {
+            const pill = document.getElementById('plan-count-pill');
+            if (pill) pill.textContent = `${n} channel${n === 1 ? '' : 's'}`;
+        }
+
+        function fmtChannelLabel(row) {
+            const num = row && row.channel_number !== undefined && row.channel_number !== null ? String(row.channel_number) : '';
+            const name = row && row.channel_name ? String(row.channel_name) : '';
+            const id = row && row.channel_id !== undefined && row.channel_id !== null ? String(row.channel_id) : '';
+            if (num && name) return `#${escapeHtml(num)} ${escapeHtml(name)} (id ${escapeHtml(id)})`;
+            if (name) return `${escapeHtml(name)} (id ${escapeHtml(id)})`;
+            return `Channel ${escapeHtml(id)}`;
+        }
+
+        async function loadPlan() {
+            planLoaded = true;
+            const tbody = document.getElementById('plan-tbody');
+            const changedOnlyEl = document.getElementById('plan-changed-only');
+            if (!tbody) return;
+
+            if (!jobId) {
+                setPlanStatus('Select a specific run (job_id) to view its plan.');
+                tbody.innerHTML = '';
+                setPlanCount(0);
+                return;
+            }
+
+            async function fetchAndRender() {
+                const changedOnly = Boolean(changedOnlyEl && changedOnlyEl.checked);
+                setPlanStatus('Loading...');
+                tbody.innerHTML = '';
+
+                try {
+                    const url = `/api/dispatcharr-plan/${encodeURIComponent(jobId)}?limit=2000&offset=0&changed_only=${changedOnly ? '1' : '0'}`;
+                    const resp = await fetch(url);
+                    const data = await resp.json();
+                    if (!data.success) {
+                        setPlanStatus(data.error || 'No plan available for this run.');
+                        tbody.innerHTML = '';
+                        setPlanCount(0);
+                        return;
+                    }
+
+                    const rows = Array.isArray(data.rows) ? data.rows : [];
+                    setPlanCount(data.total || rows.length || 0);
+                    setPlanStatus(rows.length ? `Loaded ${rows.length} row(s).` : 'No planned changes.');
+
+                    tbody.innerHTML = rows.map((r) => {
+                        const beforeCount = Number.isFinite(r.before_count) ? r.before_count : (Array.isArray(r.before_stream_ids) ? r.before_stream_ids.length : 0);
+                        const afterCount = Number.isFinite(r.after_count) ? r.after_count : (Array.isArray(r.after_stream_ids) ? r.after_stream_ids.length : 0);
+                        const removedCount = Number.isFinite(r.removed_count) ? r.removed_count : (Array.isArray(r.removed_stream_ids) ? r.removed_stream_ids.length : 0);
+                        const addedCount = Number.isFinite(r.added_count) ? r.added_count : (Array.isArray(r.added_stream_ids) ? r.added_stream_ids.length : 0);
+                        const preview = Array.isArray(r.after_stream_ids) ? r.after_stream_ids.slice(0, 30) : [];
+                        return `<tr>
+                            <td><strong>${fmtChannelLabel(r)}</strong></td>
+                            <td>${escapeHtml(String(beforeCount))}</td>
+                            <td>${escapeHtml(String(afterCount))}</td>
+                            <td style="color:#e53e3e;">${escapeHtml(String(removedCount))}</td>
+                            <td style="color:#38a169;">${escapeHtml(String(addedCount))}</td>
+                            <td class="small muted"><code>${escapeHtml(preview.join(', '))}${(Array.isArray(r.after_stream_ids) && r.after_stream_ids.length > 30) ? '…' : ''}</code></td>
+                        </tr>`;
+                    }).join('');
+                } catch (e) {
+                    setPlanStatus(`Failed to load plan: ${e.message}`);
+                    tbody.innerHTML = '';
+                    setPlanCount(0);
+                }
+            }
+
+            if (changedOnlyEl) {
+                changedOnlyEl.addEventListener('change', fetchAndRender);
+            }
+            await fetchAndRender();
         }
 
         function filterStreamRows() {
