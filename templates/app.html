@@ -729,6 +729,120 @@
         .text-btn:hover {
             color: #764ba2;
         }
+
+        /* Saved regex presets dropdown (custom menu so we can add delete icons) */
+        .regex-preset-dropdown {
+            position: relative;
+            width: 100%;
+        }
+
+        .regex-preset-dropdown__control {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 1em;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            background: #ffffff;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .regex-preset-dropdown__control:focus {
+            outline: none;
+            border-color: #a3bffa;
+            box-shadow: 0 0 0 3px rgba(163, 191, 250, 0.35);
+        }
+
+        .regex-preset-dropdown__label {
+            color: #2d3748;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+        }
+
+        .regex-preset-dropdown__chev {
+            color: #718096;
+            font-weight: 700;
+        }
+
+        .regex-preset-dropdown__menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            right: 0;
+            z-index: 50;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            max-height: 280px;
+            overflow: auto;
+            padding: 6px;
+        }
+
+        .regex-preset-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        .regex-preset-item:hover {
+            background: #f7fafc;
+        }
+
+        .regex-preset-item__text {
+            min-width: 0;
+            flex: 1;
+        }
+
+        .regex-preset-item__name {
+            font-weight: 700;
+            color: #2d3748;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .regex-preset-item__meta {
+            margin-top: 2px;
+            font-size: 0.85em;
+            color: #718096;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .regex-preset-item__delete {
+            border: none;
+            background: transparent;
+            padding: 6px;
+            border-radius: 8px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #718096;
+        }
+
+        .regex-preset-item__delete:hover {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        .regex-preset-item__delete svg {
+            width: 18px;
+            height: 18px;
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -892,10 +1006,13 @@
                     <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
                         Saved Regex Presets
                     </label>
-                    <select id="saved-regex-select"
-                            style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
-                        <option value="">— Select saved regex —</option>
-                    </select>
+                    <div class="regex-preset-dropdown" id="saved-regex-dropdown">
+                        <div class="regex-preset-dropdown__control" id="saved-regex-control" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
+                            <span class="regex-preset-dropdown__label" id="saved-regex-label">— Select saved regex —</span>
+                            <span class="regex-preset-dropdown__chev" aria-hidden="true">▾</span>
+                        </div>
+                        <div class="regex-preset-dropdown__menu hidden" id="saved-regex-menu" role="listbox" aria-label="Saved regex presets"></div>
+                    </div>
                     <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
                         Selecting a preset fills “Regex Filter” (or “Regex Override” for legacy presets). Saving presets happens from the preview dialog.
                     </span>
@@ -1080,6 +1197,7 @@
             loadGroups();
             loadJobHistory();
             loadSavedPatterns();
+            initSavedRegexPresetDropdown();
             loadSavedRegexPresets();
             
             // Check for active jobs periodically
@@ -1088,6 +1206,35 @@
 
         // Saved stream-name regex presets
         let savedRegexPresets = [];
+        let selectedRegexPresetId = '';
+        let savedRegexDropdownInitialized = false;
+
+        function initSavedRegexPresetDropdown() {
+            if (savedRegexDropdownInitialized) return;
+            savedRegexDropdownInitialized = true;
+
+            const control = document.getElementById('saved-regex-control');
+            const dropdown = document.getElementById('saved-regex-dropdown');
+            if (!control || !dropdown) return;
+
+            const toggle = () => toggleSavedRegexMenu();
+            control.addEventListener('click', toggle);
+            control.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggle();
+                }
+                if (e.key === 'Escape') {
+                    closeSavedRegexMenu();
+                }
+            });
+
+            document.addEventListener('click', (e) => {
+                const menu = document.getElementById('saved-regex-menu');
+                if (!menu || menu.classList.contains('hidden')) return;
+                if (!dropdown.contains(e.target)) closeSavedRegexMenu();
+            });
+        }
 
         async function loadSavedRegexPresets() {
             try {
@@ -1101,24 +1248,117 @@
             }
         }
 
-        function renderSavedRegexPresets() {
-            const select = document.getElementById('saved-regex-select');
-            if (!select) return;
-            const current = select.value;
-            select.innerHTML = '<option value="">— Select saved regex —</option>' + savedRegexPresets.map(p => {
-                const name = p.name || 'Unnamed';
-                const created = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
-                return `<option value="${p.id}">${name}${created ? ` • ${created}` : ''}</option>`;
-            }).join('');
-            select.value = current || '';
-            select.onchange = () => onSavedRegexSelected();
+        function setSavedRegexLabel(text) {
+            const label = document.getElementById('saved-regex-label');
+            if (label) label.textContent = text || '— Select saved regex —';
         }
 
-        function onSavedRegexSelected() {
-            const select = document.getElementById('saved-regex-select');
-            const presetId = select?.value || '';
-            if (!presetId) return;
-            const preset = savedRegexPresets.find(p => p.id === presetId);
+        function openSavedRegexMenu() {
+            const menu = document.getElementById('saved-regex-menu');
+            const control = document.getElementById('saved-regex-control');
+            if (!menu || !control) return;
+            menu.classList.remove('hidden');
+            control.setAttribute('aria-expanded', 'true');
+        }
+
+        function closeSavedRegexMenu() {
+            const menu = document.getElementById('saved-regex-menu');
+            const control = document.getElementById('saved-regex-control');
+            if (!menu || !control) return;
+            menu.classList.add('hidden');
+            control.setAttribute('aria-expanded', 'false');
+        }
+
+        function toggleSavedRegexMenu() {
+            const menu = document.getElementById('saved-regex-menu');
+            if (!menu) return;
+            if (menu.classList.contains('hidden')) openSavedRegexMenu();
+            else closeSavedRegexMenu();
+        }
+
+        function renderSavedRegexPresets() {
+            const menu = document.getElementById('saved-regex-menu');
+            if (!menu) return;
+
+            // Rebuild menu items.
+            menu.innerHTML = '';
+
+            // Keep selection if it still exists.
+            const selectedPreset = selectedRegexPresetId
+                ? savedRegexPresets.find(p => String(p?.id) === String(selectedRegexPresetId))
+                : null;
+            if (!selectedPreset) {
+                selectedRegexPresetId = '';
+                setSavedRegexLabel('— Select saved regex —');
+            } else {
+                setSavedRegexLabel(selectedPreset.name || 'Saved regex');
+            }
+
+            if (!Array.isArray(savedRegexPresets) || savedRegexPresets.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'regex-preset-item';
+                empty.style.cursor = 'default';
+                empty.innerHTML = `<div class="regex-preset-item__text"><div class="regex-preset-item__name" style="font-weight:600; color:#718096;">No saved presets yet</div><div class="regex-preset-item__meta">Run a stream preview and click “Save Regex”.</div></div>`;
+                menu.appendChild(empty);
+                return;
+            }
+
+            for (const preset of savedRegexPresets) {
+                if (!preset || !preset.id) continue;
+                const id = String(preset.id);
+                const name = String(preset.name || 'Unnamed');
+                const created = preset.created_at ? new Date(preset.created_at).toLocaleDateString() : '';
+                const meta = created ? `Created ${created}` : '';
+
+                const item = document.createElement('div');
+                item.className = 'regex-preset-item';
+                item.setAttribute('role', 'option');
+                item.setAttribute('data-id', id);
+
+                const text = document.createElement('div');
+                text.className = 'regex-preset-item__text';
+
+                const nameEl = document.createElement('div');
+                nameEl.className = 'regex-preset-item__name';
+                nameEl.textContent = name;
+
+                const metaEl = document.createElement('div');
+                metaEl.className = 'regex-preset-item__meta';
+                metaEl.textContent = meta;
+
+                text.appendChild(nameEl);
+                if (meta) text.appendChild(metaEl);
+
+                const delBtn = document.createElement('button');
+                delBtn.type = 'button';
+                delBtn.className = 'regex-preset-item__delete';
+                delBtn.title = `Delete “${name}”`;
+                delBtn.setAttribute('aria-label', `Delete preset ${name}`);
+                delBtn.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M9 3h6m-8 4h10m-9 0 1 14h6l1-14M10 7v12m4-12v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                `;
+                delBtn.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    await deleteRegexPreset(id, name);
+                });
+
+                item.appendChild(text);
+                item.appendChild(delBtn);
+                item.addEventListener('click', () => {
+                    selectedRegexPresetId = id;
+                    setSavedRegexLabel(name);
+                    applyRegexPreset(preset);
+                    closeSavedRegexMenu();
+                });
+
+                menu.appendChild(item);
+            }
+        }
+
+        function applyRegexPreset(preset) {
             if (!preset?.regex) return;
 
             const mode = String(preset?.regex_mode || '').trim().toLowerCase();
@@ -1144,6 +1384,29 @@
             } else {
                 if (overrideInput) overrideInput.value = preset.regex;
                 if (filterInput) filterInput.value = '';
+            }
+        }
+
+        async function deleteRegexPreset(presetId, presetName) {
+            const label = presetName ? `“${presetName}”` : 'this preset';
+            if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
+
+            try {
+                const resp = await fetch(`/api/regex/presets/${encodeURIComponent(String(presetId))}`, { method: 'DELETE' });
+                const data = await resp.json();
+                if (!data.success) throw new Error(data.error || 'Failed to delete preset.');
+
+                // If we deleted the selected preset, clear selection label.
+                if (String(selectedRegexPresetId) === String(presetId)) {
+                    selectedRegexPresetId = '';
+                    setSavedRegexLabel('— Select saved regex —');
+                }
+
+                // Refresh both dropdowns that depend on presets.
+                await loadSavedRegexPresets();
+                await loadSavedPatterns();
+            } catch (e) {
+                alert(`Unable to delete preset: ${e.message}`);
             }
         }
 
@@ -1742,9 +2005,10 @@
                 await loadSavedPatterns();
                 // Best-effort select the newly saved preset.
                 const presetId = saveData.preset?.id;
-                const select = document.getElementById('saved-regex-select');
-                if (select && presetId) {
-                    select.value = presetId;
+                if (presetId) {
+                    selectedRegexPresetId = String(presetId);
+                    const preset = savedRegexPresets.find(p => String(p?.id) === String(presetId));
+                    setSavedRegexLabel(preset?.name || 'Saved regex');
                 }
 
                 alert(saveData.replaced ? 'Saved regex preset (overwrote existing preset with same name).' : 'Saved regex preset.');
