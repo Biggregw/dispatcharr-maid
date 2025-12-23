@@ -35,7 +35,14 @@ from stream_analysis import (
 )
 from job_workspace import create_job_workspace
 
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+# Ensure logs always show up in Docker logs/stdout, even if something else
+# configured logging before this module is imported.
+logging.basicConfig(
+    level=logging.INFO,
+    stream=sys.stdout,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    force=True,
+)
 
 app = Flask(__name__)
 
@@ -1488,6 +1495,9 @@ def run_job_worker(job, api, config):
                     job.result_summary = summary
         
     except Exception as e:
+        # Critical: without this, failures in background threads are "silent" in
+        # container logs, making Saved Pipeline issues hard to debug.
+        logging.exception("Job failed (job_id=%s, job_type=%s)", getattr(job, 'job_id', None), getattr(job, 'job_type', None))
         job.status = 'failed'
         job.error = str(e)
         job.completed_at = datetime.now().isoformat()
