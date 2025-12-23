@@ -86,13 +86,13 @@
         <div class="card" id="detailed-breakdown-card">
             <h2>🔍 Detailed Breakdown</h2>
             <div class="tabs">
-                <button class="tab active" onclick="showTab('providers')">Providers</button>
+                <button class="tab active" onclick="showTab('streams')">Streams</button>
+                <button class="tab" onclick="showTab('providers')">Providers</button>
                 <button class="tab" onclick="showTab('channels')">Channels</button>
                 <button class="tab" onclick="showTab('errors')">Errors</button>
-                <button class="tab" onclick="showTab('streams')">Streams</button>
             </div>
             
-            <div id="providers-tab" class="tab-content active">
+            <div id="providers-tab" class="tab-content">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin: 10px 0 0 0;">
                     <label style="display:flex;align-items:center;gap:8px;color:#4a5568;font-weight:600;">
                         <input type="checkbox" id="show-all-providers" />
@@ -135,7 +135,7 @@
                 <div id="error-list"></div>
             </div>
 
-            <div id="streams-tab" class="tab-content">
+            <div id="streams-tab" class="tab-content active">
                 <div class="row" style="justify-content: space-between; margin-top: 6px;">
                     <div class="muted small">
                         Tick streams you want the regex to <strong>match</strong>. Untick streams you want it to <strong>exclude</strong> (e.g. untick any “dolby” variants).
@@ -404,6 +404,11 @@
                             <div style="color:#718096;font-size:0.9em;">${count} occurrence${count > 1 ? 's' : ''}</div>
                         </div>`
                     ).join('');
+                }
+
+                // If Streams is the default active tab, load it immediately.
+                if (document.getElementById('streams-tab')?.classList.contains('active') && !streamsLoaded) {
+                    loadStreams();
                 }
             });
         
