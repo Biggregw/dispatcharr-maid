@@ -1907,7 +1907,12 @@ def api_list_channel_selection_patterns():
         # Return newest first.
         patterns = [p for p in patterns if isinstance(p, dict)]
         patterns.sort(key=lambda p: (p.get('created_at') or ''), reverse=True)
-        return jsonify({'success': True, 'patterns': patterns})
+        resp = jsonify({'success': True, 'patterns': patterns})
+        # Avoid stale caches (mobile browsers / proxies).
+        resp.headers['Cache-Control'] = 'no-store, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -2390,7 +2395,12 @@ def api_list_regex_presets():
             presets = _load_stream_name_regex_presets()
         presets = [p for p in presets if isinstance(p, dict)]
         presets.sort(key=lambda p: (p.get('created_at') or ''), reverse=True)
-        return jsonify({'success': True, 'presets': presets})
+        resp = jsonify({'success': True, 'presets': presets})
+        # Avoid stale caches (mobile browsers / proxies).
+        resp.headers['Cache-Control'] = 'no-store, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
