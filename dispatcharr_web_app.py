@@ -3575,6 +3575,166 @@ def api_dispatcharr_plan(job_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/dispatcharr-plan/<job_id>/commit', methods=['POST'])
+def api_dispatcharr_plan_commit(job_id):
+    """
+    Apply a job-scoped Dispatcharr change plan (created by the plan-only cleanup job).
+
+    Payload:
+      {
+        "confirm": true,                # required safety latch
+        "changed_only": true,           # optional (default true)
+        "channel_ids": [1,2,3] | null   # optional subset
+      }
+    """
+    try:
+        job_id = str(job_id or '').strip()
+        if not job_id:
+            return jsonify({'success': False, 'error': 'job_id is required'}), 400
+
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            data = {}
+
+        if data.get('confirm') is not True:
+            return jsonify({
+                'success': False,
+                'error': 'Refusing to apply plan without {"confirm": true}.'
+            }), 400
+
+        changed_only = data.get('changed_only')
+        changed_only = True if changed_only is None else bool(changed_only)
+
+        channel_ids = data.get('channel_ids')
+        channel_id_set = None
+        if channel_ids is not None:
+            if not isinstance(channel_ids, list):
+                return jsonify({'success': False, 'error': '"channel_ids" must be a list or null'}), 400
+            tmp = []
+            for cid in channel_ids:
+                try:
+                    tmp.append(int(cid))
+                except Exception:
+                    return jsonify({'success': False, 'error': f'Invalid channel id: {cid}'}), 400
+            channel_id_set = set(tmp)
+
+        entry = _get_job_entry(job_id)
+        workspace = None
+        if isinstance(entry, Job):
+            workspace = entry.workspace
+        elif isinstance(entry, dict):
+            workspace = entry.get('workspace')
+
+        if not workspace:
+            return jsonify({'success': False, 'error': 'Job workspace not found'}), 404
+
+        ws = Path(str(workspace))
+        plan_path = ws / 'logs' / 'dispatcharr_plan.json'
+        if not plan_path.exists():
+            return jsonify({'success': False, 'error': 'No dispatcharr plan available for this job'}), 404
+
+        with open(plan_path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+
+        if isinstance(payload, dict):
+            payload_job_id = str(payload.get('job_id') or '').strip()
+            if payload_job_id and payload_job_id != job_id:
+                return jsonify({'success': False, 'error': 'Plan job_id mismatch'}), 400
+
+        rows = payload.get('rows') if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            rows = []
+
+        # Filter rows.
+        filtered = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            if changed_only and r.get('changed') is not True:
+                continue
+            cid = r.get('channel_id')
+            try:
+                cid_i = int(cid) if cid is not None else None
+            except Exception:
+                cid_i = None
+            if cid_i is None:
+                continue
+            if channel_id_set is not None and cid_i not in channel_id_set:
+                continue
+            filtered.append(r)
+
+        if not filtered:
+            return jsonify({
+                'success': True,
+                'applied_channels': 0,
+                'failed_channels': 0,
+                'failures': [],
+                'message': 'No matching plan rows to apply.'
+            })
+
+        # Apply the plan.
+        api = DispatcharrAPI()
+        api.login()
+
+        applied = 0
+        failed = 0
+        failures = []
+        for r in filtered:
+            cid = r.get('channel_id')
+            after_ids = r.get('after_stream_ids')
+            try:
+                cid_i = int(cid)
+            except Exception:
+                failed += 1
+                failures.append({'channel_id': cid, 'error': 'Invalid channel_id'})
+                continue
+
+            if not isinstance(after_ids, list):
+                failed += 1
+                failures.append({'channel_id': cid_i, 'error': 'Missing after_stream_ids'})
+                continue
+
+            try:
+                normalized = [int(x) for x in after_ids]
+            except Exception:
+                failed += 1
+                failures.append({'channel_id': cid_i, 'error': 'Invalid after_stream_ids'})
+                continue
+
+            try:
+                api.update_channel_streams(cid_i, normalized)
+                applied += 1
+            except Exception as exc:
+                failed += 1
+                failures.append({'channel_id': cid_i, 'error': str(exc)})
+
+        # Persist a lightweight commit record to the job workspace.
+        try:
+            commit_record = {
+                'job_id': job_id,
+                'committed_at': datetime.now().isoformat(),
+                'changed_only': bool(changed_only),
+                'channel_ids': sorted(channel_id_set) if channel_id_set is not None else None,
+                'applied_channels': int(applied),
+                'failed_channels': int(failed),
+                'failures': failures[:200],  # cap to avoid huge payloads
+            }
+            commit_path = ws / 'logs' / 'dispatcharr_plan_commit.json'
+            with open(commit_path, 'w', encoding='utf-8') as handle:
+                json.dump(commit_record, handle, indent=2)
+        except Exception:
+            logging.debug("Failed to write plan commit record", exc_info=True)
+
+        return jsonify({
+            'success': True,
+            'applied_channels': int(applied),
+            'failed_channels': int(failed),
+            'failures': failures,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/regex/generate', methods=['POST'])
 def api_generate_regex():
     """

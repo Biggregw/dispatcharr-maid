@@ -156,7 +156,11 @@
                         <input type="checkbox" id="plan-changed-only" checked />
                         Show changed only
                     </label>
+                    <button class="btn btn-sm" type="button" id="plan-commit-btn" style="background:#38a169;color:white;" onclick="commitPlan()" disabled>
+                        ✅ Commit planned changes
+                    </button>
                     <span id="plan-status" class="muted small"></span>
+                    <span id="plan-commit-status" class="muted small"></span>
                 </div>
 
                 <div class="stream-table-wrap">
@@ -224,6 +228,7 @@
         const resultsUrl = jobId ? `/api/results/job/${encodeURIComponent(jobId)}` : '/api/results/detailed';
         let streamsLoaded = false;
         let planLoaded = false;
+        let planAvailable = false;
         // Populated from the detailed results payload; reused by the Streams tab.
         let providerNames = {};
         let providerMetadata = {};
@@ -648,6 +653,17 @@
             if (el) el.textContent = msg || '';
         }
 
+        function setPlanCommitStatus(msg) {
+            const el = document.getElementById('plan-commit-status');
+            if (el) el.textContent = msg || '';
+        }
+
+        function setPlanCommitEnabled(enabled) {
+            const btn = document.getElementById('plan-commit-btn');
+            if (!btn) return;
+            btn.disabled = !enabled;
+        }
+
         function setPlanCount(n) {
             const pill = document.getElementById('plan-count-pill');
             if (pill) pill.textContent = `${n} channel${n === 1 ? '' : 's'}`;
@@ -670,6 +686,9 @@
 
             if (!jobId) {
                 setPlanStatus('Select a specific run (job_id) to view its plan.');
+                setPlanCommitStatus('');
+                planAvailable = false;
+                setPlanCommitEnabled(false);
                 tbody.innerHTML = '';
                 setPlanCount(0);
                 return;
@@ -678,6 +697,8 @@
             async function fetchAndRender() {
                 const changedOnly = Boolean(changedOnlyEl && changedOnlyEl.checked);
                 setPlanStatus('Loading...');
+                setPlanCommitStatus('');
+                setPlanCommitEnabled(false);
                 tbody.innerHTML = '';
 
                 try {
@@ -686,6 +707,8 @@
                     const data = await resp.json();
                     if (!data.success) {
                         setPlanStatus(data.error || 'No plan available for this run.');
+                        planAvailable = false;
+                        setPlanCommitEnabled(false);
                         tbody.innerHTML = '';
                         setPlanCount(0);
                         return;
@@ -694,6 +717,8 @@
                     const rows = Array.isArray(data.rows) ? data.rows : [];
                     setPlanCount(data.total || rows.length || 0);
                     setPlanStatus(rows.length ? `Loaded ${rows.length} row(s).` : 'No planned changes.');
+                    planAvailable = rows.some((r) => r && typeof r === 'object' && r.changed === true);
+                    setPlanCommitEnabled(planAvailable);
 
                     tbody.innerHTML = rows.map((r) => {
                         const beforeCount = Number.isFinite(r.before_count) ? r.before_count : (Array.isArray(r.before_stream_ids) ? r.before_stream_ids.length : 0);
@@ -721,6 +746,51 @@
                 changedOnlyEl.addEventListener('change', fetchAndRender);
             }
             await fetchAndRender();
+        }
+
+        async function commitPlan() {
+            if (!jobId) {
+                setPlanCommitStatus('Select a specific run first.');
+                return;
+            }
+            if (!planAvailable) {
+                setPlanCommitStatus('No planned changes to commit.');
+                return;
+            }
+
+            const ok = window.confirm(
+                'This will UPDATE Dispatcharr channel stream lists to match the plan for this run.\n\n' +
+                'Continue?'
+            );
+            if (!ok) return;
+
+            setPlanCommitStatus('Committing...');
+            setPlanCommitEnabled(false);
+
+            try {
+                const resp = await fetch(`/api/dispatcharr-plan/${encodeURIComponent(jobId)}/commit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirm: true, changed_only: true })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    setPlanCommitStatus(data.error || 'Failed to commit planned changes.');
+                    setPlanCommitEnabled(true);
+                    return;
+                }
+
+                const applied = typeof data.applied_channels === 'number' ? data.applied_channels : 0;
+                const failed = typeof data.failed_channels === 'number' ? data.failed_channels : 0;
+                setPlanCommitStatus(`Committed ${applied} channel(s)${failed ? ` (${failed} failed)` : ''}.`);
+
+                // Refresh the plan view (still reflects the same saved plan file).
+                planLoaded = false;
+                await loadPlan();
+            } catch (e) {
+                setPlanCommitStatus(`Commit failed: ${e.message}`);
+                setPlanCommitEnabled(true);
+            }
         }
 
         function filterStreamRows() {
