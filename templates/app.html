@@ -1078,7 +1078,7 @@
 
         async function loadSavedRegexPresets() {
             try {
-                const resp = await fetch('/api/regex/presets');
+                const resp = await fetch(`/api/regex/presets?ts=${Date.now()}`, { cache: 'no-store' });
                 const data = await resp.json();
                 if (!data.success) return;
                 savedRegexPresets = Array.isArray(data.presets) ? data.presets : [];
@@ -1117,7 +1117,7 @@
 
         async function loadSavedPatterns() {
             try {
-                const resp = await fetch('/api/channel-selection-patterns');
+                const resp = await fetch(`/api/channel-selection-patterns?ts=${Date.now()}`, { cache: 'no-store' });
                 const data = await resp.json();
                 if (!data.success) return;
                 savedPatterns = Array.isArray(data.patterns) ? data.patterns : [];
