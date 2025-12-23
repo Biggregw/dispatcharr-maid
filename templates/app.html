@@ -879,6 +879,17 @@
 
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
+                        Regex Filter (optional)
+                    </label>
+                    <input type="text" id="streamNameRegex" placeholder="e.g., york.*(hd|fhd)$"
+                           style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
+                    <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
+                        Layered on top of Base Search Text / Include / Exclude / +1. (Unlike Regex Override, this does not replace them.)
+                    </span>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
                         Saved Regex Presets
                     </label>
                     <select id="saved-regex-select"
@@ -886,7 +897,7 @@
                         <option value="">— Select saved regex —</option>
                     </select>
                     <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                        Selecting a preset fills “Regex Override”. Saving presets happens from the preview dialog.
+                        Selecting a preset fills “Regex Filter” (or “Regex Override” for legacy presets). Saving presets happens from the preview dialog.
                     </span>
                 </div>
 
@@ -1108,9 +1119,31 @@
             const presetId = select?.value || '';
             if (!presetId) return;
             const preset = savedRegexPresets.find(p => p.id === presetId);
-            const input = document.getElementById('streamNameRegexOverride');
-            if (input && preset?.regex) {
-                input.value = preset.regex;
+            if (!preset?.regex) return;
+
+            const mode = String(preset?.regex_mode || '').trim().toLowerCase();
+            const overrideInput = document.getElementById('streamNameRegexOverride');
+            const filterInput = document.getElementById('streamNameRegex');
+
+            // Apply any stored refresh filter settings (best-effort).
+            const base = document.getElementById('baseSearchText');
+            const inc = document.getElementById('includeFilter');
+            const exc = document.getElementById('excludeFilter');
+            const exPlusOne = document.getElementById('excludePlusOne');
+            const ex4k = document.getElementById('exclude4K');
+            if (base && typeof preset.base_search_text === 'string') base.value = preset.base_search_text;
+            if (inc && typeof preset.include_filter === 'string') inc.value = preset.include_filter;
+            if (exc && typeof preset.exclude_filter === 'string') exc.value = preset.exclude_filter;
+            if (exPlusOne && typeof preset.exclude_plus_one === 'boolean') exPlusOne.checked = preset.exclude_plus_one;
+            if (ex4k && typeof preset.exclude_4k === 'boolean') ex4k.checked = preset.exclude_4k;
+
+            // Backwards compatible: presets without regex_mode behave like an override.
+            if (mode === 'filter') {
+                if (filterInput) filterInput.value = preset.regex;
+                if (overrideInput) overrideInput.value = '';
+            } else {
+                if (overrideInput) overrideInput.value = preset.regex;
+                if (filterInput) filterInput.value = '';
             }
         }
 
@@ -1652,17 +1685,26 @@
             }
 
             try {
-                const genResp = await fetch('/api/regex/generate', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ include, exclude })
-                });
-                const genData = await genResp.json();
-                if (!genData.success || !genData.regex) {
-                    throw new Error(genData.error || 'Failed to generate regex.');
+                const overrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
+                let regex = overrideValue;
+                let regexMode = 'override';
+
+                if (!regex) {
+                    // Generate an exact-match regex from the preview selection so the
+                    // saved preset reproduces the same selection when re-applied.
+                    regexMode = 'filter';
+                    const genResp = await fetch('/api/regex/generate', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ include, exclude, mode: 'exact' })
+                    });
+                    const genData = await genResp.json();
+                    if (!genData.success || !genData.regex) {
+                        throw new Error(genData.error || 'Failed to generate regex.');
+                    }
+                    regex = String(genData.regex).trim();
                 }
 
-                const regex = String(genData.regex).trim();
                 // Also persist current group/channel selection so the preset can be used as a "Saved Pipeline" preset.
                 const saveResp = await fetch('/api/regex/save', {
                     method: 'POST',
@@ -1670,10 +1712,15 @@
                     body: JSON.stringify({
                         name,
                         regex,
+                        regex_mode: regexMode,
                         groups: (Array.isArray(selectedGroups) && selectedGroups.length > 0) ? selectedGroups : undefined,
                         channels: Array.isArray(selectedChannels) ? selectedChannels : null,
                         streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
-                        exclude_4k: document.getElementById('exclude4K')?.checked || false
+                        exclude_4k: document.getElementById('exclude4K')?.checked || false,
+                        exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
+                        base_search_text: document.getElementById('baseSearchText')?.value ?? null,
+                        include_filter: document.getElementById('includeFilter')?.value || null,
+                        exclude_filter: document.getElementById('excludeFilter')?.value || null
                     })
                 });
                 const saveData = await saveResp.json();
@@ -1681,9 +1728,14 @@
                     throw new Error(saveData.error || 'Failed to save regex preset.');
                 }
 
-                // Fill the override input immediately.
-                const input = document.getElementById('streamNameRegexOverride');
-                if (input) input.value = regex;
+                // Fill the appropriate input immediately.
+                if (regexMode === 'filter') {
+                    const input = document.getElementById('streamNameRegex');
+                    if (input) input.value = regex;
+                } else {
+                    const input = document.getElementById('streamNameRegexOverride');
+                    if (input) input.value = regex;
+                }
 
                 // Refresh dropdowns.
                 await loadSavedRegexPresets();
@@ -1720,6 +1772,7 @@
 
             try {
                 const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
+                const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
                 const payload = {
                     channel_id: selectedChannels[0],
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
@@ -1727,6 +1780,7 @@
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
                     exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
                     exclude_4k: document.getElementById('exclude4K')?.checked || false,
+                    stream_name_regex: regexFilterValue ? regexFilterValue : null,
                     stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
                 };
 
@@ -1896,6 +1950,7 @@
                 renderOptimisticStartingJob(jobType, groupNames, channelNames);
                 
                 const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
+                const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
                 const payload = {
                     job_type: jobType,
                     groups: selectedGroups,
@@ -1909,6 +1964,7 @@
                     exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
                     exclude_4k: document.getElementById('exclude4K')?.checked || false,
                     selected_stream_ids: selectedStreamIds,
+                    stream_name_regex: regexFilterValue ? regexFilterValue : null,
                     stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
                 };
 
