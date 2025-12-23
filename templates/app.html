@@ -1322,6 +1322,12 @@
                 : 'Streams found for the selected channel.') + ` ${baseSearchText}`;
             summary.textContent = `${preview.new_count} stream(s) ready to add from ${preview.total_matching} matches.`;
 
+            if (preview.preview_truncated) {
+                const limit = preview.preview_limit || refreshPreviewStreams.length;
+                const shown = Math.min(limit, refreshPreviewStreams.length);
+                description.textContent += ` Showing first ${shown} result(s) — refine your regex/filters to narrow matches.`;
+            }
+
             if (!refreshPreviewStreams.length) {
                 list.innerHTML = '<div class="alert alert-warning">No streams matched your filters. Proceeding will clear current streams for this channel.</div>';
                 return;

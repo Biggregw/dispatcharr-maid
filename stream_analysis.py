@@ -1390,77 +1390,114 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     
     logging.info(f"Checking {len(all_streams)} streams from all providers...")
     
-    # Find matching streams
-    matching_streams = []
-    for stream in all_streams:
-        stream_name = stream.get('name', '')
-        stream_id = stream.get('id')
-        
-        if matches_stream(stream_name):
-            matching_streams.append({'id': stream_id, 'url': stream.get('url', ''), 'name': stream_name})
-    
-    logging.info(f"Found {len(matching_streams)} matching streams")
-    
-    # Filter by resolution if exclude_4k is enabled
-    if exclude_4k and matching_streams:
-        logging.info("Checking stream resolutions to exclude 4K/UHD...")
-        filtered_streams = []
-        excluded_4k = 0
+    # Preview responses can become very large when regex override is broad.
+    # Cap the returned stream list while still computing accurate counts.
+    _PREVIEW_STREAM_LIMIT = 250
 
-        for stream in matching_streams:
-            resolution = check_stream_resolution(stream['url'])
+    total_matching = 0
+    preview_truncated = False
+
+    allowed_set = None
+    if allowed_stream_ids is not None:
+        allowed_set = {int(sid) for sid in allowed_stream_ids}
+
+    # Build filtered streams (used for actual update) and a capped list of
+    # detailed streams for preview/UI.
+    filtered_streams = []   # used when preview=False (full set)
+    preview_streams = []    # capped list returned to UI when preview=True
+    filtered_count = 0      # accurate count after all filtering (and allowed_set)
+
+    if exclude_4k:
+        logging.info("Checking stream resolutions to exclude 4K/UHD...")
+        excluded_4k = 0
+        for stream in all_streams:
+            stream_name = stream.get('name', '')
+            stream_id = stream.get('id')
+            stream_url = stream.get('url', '')
+
+            if not matches_stream(stream_name):
+                continue
+
+            total_matching += 1
+
+            if allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
+                continue
+
+            resolution = check_stream_resolution(stream_url)
+            if resolution in ['3840x2160', '4096x2160']:
+                excluded_4k += 1
+                continue
+
+            filtered_count += 1
 
             detailed_stream = {
-                'id': stream['id'],
-                'name': stream['name'],
-                'url': stream.get('url', ''),
+                'id': stream_id,
+                'name': stream_name,
+                # URL is not used by the UI and can be large/sensitive; omit.
                 'resolution': resolution
             }
 
-            if resolution:
-                # Exclude 4K/UHD (3840x2160 or 4096x2160)
-                if resolution in ['3840x2160', '4096x2160']:
-                    logging.info(f"Excluding 4K stream: {stream['name']} ({resolution})")
-                    excluded_4k += 1
+            if preview:
+                if len(preview_streams) < _PREVIEW_STREAM_LIMIT:
+                    preview_streams.append(detailed_stream)
                 else:
-                    filtered_streams.append(detailed_stream)
+                    preview_truncated = True
             else:
-                # If we can't determine resolution, include it (safer than excluding)
                 filtered_streams.append(detailed_stream)
 
+        logging.info(f"Found {total_matching} matching streams before 4K filtering")
         logging.info(f"Excluded {excluded_4k} 4K/UHD streams")
+
     else:
-        # No filtering, use all matching streams
-        filtered_streams = [
-            {
-                'id': s['id'],
-                'name': s['name'],
-                'url': s.get('url', ''),
+        for stream in all_streams:
+            stream_name = stream.get('name', '')
+            stream_id = stream.get('id')
+
+            if not matches_stream(stream_name):
+                continue
+
+            total_matching += 1
+
+            if allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
+                continue
+
+            filtered_count += 1
+
+            detailed_stream = {
+                'id': stream_id,
+                'name': stream_name,
+                # URL is not used by the UI and can be large/sensitive; omit.
                 'resolution': None
             }
-            for s in matching_streams
-        ]
 
-    if allowed_stream_ids is not None:
-        allowed_set = {int(sid) for sid in allowed_stream_ids}
-        filtered_streams = [s for s in filtered_streams if s['id'] in allowed_set]
+            if preview:
+                if len(preview_streams) < _PREVIEW_STREAM_LIMIT:
+                    preview_streams.append(detailed_stream)
+                else:
+                    preview_truncated = True
+            else:
+                filtered_streams.append(detailed_stream)
 
-    final_stream_ids = [s['id'] for s in filtered_streams]
+        logging.info(f"Found {total_matching} matching streams")
+
+    final_stream_ids = [s['id'] for s in filtered_streams] if not preview else []
     
-    if not final_stream_ids:
+    if (not preview and not final_stream_ids) or (preview and filtered_count == 0):
         logging.info("No streams remaining after filtering - channel will be emptied")
     else:
-        logging.info(f"Replacing channel streams with {len(final_stream_ids)} matching streams...")
+        logging.info(f"Replacing channel streams with {filtered_count if preview else len(final_stream_ids)} matching streams...")
     
     result = {
-        'total_matching': len([s for s in matching_streams]),
+        'total_matching': total_matching,
         'previous_count': len(current_stream_ids),
-        'new_count': len(final_stream_ids),
+        'new_count': filtered_count if preview else len(final_stream_ids),
         'removed': len(current_stream_ids),
-        'added': len(final_stream_ids),
-        'streams': filtered_streams,
+        'added': filtered_count if preview else len(final_stream_ids),
+        'streams': preview_streams if preview else filtered_streams,
         'channel_name': channel_name,
-        'base_search_text': search_name
+        'base_search_text': search_name,
+        'preview_limit': _PREVIEW_STREAM_LIMIT if preview else None,
+        'preview_truncated': bool(preview_truncated) if preview else False
     }
 
     if preview:
