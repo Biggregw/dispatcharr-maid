@@ -1206,9 +1206,25 @@ def run_job_worker(job, api, config):
 
                 job.current_step = f'Quality: cleaning up (keeping top {job.streams_per_provider} per provider)...'
                 _job_advance_stage(job)  # cleanup
-                _job_set_stage(job, 'cleanup', 'Cleanup', total=1)
-                cleanup_stats = cleanup_streams_by_provider(api, job.groups, config, job.streams_per_provider, job.channels)
-                _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
+                # Cleanup can take a long time; track progress per channel and allow cancellation.
+                _job_set_stage(job, 'cleanup', 'Cleanup', total=0)
+
+                def cleanup_progress(pdata):
+                    progress_callback(job, pdata)
+                    return not job.cancel_requested
+
+                cleanup_stats = cleanup_streams_by_provider(
+                    api,
+                    job.groups,
+                    config,
+                    job.streams_per_provider,
+                    job.channels,
+                    progress_callback=cleanup_progress,
+                    should_continue=lambda: not job.cancel_requested
+                )
+                # Ensure stage completion if we know the total.
+                if getattr(job, 'stage_total', 0):
+                    _job_update_stage_progress(job, processed=job.stage_total, total=job.stage_total, failed=job.failed)
 
                 job.result_summary = job.result_summary or {}
                 job.result_summary['pattern_pipeline'] = {
@@ -1304,9 +1320,25 @@ def run_job_worker(job, api, config):
                 
                 job.current_step = f'Cleaning up (keeping top {job.streams_per_provider} per provider)...'
                 _job_advance_stage(job)  # cleanup
-                _job_set_stage(job, 'cleanup', 'Cleanup', total=1)
-                cleanup_stats = cleanup_streams_by_provider(api, job.groups, config, job.streams_per_provider, job.channels)
-                _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
+                # Cleanup can take a long time; track progress per channel and allow cancellation.
+                _job_set_stage(job, 'cleanup', 'Cleanup', total=0)
+
+                def cleanup_progress(pdata):
+                    progress_callback(job, pdata)
+                    return not job.cancel_requested
+
+                cleanup_stats = cleanup_streams_by_provider(
+                    api,
+                    job.groups,
+                    config,
+                    job.streams_per_provider,
+                    job.channels,
+                    progress_callback=cleanup_progress,
+                    should_continue=lambda: not job.cancel_requested
+                )
+                # Ensure stage completion if we know the total.
+                if getattr(job, 'stage_total', 0):
+                    _job_update_stage_progress(job, processed=job.stage_total, total=job.stage_total, failed=job.failed)
                 
                 # Add cleanup stats to result summary
                 if not job.result_summary:
@@ -1413,9 +1445,25 @@ def run_job_worker(job, api, config):
         
         elif job.job_type == 'cleanup':
             job.current_step = f'Cleaning up (keeping top {job.streams_per_provider} per provider)...'
-            _job_set_stage(job, 'cleanup', 'Cleanup', total=1)
-            cleanup_stats = cleanup_streams_by_provider(api, job.groups, config, job.streams_per_provider, job.channels)
-            _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
+            # Cleanup can take a long time; track progress per channel and allow cancellation.
+            _job_set_stage(job, 'cleanup', 'Cleanup', total=0)
+
+            def cleanup_progress(pdata):
+                progress_callback(job, pdata)
+                return not job.cancel_requested
+
+            cleanup_stats = cleanup_streams_by_provider(
+                api,
+                job.groups,
+                config,
+                job.streams_per_provider,
+                job.channels,
+                progress_callback=cleanup_progress,
+                should_continue=lambda: not job.cancel_requested
+            )
+            # Ensure stage completion if we know the total.
+            if getattr(job, 'stage_total', 0):
+                _job_update_stage_progress(job, processed=job.stage_total, total=job.stage_total, failed=job.failed)
             
             # Store cleanup stats for history
             job.result_summary = {
@@ -1451,15 +1499,43 @@ def run_job_worker(job, api, config):
         save_job_to_history(job)
 
 
-def cleanup_streams_by_provider(api, selected_group_ids, config, streams_per_provider=1, specific_channel_ids=None):
-    """Keep only the top N streams from each provider for each channel, sorted by quality score"""
+def cleanup_streams_by_provider(
+    api,
+    selected_group_ids,
+    config,
+    streams_per_provider=1,
+    specific_channel_ids=None,
+    progress_callback=None,
+    should_continue=None,
+):
+    """Keep only the top N streams from each provider for each channel, sorted by quality score.
+
+    If provided, `progress_callback` is called with dicts like {'processed': x, 'total': y}.
+    If provided, `should_continue` is called periodically; when it returns False, cleanup exits early.
+    """
     
     # Track stats
     stats = {
         'channels_processed': 0,
         'total_streams_before': 0,
-        'total_streams_after': 0
+        'total_streams_after': 0,
+        'channels_total': 0,
+        'cancelled': False,
     }
+
+    def _should_continue():
+        try:
+            return bool(should_continue()) if should_continue else True
+        except Exception:
+            return True
+
+    def _progress(processed, total):
+        if not progress_callback:
+            return True
+        try:
+            return bool(progress_callback({'processed': int(processed), 'total': int(total)}))
+        except Exception:
+            return True
     
     # Load scored streams to get quality rankings
     scored_file = config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
@@ -1468,24 +1544,40 @@ def cleanup_streams_by_provider(api, selected_group_ids, config, streams_per_pro
     if os.path.exists(scored_file):
         try:
             df = pd.read_csv(scored_file)
-            # Create lookup: stream_id -> quality_score
-            for _, row in df.iterrows():
-                stream_id = int(row['stream_id']) if pd.notna(row.get('stream_id')) else None
-                score = float(row['quality_score']) if pd.notna(row.get('quality_score')) else 0
-                if stream_id:
-                    stream_scores[stream_id] = score
+            if 'stream_id' in df.columns:
+                sid_series = pd.to_numeric(df['stream_id'], errors='coerce')
+                if 'quality_score' in df.columns:
+                    score_series = pd.to_numeric(df['quality_score'], errors='coerce')
+                elif 'score' in df.columns:
+                    score_series = pd.to_numeric(df['score'], errors='coerce')
+                else:
+                    score_series = pd.Series(0, index=df.index)
+
+                mask = sid_series.notna()
+                sid_series = sid_series[mask].astype(int)
+                score_series = score_series.reindex(df.index).fillna(0)[mask].fillna(0).astype(float)
+
+                stream_scores = dict(zip(sid_series.tolist(), score_series.tolist()))
         except Exception as e:
             logging.warning(f"Could not load scores: {e}")
 
     # Performance: fetch provider IDs for all streams once (avoid N+1 API calls)
     stream_provider_map = {}
     try:
-        stream_provider_map = api.fetch_stream_provider_map()
+        if not _should_continue():
+            stats['cancelled'] = True
+            return stats
+        # Use a larger page size to reduce API round-trips during cleanup.
+        stream_provider_map = api.fetch_stream_provider_map(limit=1000)
     except Exception as e:
         logging.warning(
             f"Could not build stream provider map; falling back to per-stream lookups: {e}"
         )
     
+    if not _should_continue():
+        stats['cancelled'] = True
+        return stats
+
     channels = api.fetch_channels()
     
     # Filter by specific channels if provided, otherwise use groups
@@ -1499,12 +1591,20 @@ def cleanup_streams_by_provider(api, selected_group_ids, config, streams_per_pro
             ch for ch in channels 
             if ch.get('channel_group_id') in selected_group_ids
         ]
+
+    stats['channels_total'] = len(filtered_channels)
+    _progress(0, stats['channels_total'])
     
-    for channel in filtered_channels:
+    for idx, channel in enumerate(filtered_channels, start=1):
+        if not _should_continue():
+            stats['cancelled'] = True
+            break
+
         channel_id = channel['id']
         stream_ids = channel.get('streams', [])
         
         if not stream_ids or len(stream_ids) <= streams_per_provider:
+            _progress(idx, stats['channels_total'])
             continue
         
         stats['channels_processed'] += 1
@@ -1514,6 +1614,9 @@ def cleanup_streams_by_provider(api, selected_group_ids, config, streams_per_pro
         streams_by_provider = {}
         
         for stream_id in stream_ids:
+            if not _should_continue():
+                stats['cancelled'] = True
+                break
             sid = int(stream_id)
             provider_id = stream_provider_map.get(sid)
 
@@ -1535,6 +1638,10 @@ def cleanup_streams_by_provider(api, selected_group_ids, config, streams_per_pro
                 'id': sid,
                 'score': score
             })
+
+        if stats.get('cancelled'):
+            _progress(idx, stats['channels_total'])
+            break
         
         # Keep top N streams from each provider, grouped by rank
         streams_by_rank = {}  # rank -> [stream_ids]
@@ -1558,13 +1665,16 @@ def cleanup_streams_by_provider(api, selected_group_ids, config, streams_per_pro
         
         if streams_to_keep and len(streams_to_keep) < len(stream_ids):
             try:
-                api.update_channel_streams(channel_id, streams_to_keep)
+                if _should_continue():
+                    api.update_channel_streams(channel_id, streams_to_keep)
                 stats['total_streams_after'] += len(streams_to_keep)
                 logging.info(f"Channel {channel_id}: kept {len(streams_to_keep)} streams ({streams_per_provider} per provider)")
             except Exception as e:
                 logging.warning(f"Failed to update channel {channel_id}: {e}")
         else:
             stats['total_streams_after'] += len(stream_ids)
+
+        _progress(idx, stats['channels_total'])
     
     return stats
 
