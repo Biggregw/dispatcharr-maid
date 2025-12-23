@@ -774,9 +774,6 @@
                 <button class="btn btn-next" id="btn-run-saved-pipeline" onclick="runSavedPatternPipeline(event)" disabled>
                     ▶ Run Saved Pipeline
                 </button>
-                <button class="btn btn-back" onclick="showSavePatternDialog()">
-                    💾 Save Current Selection
-                </button>
             </div>
 
             <div id="saved-pattern-preview" class="selection-summary hidden" style="margin-top: 10px;">
@@ -1049,34 +1046,6 @@
             </div>
         </div>
 
-        <!-- Save Pattern Modal -->
-        <div id="save-pattern-modal" class="modal-overlay hidden">
-            <div class="modal">
-                <div class="modal-header">
-                    <div>
-                        <div class="modal-title">Save selection as pattern</div>
-                        <div class="preview-meta">Saved patterns can be reused without manual ticking.</div>
-                    </div>
-                    <button class="btn btn-back" onclick="closeSavePatternDialog()">✖</button>
-                </div>
-                <div class="modal-body">
-                    <label style="display:block; font-weight:600; color:#2d3748; margin-bottom:6px;">Name</label>
-                    <input type="text" id="save-pattern-name" placeholder="e.g., Sky Sports (All), Premier League 3pm" style="width:100%; padding:10px; border:2px solid #e2e8f0; border-radius:8px; font-size: 1em;">
-                    <div class="preview-meta" style="margin-top:10px;">
-                        This will save:
-                        <ul style="margin:8px 0 0 18px; color:#4a5568;">
-                            <li>Selected groups</li>
-                            <li>Either “all channels in groups” (if none ticked) or an exact-match regex for the ticked channels</li>
-                        </ul>
-                    </div>
-                    <div id="save-pattern-status" class="preview-meta" style="margin-top:10px; color:#4a5568;"></div>
-                </div>
-                <div class="modal-actions">
-                    <button class="btn btn-back" onclick="closeSavePatternDialog()">Cancel</button>
-                    <button class="btn btn-next" onclick="saveCurrentSelectionAsPattern()">Save</button>
-                </div>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -1248,61 +1217,6 @@
                 }
             } catch (e) {
                 alert('Failed to start saved pipeline: ' + e.message);
-            }
-        }
-
-        function showSavePatternDialog() {
-            const modal = document.getElementById('save-pattern-modal');
-            const status = document.getElementById('save-pattern-status');
-            if (status) status.textContent = '';
-            if (modal) modal.classList.remove('hidden');
-        }
-
-        function closeSavePatternDialog() {
-            const modal = document.getElementById('save-pattern-modal');
-            if (modal) modal.classList.add('hidden');
-        }
-
-        async function saveCurrentSelectionAsPattern() {
-            const name = (document.getElementById('save-pattern-name')?.value || '').trim();
-            const status = document.getElementById('save-pattern-status');
-            if (!name) {
-                if (status) status.textContent = 'Please enter a name.';
-                return;
-            }
-            if (!selectedGroups.length) {
-                if (status) status.textContent = 'Select at least one group first (or use group selection below).';
-                return;
-            }
-            if (status) status.textContent = 'Saving...';
-
-            const payload = {
-                name,
-                groups: selectedGroups,
-                channels: selectedChannels // null => all channels in groups
-            };
-
-            try {
-                const resp = await fetch('/api/channel-selection-patterns', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(payload)
-                });
-                const data = await resp.json();
-                if (!data.success) {
-                    if (status) status.textContent = data.error || 'Failed to save.';
-                    return;
-                }
-                if (status) status.textContent = 'Saved.';
-                closeSavePatternDialog();
-                await loadSavedPatterns();
-                const select = document.getElementById('saved-pattern-select');
-                if (select && data.pattern?.id) {
-                    select.value = data.pattern.id;
-                    onSavedPatternSelected();
-                }
-            } catch (e) {
-                if (status) status.textContent = 'Failed to save: ' + e.message;
             }
         }
         
