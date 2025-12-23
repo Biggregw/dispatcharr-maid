@@ -1623,12 +1623,20 @@
         }
 
         async function runSavedPatternPipeline(event) {
+            const clickedBtn = getClickedButton(event);
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
             const patternId = document.getElementById('saved-pattern-select')?.value || '';
             if (!patternId) return;
             const pattern = savedPatterns.find(p => p.id === patternId);
 
             // UI feedback
             renderOptimisticStartingJob('pattern_refresh_full_cleanup', pattern?.name || 'Saved pattern', 'Resolving channels…');
+            // User initiated a job — bring the Current Job card into view (centered).
+            requestAutoScrollToCurrentJob();
+            maybeAutoScrollToCurrentJob('starting');
 
             // Start job directly with the saved pattern id.
             const payload = {
@@ -1639,6 +1647,12 @@
             };
 
             try {
+                // Button loading state (best-effort)
+                if (clickedBtn) {
+                    clickedBtn.dataset.jobType = 'pattern_refresh_full_cleanup';
+                    setButtonLoading(clickedBtn, true);
+                }
+
                 const response = await fetch('/api/start-job', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -1656,11 +1670,15 @@
                     if (jobCheckInterval) clearInterval(jobCheckInterval);
                     jobCheckInterval = setInterval(() => checkJob(currentJobId), 2000);
                     checkJob(currentJobId);
+                    maybeAutoScrollToCurrentJob(currentJobId);
                 } else {
                     alert('Failed to start saved pipeline: ' + (data.error || 'Unknown error'));
                 }
             } catch (e) {
                 alert('Failed to start saved pipeline: ' + e.message);
+            } finally {
+                // Always restore the button even if the request errored/hung.
+                if (clickedBtn) setButtonLoading(clickedBtn, false);
             }
         }
 
