@@ -1134,9 +1134,9 @@
                     <span>Refresh Channel Streams</span>
                 </button>
 
-                <button class="action-btn primary" onclick="startJob('full_cleanup', null, event)">
+                <button class="action-btn primary" onclick="startJob('full_cleanup_plan', null, event)">
                     <span>🚀</span>
-                    <span>Quality Check & Cleanup</span>
+                    <span>Quality Check (Plan Only)</span>
                 </button>
             </div>
 
@@ -2265,6 +2265,7 @@
             return {
                 refresh_optimize: 'Refresh Channel Streams',
                 pattern_refresh_full_cleanup: 'Saved Pipeline (Refresh + QC + Cleanup)',
+                full_cleanup_plan: 'Quality Check (Plan Only)',
                 full_cleanup: 'Quality Check & Cleanup',
                 full: 'Full Pipeline',
                 fetch: 'Fetch Streams',
@@ -2862,6 +2863,7 @@
                 let typeLabel = {
                     'refresh_optimize': 'Refresh',
                     'pattern_refresh_full_cleanup': 'Saved Pipeline',
+                    'full_cleanup_plan': 'Quality Check (Plan)',
                     'full_cleanup': 'Quality Check',
                     'full': 'Full Pipeline',
                     'fetch': 'Fetch',
