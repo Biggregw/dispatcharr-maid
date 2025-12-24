@@ -1347,8 +1347,12 @@
                         <div style="display:flex; align-items:center; gap:8px;">
                             <label for="provider-ranking-window" style="font-weight:700; color:#4a5568;">Window</label>
                             <select id="provider-ranking-window" style="padding:6px 10px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; color:#2d3748;">
-                                <option value="1">Latest run</option>
+                                <option value="1">Last run</option>
+                                <option value="3">Last 3 runs</option>
                                 <option value="5">Last 5 runs</option>
+                                <option value="10">Last 10 runs</option>
+                                <option value="20">Last 20 runs</option>
+                                <option value="all">All runs</option>
                             </select>
                         </div>
                     </div>
@@ -3103,7 +3107,8 @@
             if (loading) loading.classList.remove('hidden');
 
             try {
-                let windowVal = 1;
+                let windowVal = '1';
+                let windowParam = '1';
                 try {
                     const stored = localStorage.getItem('providerRankingWindow');
                     if (stored && windowSelect && !windowSelect.dataset._init) {
@@ -3111,14 +3116,20 @@
                     }
                     if (windowSelect) {
                         windowSelect.dataset._init = '1';
-                        windowVal = parseInt(windowSelect.value || '1', 10);
-                        if (!isFinite(windowVal) || windowVal <= 0) windowVal = 1;
+                        windowVal = String(windowSelect.value || '1').trim();
                     }
                 } catch (e) {
                     // ignore
                 }
 
-                const resp = await fetch(`/api/provider-ranking?window=${encodeURIComponent(String(windowVal))}&ts=${Date.now()}`, { cache: 'no-store' });
+                if (String(windowVal).toLowerCase() === 'all') {
+                    windowParam = 'all';
+                } else {
+                    const parsed = parseInt(String(windowVal || '1'), 10);
+                    windowParam = (isFinite(parsed) && parsed > 0) ? String(parsed) : '1';
+                }
+
+                const resp = await fetch(`/api/provider-ranking?window=${encodeURIComponent(String(windowParam))}&ts=${Date.now()}`, { cache: 'no-store' });
                 const data = await resp.json();
 
                 if (!data || !data.success) {
@@ -3143,8 +3154,11 @@
                 if (meta) {
                     const when = data.timestamp ? new Date(data.timestamp).toLocaleString() : null;
                     const job = data.job_id ? String(data.job_id) : null;
-                    const w = data.window ? parseInt(data.window, 10) : 1;
-                    const base = (w && w > 1) ? `Based on the last ${w} analyzed runs` : 'Based on the most recent analyzed run';
+                    const rawWindow = (data && data.window !== undefined && data.window !== null) ? String(data.window) : '1';
+                    const w = parseInt(rawWindow, 10);
+                    const base = (rawWindow.toLowerCase() === 'all')
+                        ? 'Based on all analyzed runs'
+                        : ((isFinite(w) && w > 1) ? `Based on the last ${w} analyzed runs` : 'Based on the most recent analyzed run');
                     meta.textContent = `${base}${when ? ` • latest ${when}` : ''}${job ? ` • job ${job}` : ''}`;
                 }
 
