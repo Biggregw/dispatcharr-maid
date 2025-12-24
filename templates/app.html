@@ -242,6 +242,23 @@
             gap: 15px;
             margin: 20px 0;
         }
+
+        .action-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .action-help {
+            margin-top: 4px;
+            padding: 12px;
+            background: #f7fafc;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+            color: #4a5568;
+            font-size: 0.9em;
+            line-height: 1.35;
+        }
         
         .action-btn {
             padding: 15px 20px;
@@ -1134,10 +1151,25 @@
                     <span>Refresh Channel Streams</span>
                 </button>
 
-                <button class="action-btn primary" onclick="startJob('full_cleanup_plan', null, event)">
-                    <span>🚀</span>
-                    <span>Quality Check (Plan Only)</span>
-                </button>
+                <div class="action-stack">
+                    <button class="action-btn primary" onclick="startApplyQualityJob(event)"
+                            style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
+                        <span>✅</span>
+                        <span>Quality Check (Apply Changes)</span>
+                    </button>
+
+                    <button class="action-btn primary" onclick="startJob('full_cleanup_plan', null, event)"
+                            style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                        <span>🔎</span>
+                        <span>Quality Check (Preview Plan)</span>
+                    </button>
+
+                    <div class="action-help">
+                        <div style="font-weight: 700; color: #2d3748; margin-bottom: 6px;">Which one should I use?</div>
+                        <div><strong>Apply Changes</strong> will analyze + score, then <strong>reorder</strong> and <strong>clean up</strong> streams immediately (uses your “Streams Per Provider” value).</div>
+                        <div style="margin-top: 6px;"><strong>Preview Plan</strong> makes <strong>no changes</strong>. It generates a reviewable plan in Results, where you can commit it later.</div>
+                    </div>
+                </div>
             </div>
 
             <div style="margin: 20px 0; padding: 20px; background: #f7fafc; border-radius: 8px; border-left: 4px solid #667eea;">
@@ -2265,8 +2297,8 @@
             return {
                 refresh_optimize: 'Refresh Channel Streams',
                 pattern_refresh_full_cleanup: 'Saved Pipeline (Refresh + QC + Cleanup)',
-                full_cleanup_plan: 'Quality Check (Plan Only)',
-                full_cleanup: 'Quality Check & Cleanup',
+                full_cleanup_plan: 'Quality Check (Preview Plan)',
+                full_cleanup: 'Quality Check (Apply Changes)',
                 full: 'Full Pipeline',
                 fetch: 'Fetch Streams',
                 analyze: 'Analyze Streams',
@@ -2274,6 +2306,22 @@
                 reorder: 'Reorder Streams',
                 cleanup: 'Cleanup'
             }[jobType] || jobType;
+        }
+
+        function startApplyQualityJob(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            const ok = window.confirm(
+                'This will UPDATE Dispatcharr channel stream lists:\n' +
+                '- runs a full quality check\n' +
+                '- reorders streams\n' +
+                '- cleans up to your Streams Per Provider setting\n\n' +
+                'Continue?'
+            );
+            if (!ok) return;
+            return startJob('full_cleanup', null, event);
         }
 
         function renderOptimisticStartingJob(jobType, groupNames, channelNames) {
@@ -2863,8 +2911,8 @@
                 let typeLabel = {
                     'refresh_optimize': 'Refresh',
                     'pattern_refresh_full_cleanup': 'Saved Pipeline',
-                    'full_cleanup_plan': 'Quality Check (Plan)',
-                    'full_cleanup': 'Quality Check',
+                    'full_cleanup_plan': 'Quality Check (Preview Plan)',
+                    'full_cleanup': 'Quality Check (Apply Changes)',
                     'full': 'Full Pipeline',
                     'fetch': 'Fetch',
                     'analyze': 'Analyze',
