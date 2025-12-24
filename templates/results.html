@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Analysis Results - Dispatcharr Maid</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='brand.css') }}">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; color: #333; }
@@ -69,8 +71,13 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📊 Analysis Results</h1>
-            <p>Detailed Stream Quality Report</p>
+            <div class="brand">
+                <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="Dispatcharr Maid">
+                <div class="brand-text">
+                    <h1>Analysis Results</h1>
+                    <p>Detailed Stream Quality Report</p>
+                </div>
+            </div>
         </div>
         
         <div class="nav-buttons">
