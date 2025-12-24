@@ -241,6 +241,14 @@
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
             margin: 20px 0;
+            align-items: start; /* prevent grid items from stretching taller than their content */
+        }
+
+        .action-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            align-items: stretch;
         }
 
         .action-stack {
@@ -259,6 +267,10 @@
             font-size: 0.9em;
             line-height: 1.35;
         }
+
+        .action-help--orange {
+            border-left-color: #f97316;
+        }
         
         .action-btn {
             padding: 15px 20px;
@@ -272,6 +284,8 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
+            width: 100%;
+            text-align: center;
         }
         
         .action-btn:hover {
@@ -417,6 +431,28 @@
             0% { transform: translateX(-120%); }
             50% { transform: translateX(-20%); }
             100% { transform: translateX(120%); }
+        }
+
+        /* Mobile polish */
+        @media (max-width: 640px) {
+            .action-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+
+            .action-btn {
+                padding: 12px 14px;
+                font-size: 0.98em;
+            }
+
+            .nav-buttons {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .nav-buttons .btn {
+                width: 100%;
+            }
         }
 
         @keyframes progressShimmer {
@@ -1145,11 +1181,16 @@
             <h3 style="margin: 25px 0 15px 0; color: #2d3748;">Choose Action:</h3>
             
             <div class="action-grid">
-                <button class="action-btn primary" onclick="showRefreshPreview()"
-                        style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
-                    <span>🔄</span>
-                    <span>Refresh Channel Streams</span>
-                </button>
+                <div class="action-panel">
+                    <button class="action-btn primary" onclick="showRefreshPreview()"
+                            style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
+                        <span>🔄</span>
+                        <span>Refresh Channel Streams</span>
+                    </button>
+                    <div class="action-help action-help--orange">
+                        Adds matching streams to the selected channels using the filters above (include/exclude, regex, +1 and 4K/UHD options).
+                    </div>
+                </div>
 
                 <div class="action-stack">
                     <button class="action-btn primary" onclick="startApplyQualityJob(event)"
@@ -1176,7 +1217,7 @@
                 <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #2d3748; font-size: 1.1em;">
                     🔄 Streams Per Provider
                 </label>
-                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 15px; margin-bottom: 10px;">
                     <input type="number" id="streamsPerProvider" min="1" max="10" value="2"
                            style="width: 80px; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1.1em;">
                     <span style="color: #718096; font-size: 0.95em;">
