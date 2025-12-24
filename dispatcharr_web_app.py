@@ -2618,6 +2618,105 @@ def generate_job_summary(config, specific_channel_ids=None):
         return None
 
 
+# Provider ranking
+def _build_provider_ranking(provider_stats, provider_names, provider_metadata):
+    """
+    Normalize provider stats into a best->worst ranking list.
+
+    Scoring (already produced by generate_job_summary):
+      weighted_score = avg_quality * (success_rate/100)^2
+    """
+    provider_stats = provider_stats if isinstance(provider_stats, dict) else {}
+    provider_names = provider_names if isinstance(provider_names, dict) else {}
+    provider_metadata = provider_metadata if isinstance(provider_metadata, dict) else {}
+
+    all_ids = set()
+    all_ids.update(str(k) for k in provider_names.keys())
+    all_ids.update(str(k) for k in provider_stats.keys())
+    all_ids.update(str(k) for k in provider_metadata.keys())
+
+    rows = []
+    for provider_id in sorted(all_ids, key=lambda s: (s.casefold(), s)):
+        stats = provider_stats.get(provider_id) if isinstance(provider_stats.get(provider_id), dict) else {}
+        meta = provider_metadata.get(provider_id) if isinstance(provider_metadata.get(provider_id), dict) else {}
+
+        display_name = provider_names.get(provider_id)
+        if not display_name:
+            display_name = meta.get('name') if isinstance(meta.get('name'), str) else None
+        if not display_name:
+            display_name = provider_id
+
+        total = int(stats.get('total') or 0)
+        successful = int(stats.get('successful') or 0)
+        failed = int(stats.get('failed') or max(0, total - successful))
+        success_rate = float(stats.get('success_rate') or 0.0)
+
+        avg_quality = stats.get('avg_quality')
+        try:
+            avg_quality_f = float(avg_quality) if avg_quality is not None else None
+        except Exception:
+            avg_quality_f = None
+
+        weighted_score = stats.get('weighted_score')
+        try:
+            weighted_score_f = float(weighted_score) if weighted_score is not None else 0.0
+        except Exception:
+            weighted_score_f = 0.0
+
+        # Derive the reliability weight used in the weighted score.
+        weight = (max(0.0, min(100.0, success_rate)) / 100.0) ** 2
+
+        max_streams = meta.get('max_streams') if isinstance(meta, dict) else None
+        if not isinstance(max_streams, (int, float)):
+            max_streams = None
+
+        confidence = 'none'
+        if total >= 100:
+            confidence = 'high'
+        elif total >= 20:
+            confidence = 'medium'
+        elif total > 0:
+            confidence = 'low'
+
+        note = None
+        if total <= 0:
+            note = 'No streams tested in the last run.'
+        elif success_rate < 80:
+            note = 'High failure rate in the last run.'
+        elif avg_quality_f is not None and avg_quality_f < 60:
+            note = 'Low average quality in the last run.'
+
+        rows.append({
+            'provider_id': provider_id,
+            'name': str(display_name),
+            'score': round(weighted_score_f, 1),
+            'avg_quality': round(avg_quality_f, 1) if isinstance(avg_quality_f, (int, float)) else None,
+            'success_rate': round(success_rate, 1),
+            'weight': round(weight, 4),
+            'total': total,
+            'successful': successful,
+            'failed': failed,
+            'max_streams': int(max_streams) if isinstance(max_streams, (int, float)) else None,
+            'confidence': confidence,
+            'note': note,
+        })
+
+    # Best -> worst.
+    rows.sort(key=lambda r: (
+        -(r.get('score') or 0.0),
+        -(r.get('success_rate') or 0.0),
+        -(r.get('total') or 0),
+        (r.get('name') or '').casefold(),
+        (r.get('provider_id') or '')
+    ))
+
+    # Assign rank (stable after sort).
+    for idx, row in enumerate(rows, start=1):
+        row['rank'] = idx
+
+    return rows
+
+
 # API Endpoints
 
 @app.route('/')
@@ -3380,6 +3479,83 @@ def api_job_history():
     """Get job history"""
     history = get_job_history()
     return jsonify({'success': True, 'history': history})
+
+
+@app.route('/api/provider-ranking')
+def api_provider_ranking():
+    """
+    Return provider ranking for the most recent analyzed job.
+
+    Optional query params:
+      - job_id: scope to a specific job
+    """
+    job_id = request.args.get('job_id')
+    try:
+        summary = None
+        config = None
+        resolved_job_id = job_id
+
+        if job_id:
+            results, analysis_ran, job_type, config, error = _get_job_results(job_id)
+            if error:
+                return jsonify({'success': False, 'error': error}), 404
+            summary = results if isinstance(results, dict) else None
+        else:
+            # Prefer the most recent completed job that has a stored summary.
+            with job_lock:
+                completed_jobs = [j for j in jobs.values() if j.status == 'completed' and j.result_summary]
+                latest_job = max(completed_jobs, key=lambda j: j.started_at) if completed_jobs else None
+
+            if latest_job is not None:
+                resolved_job_id = latest_job.job_id
+                config = _build_config_from_job(latest_job)
+                summary = latest_job.result_summary if isinstance(latest_job.result_summary, dict) else None
+                # Reconstruct if provider stats aren't present.
+                if not (isinstance(summary, dict) and isinstance(summary.get('provider_stats'), dict)):
+                    summary = generate_job_summary(config, specific_channel_ids=latest_job.channels)
+            else:
+                latest_job = _get_latest_job_with_workspace()
+                resolved_job_id = latest_job.job_id if latest_job else None
+                config = _build_config_from_job(latest_job)
+                summary = generate_job_summary(config)
+
+        if config is None:
+            config = Config('config.yaml')
+
+        if not isinstance(summary, dict):
+            return jsonify({'success': False, 'error': 'No analysis results available yet. Run a Quality Check first.'}), 404
+
+        provider_stats = summary.get('provider_stats')
+        if not isinstance(provider_stats, dict):
+            # Try rebuilding from CSV if the stored payload was not an analysis summary.
+            rebuilt = generate_job_summary(config)
+            if isinstance(rebuilt, dict) and isinstance(rebuilt.get('provider_stats'), dict):
+                summary = rebuilt
+                provider_stats = summary.get('provider_stats')
+            else:
+                return jsonify({'success': False, 'error': 'Provider stats are not available yet. Run a Quality Check first.'}), 404
+
+        provider_names = _load_provider_names(config)
+        provider_metadata = _load_provider_metadata(config)
+
+        ranking = _build_provider_ranking(provider_stats, provider_names, provider_metadata)
+        return jsonify({
+            'success': True,
+            'job_id': resolved_job_id,
+            'timestamp': summary.get('timestamp'),
+            'scoring': {
+                'formula': 'score = avg_quality × (success_rate/100)²',
+                'fields': {
+                    'avg_quality': 'Average quality score across successful streams (unknown quality treated as slightly below neutral).',
+                    'success_rate': 'Successful/total streams for that provider.',
+                    'score': 'Weighted score (reliability heavily influences rank).',
+                    'confidence': 'Heuristic based on how many streams were tested.'
+                }
+            },
+            'providers': ranking
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/results/detailed/<job_id>')
