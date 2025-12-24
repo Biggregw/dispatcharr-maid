@@ -3579,18 +3579,25 @@ def api_provider_ranking():
 
     Optional query params:
       - job_id: scope to a specific job
-      - window: integer (e.g. 1 or 5). When >1, aggregates the last N analyzed runs.
+      - window: integer (e.g. 1, 3, 5, 10, 20) or "all".
+        When >1, aggregates the last N analyzed runs. When "all", aggregates all analyzed runs in history.
     """
     job_id = request.args.get('job_id')
     window_raw = request.args.get('window')
     try:
         window = 1
+        window_is_all = False
         if window_raw is not None and str(window_raw).strip() != '':
-            try:
-                window = int(str(window_raw).strip())
-            except Exception:
-                return jsonify({'success': False, 'error': 'Invalid window; must be an integer'}), 400
-        window = max(1, min(50, window))
+            raw = str(window_raw).strip()
+            if raw.casefold() == 'all':
+                window_is_all = True
+            else:
+                try:
+                    window = int(raw)
+                except Exception:
+                    return jsonify({'success': False, 'error': 'Invalid window; must be an integer or "all"'}), 400
+        if not window_is_all:
+            window = max(1, min(50, window))
 
         summary = None
         config = None
@@ -3618,7 +3625,7 @@ def api_provider_ranking():
 
             analyzed = [h for h in history if _is_completed_analyzed(h)]
 
-            if window <= 1:
+            if (not window_is_all) and window <= 1:
                 latest = analyzed[0] if analyzed else None
                 if latest is not None:
                     resolved_job_id = latest.get('job_id')
@@ -3646,7 +3653,7 @@ def api_provider_ranking():
                     included_job_ids = [resolved_job_id] if resolved_job_id else []
             else:
                 # Aggregate across the last N analyzed runs.
-                selected = analyzed[:window]
+                selected = analyzed if window_is_all else analyzed[:window]
                 if not selected:
                     return jsonify({'success': False, 'error': 'No analysis results available yet. Run a Quality Check first.'}), 404
 
@@ -3710,11 +3717,11 @@ def api_provider_ranking():
         provider_names = _load_provider_names(config)
         provider_metadata = _load_provider_metadata(config)
 
-        window_label = 'last run' if window <= 1 else f'last {window} runs'
+        window_label = 'all analyzed runs' if window_is_all else ('last run' if window <= 1 else f'last {window} runs')
         ranking = _build_provider_ranking(provider_stats, provider_names, provider_metadata, window_label=window_label)
         return jsonify({
             'success': True,
-            'window': window,
+            'window': 'all' if window_is_all else window,
             'job_id': resolved_job_id,
             'job_ids': included_job_ids,
             'timestamp': summary.get('timestamp'),
