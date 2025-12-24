@@ -2078,12 +2078,22 @@
                     ?.textContent || '').trim();
 
                 if (channelName && groupName) {
-                    // Avoid duplication if the group is already part of the channelName.
-                    defaultName = channelName.toLowerCase().includes(groupName.toLowerCase())
-                        ? channelName
-                        : `${channelName} ${groupName}`;
+                    // Append the channel group for clarity (even when the group name
+                    // is a substring of the channel name, e.g. "Sky Sports F1").
+                    // Only avoid the truly redundant case where the channel already
+                    // ends with the group label (or is exactly the same).
+                    const cn = String(channelName || '').trim();
+                    const gn = String(groupName || '').trim();
+                    if (!cn) {
+                        defaultName = '';
+                    } else if (!gn) {
+                        defaultName = cn;
+                    } else {
+                        const endsWithGroup = cn.toLowerCase().endsWith(gn.toLowerCase());
+                        defaultName = endsWithGroup ? cn : `${cn} ${gn}`;
+                    }
                 } else {
-                    defaultName = channelName;
+                    defaultName = (channelName || '').trim();
                 }
             } catch (e) {
                 defaultName = '';
