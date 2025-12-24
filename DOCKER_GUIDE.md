@@ -165,8 +165,10 @@ Leave the streams you want selected and click **"Add Selected Streams"**
 - At this point, all selected streams have been added to your channel in Dispatcharr
 - Adjust the "Streams per Provider" setting to specify how many streams from each provider should remain in your channel (default: 2)
 
-#### 7. Click "Quality Check & Cleanup" (Optional but Recommended)
-This performs a full probe of each stream and scores them before keeping only the best quality ones in your channel.
+#### 7. Click "Quality Check (Apply Changes)" (Optional but Recommended)
+This performs a full probe of each stream and scores them, then **reorders and cleans up** your channel based on your “Streams per Provider” setting.
+
+Tip: If you want to review what will change first, use **"Quality Check (Preview Plan)"** and commit the plan from the Results page later.
 
 Your channel will be cleansed and ranked to allow Dispatcharr to work with your best stream first and move to fallbacks in this sequence:
 
