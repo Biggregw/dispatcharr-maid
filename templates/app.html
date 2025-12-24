@@ -595,6 +595,76 @@
             background: #bee3f8;
             color: #2c5282;
         }
+
+        /* Provider ranking */
+        .ranking-table-wrap {
+            overflow-x: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+        }
+
+        .ranking-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 720px;
+        }
+
+        .ranking-table th {
+            background: #f7fafc;
+            padding: 12px;
+            text-align: left;
+            font-weight: 700;
+            color: #4a5568;
+            border-bottom: 2px solid #e2e8f0;
+            white-space: nowrap;
+        }
+
+        .ranking-table td {
+            padding: 12px;
+            border-bottom: 1px solid #e2e8f0;
+            vertical-align: top;
+        }
+
+        .ranking-table tr:hover {
+            background: #f7fafc;
+        }
+
+        .score-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-weight: 800;
+            font-size: 0.9em;
+            line-height: 1.1;
+            white-space: nowrap;
+        }
+
+        .score-good { background: #c6f6d5; color: #22543d; }
+        .score-ok { background: #feebc8; color: #7c2d12; }
+        .score-bad { background: #fed7d7; color: #742a2a; }
+
+        .provider-subtle {
+            display: block;
+            margin-top: 2px;
+            color: #718096;
+            font-size: 0.8em;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+
+        .provider-note {
+            margin-top: 4px;
+            color: #718096;
+            font-size: 0.85em;
+        }
+
+        .provider-ranking-help code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 8px;
+        }
         
         /* Hidden class */
         .hidden {
@@ -1258,6 +1328,50 @@
                 <div class="history-list" id="history-list"></div>
             </div>
         </div>
+
+        <!-- Provider Ranking -->
+        <div class="card" id="provider-ranking-card">
+            <h2>🏆 Provider Ranking</h2>
+            <div id="provider-ranking-loading" class="alert alert-info">
+                <span class="spinner"></span> Loading provider ranking...
+            </div>
+            <div id="provider-ranking-empty" class="hidden">
+                <div class="alert alert-info">
+                    No provider ranking yet. Run a Quality Check to generate scores.
+                </div>
+            </div>
+            <div id="provider-ranking-container" class="hidden">
+                <div style="margin-bottom: 12px; color: #718096; font-size: 0.95em;">
+                    <div id="provider-ranking-meta"></div>
+                    <details style="margin-top: 8px;" class="provider-ranking-help">
+                        <summary style="cursor: pointer; font-weight: 700; color: #4a5568;">How scoring works</summary>
+                        <div style="margin-top: 8px; color: #4a5568; line-height: 1.45;">
+                            <div><code>score = avg_quality × (success_rate/100)²</code></div>
+                            <div style="margin-top: 6px;">
+                                This heavily favors providers that are both <strong>reliable</strong> and <strong>high quality</strong>.
+                                Low success rate quickly drops the score, even if quality is high.
+                            </div>
+                        </div>
+                    </details>
+                </div>
+                <div class="ranking-table-wrap">
+                    <table class="ranking-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Provider</th>
+                                <th>Score</th>
+                                <th>Success</th>
+                                <th>Avg Quality</th>
+                                <th>Tested</th>
+                                <th>Capacity</th>
+                            </tr>
+                        </thead>
+                        <tbody id="provider-ranking-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div id="refresh-preview-modal" class="modal-overlay hidden">
@@ -1368,6 +1482,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             loadGroups();
             loadJobHistory();
+            loadProviderRanking();
             loadSavedPatterns();
             initSavedRegexPresetDropdown();
             loadSavedRegexPresets();
@@ -2936,9 +3051,122 @@
                     renderJobHistory(data.history);
                     document.getElementById('history-loading').classList.add('hidden');
                     document.getElementById('history-container').classList.remove('hidden');
+                    // Provider ranking is tied to the most recent analysis results.
+                    loadProviderRanking();
                 }
             } catch (error) {
                 console.error('Failed to load history:', error);
+            }
+        }
+
+        function escapeHtml(value) {
+            const str = String(value ?? '');
+            return str.replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[ch]));
+        }
+
+        function getScoreClass(score) {
+            const s = typeof score === 'number' ? score : parseFloat(score);
+            if (!isFinite(s)) return 'score-bad';
+            if (s >= 80) return 'score-good';
+            if (s >= 60) return 'score-ok';
+            return 'score-bad';
+        }
+
+        // Load provider ranking
+        async function loadProviderRanking() {
+            const loading = document.getElementById('provider-ranking-loading');
+            const container = document.getElementById('provider-ranking-container');
+            const empty = document.getElementById('provider-ranking-empty');
+            const tbody = document.getElementById('provider-ranking-body');
+            const meta = document.getElementById('provider-ranking-meta');
+
+            if (tbody) tbody.innerHTML = '';
+            if (meta) meta.textContent = '';
+            if (container) container.classList.add('hidden');
+            if (empty) empty.classList.add('hidden');
+            if (loading) loading.classList.remove('hidden');
+
+            try {
+                const resp = await fetch(`/api/provider-ranking?ts=${Date.now()}`, { cache: 'no-store' });
+                const data = await resp.json();
+
+                if (!data || !data.success) {
+                    if (loading) loading.classList.add('hidden');
+                    if (empty) {
+                        empty.classList.remove('hidden');
+                        // If we have a server error string, surface it.
+                        const msg = data?.error ? String(data.error) : 'No provider ranking yet.';
+                        const box = empty.querySelector('.alert');
+                        if (box) box.textContent = msg;
+                    }
+                    return;
+                }
+
+                const providers = Array.isArray(data.providers) ? data.providers : [];
+                if (providers.length === 0) {
+                    if (loading) loading.classList.add('hidden');
+                    if (empty) empty.classList.remove('hidden');
+                    return;
+                }
+
+                if (meta) {
+                    const when = data.timestamp ? new Date(data.timestamp).toLocaleString() : null;
+                    const job = data.job_id ? String(data.job_id) : null;
+                    meta.textContent = `Based on the most recent analyzed run${when ? ` • ${when}` : ''}${job ? ` • job ${job}` : ''}`;
+                }
+
+                if (tbody) {
+                    tbody.innerHTML = providers.map(p => {
+                        const rank = p.rank ?? '';
+                        const name = escapeHtml(p.name ?? p.provider_id ?? 'Unknown');
+                        const pid = escapeHtml(p.provider_id ?? '');
+                        const score = typeof p.score === 'number' ? p.score : parseFloat(p.score);
+                        const scoreText = isFinite(score) ? score.toFixed(1) : '—';
+                        const successRate = typeof p.success_rate === 'number' ? p.success_rate : parseFloat(p.success_rate);
+                        const successText = isFinite(successRate) ? `${successRate.toFixed(1)}%` : '—';
+                        const avgQ = typeof p.avg_quality === 'number' ? p.avg_quality : parseFloat(p.avg_quality);
+                        const avgQText = isFinite(avgQ) ? avgQ.toFixed(1) : '—';
+                        const total = typeof p.total === 'number' ? p.total : parseInt(p.total || '0', 10);
+                        const ok = typeof p.successful === 'number' ? p.successful : parseInt(p.successful || '0', 10);
+                        const maxStreams = p.max_streams !== null && p.max_streams !== undefined ? String(p.max_streams) : '—';
+                        const note = p.note ? escapeHtml(p.note) : '';
+
+                        return `
+                            <tr>
+                                <td style="font-weight:800; color:#4a5568;">${escapeHtml(rank)}</td>
+                                <td>
+                                    <div style="font-weight:800; color:#2d3748;">${name}</div>
+                                    ${pid ? `<span class="provider-subtle">ID ${pid}</span>` : ''}
+                                    ${note ? `<div class="provider-note">${note}</div>` : ''}
+                                </td>
+                                <td>
+                                    <span class="score-pill ${getScoreClass(score)}">${scoreText}</span>
+                                </td>
+                                <td>${successText}</td>
+                                <td>${avgQText}</td>
+                                <td>${escapeHtml(ok)} / ${escapeHtml(total)}</td>
+                                <td>${escapeHtml(maxStreams)}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+
+                if (loading) loading.classList.add('hidden');
+                if (container) container.classList.remove('hidden');
+            } catch (error) {
+                if (loading) loading.classList.add('hidden');
+                if (empty) {
+                    empty.classList.remove('hidden');
+                    const msg = `Unable to load provider ranking: ${error.message}`;
+                    const box = empty.querySelector('.alert');
+                    if (box) box.textContent = msg;
+                }
             }
         }
         
