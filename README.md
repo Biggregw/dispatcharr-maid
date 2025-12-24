@@ -58,6 +58,8 @@ Before you begin, make sure you have:
 - ✅ **Dispatcharr** running on the same Docker network
 - ✅ **Dispatcharr credentials** (username and password)
 
+**Important (Docker networking):** This project’s `docker-compose.yml` joins an **existing external network** called `dispatcharr_default`. That network must already exist (typically created automatically by the Dispatcharr docker-compose project). If your Dispatcharr network has a different name, update `docker-compose.yml` accordingly (see [Docker Deployment Guide](DOCKER_GUIDE.md)).
+
 ---
 
 ## 🚀 Quick Start
@@ -69,14 +71,21 @@ Get up and running in minutes:
 wget https://github.com/Biggregw/dispatcharr-maid/archive/refs/heads/main.zip
 unzip main.zip && cd dispatcharr-maid-main
 
-# 2. Configure your credentials
+# 2. Create your local config files (these stay private)
 cp .env.example .env
-nano .env  # Add your Dispatcharr URL, username, and password
+cp config.yaml.example config.yaml
 
-# 3. Start the containers
+# Optional (nice provider names in Results/UI)
+cp provider_names.json.example provider_names.json
+
+# 3. Configure your credentials + settings
+nano .env         # Set DISPATCHARR_BASE_URL / USER / PASS
+nano config.yaml  # Set filters.channel_group_ids (or use the Web UI to save regex selection)
+
+# 4. Start the container
 docker-compose up -d
 
-# 4. Access the web interface
+# 5. Access the web interface
 # Open http://YOUR-SERVER-IP:5000 in your browser
 ```
 
@@ -179,7 +188,7 @@ Complete guides for every aspect of Dispatcharr Maid:
 |-------|-------------|
 | **[Docker Deployment Guide](DOCKER_GUIDE.md)** | Complete installation, configuration, networking, and advanced setup |
 | **[Web App Guide](WEB_APP_GUIDE.md)** | Step-by-step instructions for using the web interface |
-| **[Web Monitor Guide](WEB_MONITOR_GUIDE.md)** | Monitoring, logging, and dashboard features |
+| **[Web Monitor Guide](WEB_MONITOR_GUIDE.md)** | Legacy/optional read-only monitor (most users should use the main web UI) |
 | **[Results Dashboard Guide](RESULTS_DASHBOARD_GUIDE.md)** | Understanding and analyzing your results |
 
 ---
@@ -190,14 +199,14 @@ Running into issues? Here are some quick tips:
 
 **Container won't start:**
 ```bash
-docker-compose logs dispatcharr-maid
+docker-compose logs dispatcharr-maid-web
 ```
 
 **Can't connect to Dispatcharr:**
 ```bash
 # Make sure you're using the container name, not localhost
 # In .env: DISPATCHARR_BASE_URL=http://dispatcharr:9191
-docker exec dispatcharr-maid ping dispatcharr
+docker exec dispatcharr-maid-web ping dispatcharr
 ```
 
 **Web interface not accessible:**

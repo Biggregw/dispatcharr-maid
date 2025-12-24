@@ -5,8 +5,8 @@
 Runs Dispatcharr Maid in Docker containers that:
 - ✅ **Connect to your existing Dispatcharr** on the same network
 - ✅ **Persist data** (CSV files, logs, config)
-- ✅ **Web monitor always available** on port 5000
-- ✅ **Run CLI on-demand** when you need to analyze
+- ✅ **Web UI always available** on port 5000 (control panel + results)
+- ✅ **Optional CLI on-demand** (exec into the same container if you prefer terminal workflows)
 - ✅ **Auto-restart** with your server
 - ✅ **Managed via Portainer** (optional)
 
@@ -49,8 +49,8 @@ ls
 - `interactive_maid.py`
 - `web_monitor.py`
 - `templates/`
-- `config.yaml`
-- `.env.template`
+- `config.yaml.example`
+- `.env.example`
 - `requirements.txt`
 
 ---
@@ -62,6 +62,13 @@ Create and edit the `.env` file with your Dispatcharr credentials:
 ```bash
 cp .env.example .env
 nano .env
+```
+
+Create your local `config.yaml` (required):
+
+```bash
+cp config.yaml.example config.yaml
+nano config.yaml
 ```
 
 **Important:** The `.env` file should look like this:
@@ -101,13 +108,12 @@ docker-compose ps
 You should see:
 ```
 NAME                    STATUS              PORTS
-dispatcharr-maid        Up                  
 dispatcharr-maid-web    Up (healthy)        0.0.0.0:5000->5000/tcp
 ```
 
 ---
 
-### Step 4: Access Web Monitor
+### Step 4: Access Web UI
 
 Open in your browser:
 ```
@@ -206,14 +212,8 @@ You have now:
 ### View Logs
 
 ```bash
-# Web monitor logs
+# Web UI logs
 docker-compose logs -f dispatcharr-maid-web
-
-# Main container logs
-docker-compose logs -f dispatcharr-maid
-
-# All logs
-docker-compose logs -f
 ```
 
 ### Access Data Files
@@ -250,12 +250,6 @@ docker-compose down
 
 # Restart all services
 docker-compose restart
-
-# Stop just the CLI (keep web monitor running)
-docker-compose stop dispatcharr-maid
-
-# Start just the CLI
-docker-compose start dispatcharr-maid
 ```
 
 ### Update
@@ -282,10 +276,10 @@ docker-compose up -d
 docker-compose ps
 
 # Check resource usage
-docker stats dispatcharr-maid dispatcharr-maid-web
+docker stats dispatcharr-maid-web
 
 # Check network connectivity
-docker exec dispatcharr-maid ping -c 3 dispatcharr
+docker exec dispatcharr-maid-web ping -c 3 dispatcharr
 ```
 
 ---
@@ -296,13 +290,11 @@ docker exec dispatcharr-maid ping -c 3 dispatcharr
 dispatcharr_default network 
 ├── dispatcharr 
 ├── dispatcharr-redis 
-├── dispatcharr-maid (auto-assigned IP)
-└── dispatcharr-maid-web (auto-assigned IP)
-    └── Exposed on host: 0.0.0.0:5000
+└── dispatcharr-maid-web (auto-assigned IP, exposed on host: 0.0.0.0:5000)
 ```
 
 All containers can communicate by name:
-- `dispatcharr-maid` → `http://dispatcharr:9191` ✅
+- `dispatcharr-maid-web` → `http://dispatcharr:9191` ✅
 - `dispatcharr` → `dispatcharr-redis:6379` ✅
 
 ---
@@ -314,8 +306,7 @@ If you have Portainer running, here's how to manage Dispatcharr Maid through it:
 1. **Open Portainer:** `http://YOUR-SERVER-IP:9000`
 2. **Go to Containers**
 3. **Find:**
-   - `dispatcharr-maid` (CLI container)
-   - `dispatcharr-maid-web` (Web monitor)
+   - `dispatcharr-maid-web` (Web UI)
 
 **From Portainer you can:**
 - ✅ Start/stop containers
@@ -324,8 +315,8 @@ If you have Portainer running, here's how to manage Dispatcharr Maid through it:
 - ✅ Check resource usage
 - ✅ Restart containers
 
-**To run analysis from Portainer:**
-1. Click on `dispatcharr-maid` container
+**To run CLI from Portainer (optional):**
+1. Click on `dispatcharr-maid-web` container
 2. Click "Console"
 3. Select "Custom" → enter `/bin/bash`
 4. Click "Connect"
@@ -339,7 +330,7 @@ If you have Portainer running, here's how to manage Dispatcharr Maid through it:
 
 ```bash
 # Check logs
-docker-compose logs dispatcharr-maid
+docker-compose logs dispatcharr-maid-web
 
 # Common issues:
 # - .env file missing
@@ -351,10 +342,10 @@ docker-compose logs dispatcharr-maid
 
 ```bash
 # Test network connectivity
-docker exec dispatcharr-maid ping dispatcharr
+docker exec dispatcharr-maid-web ping dispatcharr
 
 # Check .env has correct URL
-docker exec dispatcharr-maid cat .env
+docker exec dispatcharr-maid-web cat .env
 
 # Should show: DISPATCHARR_BASE_URL=http://dispatcharr:9191
 ```
@@ -368,7 +359,7 @@ docker-compose ps dispatcharr-maid-web
 # Check if port 5000 is available
 sudo netstat -tlnp | grep 5000
 
-# View web monitor logs
+# View web UI logs
 docker-compose logs dispatcharr-maid-web
 ```
 
@@ -376,7 +367,7 @@ docker-compose logs dispatcharr-maid-web
 
 ```bash
 # Check volumes are mounted
-docker inspect dispatcharr-maid | grep -A 10 Mounts
+docker inspect dispatcharr-maid-web | grep -A 10 Mounts
 
 # Make sure you're in the right directory
 pwd  # Should be ~/dispatcharr-maid
@@ -440,7 +431,7 @@ Edit `docker-compose.yml`:
 
 ```yaml
 services:
-  dispatcharr-maid:
+  dispatcharr-maid-web:
     # ... existing config ...
     deploy:
       resources:
@@ -461,14 +452,14 @@ Use cron to trigger analysis:
 crontab -e
 
 # Add this line (run daily at 2am):
-0 2 * * * docker exec dispatcharr-maid python3 -c "from stream_analysis import *; from api_utils import *; config = Config(); api = DispatcharrAPI(); api.login(); fetch_streams(api, config); analyze_streams(config); score_streams(api, config); reorder_streams(api, config)" >> /var/log/dispatcharr-maid-cron.log 2>&1
+0 2 * * * docker exec dispatcharr-maid-web python3 -c "from stream_analysis import Config, fetch_streams, analyze_streams, score_streams, reorder_streams; from api_utils import DispatcharrAPI; api = DispatcharrAPI(); api.login(); config = Config(); fetch_streams(api, config); analyze_streams(config); score_streams(api, config); reorder_streams(api, config)" >> /var/log/dispatcharr-maid-cron.log 2>&1
 ```
 
 ---
 
 ## 🎯 Nginx Proxy Manager Integration
 
-You can add HTTPS access to the web monitor:
+You can add HTTPS access to the web UI:
 
 1. **Open NPM:** `http://YOUR-SERVER-IP:81`
 2. **Add Proxy Host:**
@@ -507,7 +498,7 @@ Now access via: `https://maid.yourdomain.com`
 1. **Start using it:**
    ```bash
    docker-compose up -d
-   docker-compose exec dispatcharr-maid python3 interactive_maid.py
+   docker-compose exec dispatcharr-maid-web python3 interactive_maid.py
    ```
 
 2. **Access dashboard:**
@@ -533,12 +524,12 @@ docker-compose logs -f
 
 **Test Dispatcharr connection:**
 ```bash
-docker exec dispatcharr-maid python3 -c "from api_utils import *; api = DispatcharrAPI(); api.login(); print('✅ Connected!')"
+docker exec dispatcharr-maid-web python3 -c "from api_utils import DispatcharrAPI; api = DispatcharrAPI(); api.login(); print('✅ Connected!')"
 ```
 
 **Verify files are mounted:**
 ```bash
-docker exec dispatcharr-maid ls -la /app/csv /app/logs
+docker exec dispatcharr-maid-web ls -la /app/csv /app/logs /app/jobs
 ```
 
 **Rebuild from scratch:**

@@ -39,7 +39,13 @@ Create your .env file with Dispatcharr credentials:
 nano .env
 
 # Add these lines (replace with your actual values):
-DISPATCHARR_BASE_URL=http://localhost:9191
+#
+# If Dispatcharr is on the same Docker network (recommended):
+#   DISPATCHARR_BASE_URL=http://dispatcharr:9191
+#
+# If you are running everything locally (no Docker):
+#   DISPATCHARR_BASE_URL=http://localhost:9191
+DISPATCHARR_BASE_URL=http://dispatcharr:9191
 DISPATCHARR_USER=your_username
 DISPATCHARR_PASS=your_password
 DISPATCHARR_TOKEN=  # Leave empty, will be auto-filled
@@ -111,9 +117,13 @@ never overwritten by auto-discovery.
 
 Docker-based Provider Discovery
 --------------------------------
-If Dispatcharr runs in Docker, set `dispatcharr.docker_container` in
-config.yaml to the Dispatcharr container name so provider metadata
-discovery can access it.
+If Dispatcharr runs in Docker, set either `dispatcharr.container_name`
+or `dispatcharr.docker_container` in `config.yaml` to the Dispatcharr
+container name (default is usually `dispatcharr`) so provider metadata
+discovery can run `manage.py` via `docker exec`.
+
+Note: provider discovery expects `manage.py` to be located at `/app/manage.py`
+inside the Dispatcharr container.
 
 
 KEEPING YOUR DATA PRIVATE
