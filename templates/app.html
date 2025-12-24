@@ -1342,7 +1342,20 @@
             </div>
             <div id="provider-ranking-container" class="hidden">
                 <div style="margin-bottom: 12px; color: #718096; font-size: 0.95em;">
-                    <div id="provider-ranking-meta"></div>
+                    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                        <div id="provider-ranking-meta" style="flex:1; min-width:260px;"></div>
+                        <label style="display:flex; gap:8px; align-items:center; color:#4a5568; font-weight:700;">
+                            Runs:
+                            <select id="provider-ranking-runs"
+                                    style="padding: 8px 10px; border: 2px solid #e2e8f0; border-radius: 10px; background: #fff;">
+                                <option value="1">1</option>
+                                <option value="3">3</option>
+                                <option value="5" selected>5</option>
+                                <option value="10">10</option>
+                                <option value="20">20</option>
+                            </select>
+                        </label>
+                    </div>
                     <details style="margin-top: 8px;" class="provider-ranking-help">
                         <summary style="cursor: pointer; font-weight: 700; color: #4a5568;">How scoring works</summary>
                         <div style="margin-top: 8px; color: #4a5568; line-height: 1.45;">
@@ -1363,6 +1376,7 @@
                                 <th>Score</th>
                                 <th>Success</th>
                                 <th>Avg Quality</th>
+                                <th>Runs</th>
                                 <th>Tested</th>
                                 <th>Capacity</th>
                             </tr>
@@ -1486,6 +1500,19 @@
             loadSavedPatterns();
             initSavedRegexPresetDropdown();
             loadSavedRegexPresets();
+
+            const runsSelect = document.getElementById('provider-ranking-runs');
+            if (runsSelect) {
+                // Restore selection from localStorage if present.
+                const saved = localStorage.getItem('providerRankingRuns');
+                if (saved && ['1','3','5','10','20'].includes(saved)) {
+                    runsSelect.value = saved;
+                }
+                runsSelect.addEventListener('change', () => {
+                    localStorage.setItem('providerRankingRuns', String(runsSelect.value || '5'));
+                    loadProviderRanking();
+                });
+            }
             
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
@@ -3085,6 +3112,8 @@
             const empty = document.getElementById('provider-ranking-empty');
             const tbody = document.getElementById('provider-ranking-body');
             const meta = document.getElementById('provider-ranking-meta');
+            const runsSelect = document.getElementById('provider-ranking-runs');
+            const runs = runsSelect ? parseInt(runsSelect.value || '5', 10) : 5;
 
             if (tbody) tbody.innerHTML = '';
             if (meta) meta.textContent = '';
@@ -3093,7 +3122,8 @@
             if (loading) loading.classList.remove('hidden');
 
             try {
-                const resp = await fetch(`/api/provider-ranking?ts=${Date.now()}`, { cache: 'no-store' });
+                const safeRuns = Number.isFinite(runs) && runs > 0 ? runs : 5;
+                const resp = await fetch(`/api/provider-ranking?runs=${encodeURIComponent(String(safeRuns))}&ts=${Date.now()}`, { cache: 'no-store' });
                 const data = await resp.json();
 
                 if (!data || !data.success) {
@@ -3118,7 +3148,12 @@
                 if (meta) {
                     const when = data.timestamp ? new Date(data.timestamp).toLocaleString() : null;
                     const job = data.job_id ? String(data.job_id) : null;
-                    meta.textContent = `Based on the most recent analyzed run${when ? ` • ${when}` : ''}${job ? ` • job ${job}` : ''}`;
+                    const windowUsed = data.window?.runs_used;
+                    const windowReq = data.window?.runs_requested;
+                    const windowText = (windowReq || windowUsed)
+                        ? ` • ${windowUsed ?? '—'}/${windowReq ?? '—'} runs`
+                        : '';
+                    meta.textContent = `Aggregated provider ranking${windowText}${when ? ` • ${when}` : ''}${job ? ` • latest job ${job}` : ''}`;
                 }
 
                 if (tbody) {
@@ -3132,6 +3167,7 @@
                         const successText = isFinite(successRate) ? `${successRate.toFixed(1)}%` : '—';
                         const avgQ = typeof p.avg_quality === 'number' ? p.avg_quality : parseFloat(p.avg_quality);
                         const avgQText = isFinite(avgQ) ? avgQ.toFixed(1) : '—';
+                        const runsPresent = typeof p.runs === 'number' ? p.runs : parseInt(p.runs || '0', 10);
                         const total = typeof p.total === 'number' ? p.total : parseInt(p.total || '0', 10);
                         const ok = typeof p.successful === 'number' ? p.successful : parseInt(p.successful || '0', 10);
                         const maxStreams = p.max_streams !== null && p.max_streams !== undefined ? String(p.max_streams) : '—';
@@ -3150,6 +3186,7 @@
                                 </td>
                                 <td>${successText}</td>
                                 <td>${avgQText}</td>
+                                <td>${escapeHtml(runsPresent)}</td>
                                 <td>${escapeHtml(ok)} / ${escapeHtml(total)}</td>
                                 <td>${escapeHtml(maxStreams)}</td>
                             </tr>

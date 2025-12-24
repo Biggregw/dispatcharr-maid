@@ -2663,6 +2663,12 @@ def _build_provider_ranking(provider_stats, provider_names, provider_metadata):
         except Exception:
             weighted_score_f = 0.0
 
+        runs_present = stats.get('runs')
+        try:
+            runs_present_i = int(runs_present) if runs_present is not None else 0
+        except Exception:
+            runs_present_i = 0
+
         # Derive the reliability weight used in the weighted score.
         weight = (max(0.0, min(100.0, success_rate)) / 100.0) ** 2
 
@@ -2696,6 +2702,7 @@ def _build_provider_ranking(provider_stats, provider_names, provider_metadata):
             'total': total,
             'successful': successful,
             'failed': failed,
+            'runs': runs_present_i,
             'max_streams': int(max_streams) if isinstance(max_streams, (int, float)) else None,
             'confidence': confidence,
             'note': note,
@@ -3484,65 +3491,178 @@ def api_job_history():
 @app.route('/api/provider-ranking')
 def api_provider_ranking():
     """
-    Return provider ranking for the most recent analyzed job.
+    Return provider ranking aggregated over the most recent analyzed runs.
 
     Optional query params:
       - job_id: scope to a specific job
+      - runs: number of analyzed runs to aggregate (default 5, max 25)
     """
     job_id = request.args.get('job_id')
     try:
-        summary = None
-        config = None
-        resolved_job_id = job_id
+        runs_raw = request.args.get('runs', '5')
+        try:
+            runs = int(runs_raw)
+        except (TypeError, ValueError):
+            runs = 5
+        runs = max(1, min(25, runs))
 
+        history = get_job_history()
+        history = history if isinstance(history, list) else []
+
+        # Build the run window (newest first in job_history.json).
+        candidates = []
         if job_id:
-            results, analysis_ran, job_type, config, error = _get_job_results(job_id)
-            if error:
-                return jsonify({'success': False, 'error': error}), 404
-            summary = results if isinstance(results, dict) else None
+            idx = next((i for i, entry in enumerate(history) if str(entry.get('job_id')) == str(job_id)), None)
+            if idx is not None:
+                candidates = history[idx:idx + runs]
+            else:
+                # Fall back to just the requested job id; _get_job_results will resolve it.
+                candidates = [{'job_id': job_id}]
         else:
-            # Prefer the most recent completed job that has a stored summary.
-            with job_lock:
-                completed_jobs = [j for j in jobs.values() if j.status == 'completed' and j.result_summary]
-                latest_job = max(completed_jobs, key=lambda j: j.started_at) if completed_jobs else None
+            for entry in history:
+                if entry.get('status') != 'completed':
+                    continue
+                if not _job_ran_analysis(entry.get('job_type')):
+                    continue
+                candidates.append(entry)
+                if len(candidates) >= runs:
+                    break
 
-            if latest_job is not None:
-                resolved_job_id = latest_job.job_id
-                config = _build_config_from_job(latest_job)
-                summary = latest_job.result_summary if isinstance(latest_job.result_summary, dict) else None
-                # Reconstruct if provider stats aren't present.
-                if not (isinstance(summary, dict) and isinstance(summary.get('provider_stats'), dict)):
-                    summary = generate_job_summary(config, specific_channel_ids=latest_job.channels)
-            else:
-                latest_job = _get_latest_job_with_workspace()
-                resolved_job_id = latest_job.job_id if latest_job else None
-                config = _build_config_from_job(latest_job)
-                summary = generate_job_summary(config)
+        if not candidates:
+            return jsonify({'success': False, 'error': 'No analyzed runs found yet. Run a Quality Check first.'}), 404
 
-        if config is None:
-            config = Config('config.yaml')
+        # Aggregate provider stats across runs.
+        agg = {}
+        provider_names = {}
+        provider_metadata = {}
+        run_meta = []
+        used = 0
+        resolved_job_id = job_id
+        resolved_timestamp = None
 
-        if not isinstance(summary, dict):
-            return jsonify({'success': False, 'error': 'No analysis results available yet. Run a Quality Check first.'}), 404
+        for entry in candidates:
+            run_job_id = entry.get('job_id')
+            if not run_job_id:
+                continue
+            results, analysis_ran, job_type, config, error = _get_job_results(run_job_id)
+            if error or not analysis_ran or not isinstance(results, dict):
+                continue
+            provider_stats = results.get('provider_stats')
+            if not isinstance(provider_stats, dict) or not provider_stats:
+                continue
 
-        provider_stats = summary.get('provider_stats')
-        if not isinstance(provider_stats, dict):
-            # Try rebuilding from CSV if the stored payload was not an analysis summary.
-            rebuilt = generate_job_summary(config)
-            if isinstance(rebuilt, dict) and isinstance(rebuilt.get('provider_stats'), dict):
-                summary = rebuilt
-                provider_stats = summary.get('provider_stats')
-            else:
-                return jsonify({'success': False, 'error': 'Provider stats are not available yet. Run a Quality Check first.'}), 404
+            # Merge naming/capacity metadata (best-effort).
+            try:
+                names_i = _load_provider_names(config) if config else {}
+                if isinstance(names_i, dict):
+                    for k, v in names_i.items():
+                        provider_names.setdefault(str(k), str(v))
+            except Exception:
+                pass
+            try:
+                meta_i = _load_provider_metadata(config) if config else {}
+                if isinstance(meta_i, dict):
+                    for k, v in meta_i.items():
+                        provider_metadata.setdefault(str(k), v)
+            except Exception:
+                pass
 
-        provider_names = _load_provider_names(config)
-        provider_metadata = _load_provider_metadata(config)
+            used += 1
+            resolved_job_id = str(run_job_id)
+            resolved_timestamp = results.get('timestamp') if isinstance(results, dict) else resolved_timestamp
+            run_meta.append({
+                'job_id': str(run_job_id),
+                'job_type': job_type,
+                'started_at': entry.get('started_at'),
+                'completed_at': entry.get('completed_at'),
+                'timestamp': results.get('timestamp')
+            })
 
-        ranking = _build_provider_ranking(provider_stats, provider_names, provider_metadata)
+            for provider_id, stats in provider_stats.items():
+                pid = str(provider_id)
+                if not isinstance(stats, dict):
+                    continue
+                total = stats.get('total') or 0
+                successful = stats.get('successful') or 0
+                failed = stats.get('failed')
+                try:
+                    total_i = int(total)
+                except Exception:
+                    total_i = 0
+                try:
+                    successful_i = int(successful)
+                except Exception:
+                    successful_i = 0
+                if failed is None:
+                    failed_i = max(0, total_i - successful_i)
+                else:
+                    try:
+                        failed_i = int(failed)
+                    except Exception:
+                        failed_i = max(0, total_i - successful_i)
+
+                avg_quality = stats.get('avg_quality')
+                try:
+                    avg_quality_f = float(avg_quality) if avg_quality is not None else None
+                except Exception:
+                    avg_quality_f = None
+
+                bucket = agg.setdefault(pid, {
+                    'total': 0,
+                    'successful': 0,
+                    'failed': 0,
+                    'quality_success_sum': 0.0,
+                    'quality_success_count': 0,
+                    'runs': 0
+                })
+
+                bucket['total'] += total_i
+                bucket['successful'] += successful_i
+                bucket['failed'] += failed_i
+                bucket['runs'] += 1
+                if isinstance(avg_quality_f, (int, float)) and successful_i > 0:
+                    bucket['quality_success_sum'] += float(avg_quality_f) * successful_i
+                    bucket['quality_success_count'] += successful_i
+
+        if used <= 0:
+            return jsonify({'success': False, 'error': 'Provider stats are not available yet. Run a Quality Check first.'}), 404
+
+        # Convert aggregates back into the provider_stats schema expected by _build_provider_ranking.
+        agg_provider_stats = {}
+        for pid, bucket in agg.items():
+            total_i = int(bucket.get('total') or 0)
+            successful_i = int(bucket.get('successful') or 0)
+            failed_i = int(bucket.get('failed') or max(0, total_i - successful_i))
+            success_rate = round((successful_i / total_i * 100.0), 1) if total_i > 0 else 0.0
+
+            q_count = int(bucket.get('quality_success_count') or 0)
+            q_sum = float(bucket.get('quality_success_sum') or 0.0)
+            avg_quality_f = (q_sum / q_count) if q_count > 0 else None
+
+            # Score formula: avg_quality × (success_rate/100)^2
+            success_weight = (max(0.0, min(100.0, success_rate)) / 100.0) ** 2
+            weighted_score = (float(avg_quality_f) * success_weight) if isinstance(avg_quality_f, (int, float)) else 0.0
+
+            agg_provider_stats[pid] = {
+                'total': total_i,
+                'successful': successful_i,
+                'failed': failed_i,
+                'success_rate': success_rate,
+                'avg_quality': round(avg_quality_f, 1) if isinstance(avg_quality_f, (int, float)) else None,
+                'weighted_score': round(weighted_score, 1),
+                'runs': int(bucket.get('runs') or 0),
+            }
+
+        ranking = _build_provider_ranking(agg_provider_stats, provider_names, provider_metadata)
         return jsonify({
             'success': True,
             'job_id': resolved_job_id,
-            'timestamp': summary.get('timestamp'),
+            'timestamp': resolved_timestamp,
+            'window': {
+                'runs_requested': runs,
+                'runs_used': used,
+                'runs': run_meta,
+            },
             'scoring': {
                 'formula': 'score = avg_quality × (success_rate/100)²',
                 'fields': {
