@@ -947,11 +947,6 @@
                     <p>Interactive Control Panel</p>
                 </div>
             </div>
-            <div style="margin-top: 15px;">
-                <button class="btn" onclick="scrollToJobHistory()" style="background: white; color: #667eea;">
-                    📊 View Job Results
-                </button>
-            </div>
         </div>
         
         <!-- Step Indicator -->
@@ -3031,13 +3026,6 @@
                 return;
             }
             window.location.href = `/results?job_id=${encodeURIComponent(jobId)}`;
-        }
-
-        function scrollToJobHistory() {
-            const historySection = document.getElementById('history-container');
-            if (historySection) {
-                historySection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
         }
     </script>
 </body>
