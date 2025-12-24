@@ -80,12 +80,121 @@ def _render_auth_error(error_message):
     message = html.escape(str(message))
     return (
         f"""<!DOCTYPE html>
-        <html lang='en'>
-        <head><meta charset='utf-8'><title>Dispatcharr Authentication Required</title></head>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Dispatcharr Maid - Connection Required</title>
+            <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+            <link rel="stylesheet" href="/static/brand.css">
+            <style>
+                * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    padding: 20px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: #111827;
+                }}
+                .card {{
+                    width: 100%;
+                    max-width: 760px;
+                    background: rgba(255, 255, 255, 0.96);
+                    border-radius: 16px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+                    padding: 22px;
+                }}
+                h1 {{
+                    font-size: 1.35em;
+                    margin-bottom: 8px;
+                }}
+                p {{
+                    margin-top: 10px;
+                    color: #374151;
+                    line-height: 1.45;
+                }}
+                .error {{
+                    margin-top: 10px;
+                    padding: 10px 12px;
+                    border-radius: 10px;
+                    background: #fff5f5;
+                    border: 1px solid #fed7d7;
+                    color: #742a2a;
+                    font-weight: 700;
+                    word-break: break-word;
+                }}
+                .actions {{
+                    display: flex;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    margin-top: 14px;
+                }}
+                .btn {{
+                    padding: 10px 14px;
+                    border-radius: 10px;
+                    border: none;
+                    cursor: pointer;
+                    font-weight: 800;
+                }}
+                .btn-primary {{
+                    color: #fff;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                }}
+                .btn-secondary {{
+                    background: #e5e7eb;
+                    color: #111827;
+                }}
+                code {{
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                    background: #f3f4f6;
+                    padding: 2px 6px;
+                    border-radius: 8px;
+                }}
+                details {{
+                    margin-top: 14px;
+                    color: #374151;
+                }}
+                summary {{
+                    cursor: pointer;
+                    font-weight: 800;
+                    color: #1f2937;
+                }}
+            </style>
+        </head>
         <body>
-            <h1>Dispatcharr Authentication Required</h1>
-            <p>{message}</p>
-            <p>Please update the Dispatcharr connection details and reload this page.</p>
+            <div class="card">
+                <div class="brand" aria-label="Dispatcharr Maid">
+                    <img class="brand-logo" src="/static/logo.svg" alt="Dispatcharr Maid">
+                    <div class="brand-text" style="color:#111827;">
+                        <h1 style="font-size:1.6em;">Dispatcharr Maid</h1>
+                        <p style="color:#4b5563;margin-top:6px;">Dispatcharr connection required</p>
+                    </div>
+                </div>
+
+                <div class="error" role="alert">{message}</div>
+
+                <p>
+                    Update your Dispatcharr connection details (e.g. <code>DISPATCHARR_BASE_URL</code>,
+                    <code>DISPATCHARR_USER</code>, <code>DISPATCHARR_PASS</code>) and reload.
+                </p>
+
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="window.location.reload()">Retry</button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/'">Go to app</button>
+                </div>
+
+                <details>
+                    <summary>Troubleshooting hints</summary>
+                    <p>
+                        - In Docker, use the Dispatcharr service name (not <code>localhost</code>) for the base URL.<br>
+                        - Ensure Dispatcharr and Maid are on the same Docker network.<br>
+                        - Check container logs for auth failures.
+                    </p>
+                </details>
+            </div>
         </body>
         </html>""",
         503

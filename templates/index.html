@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dispatcharr Maid - Monitor</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='brand.css') }}">
     <style>
         * {
             margin: 0;
@@ -276,8 +278,13 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🧹 Dispatcharr Maid</h1>
-            <p>Live Monitoring Dashboard</p>
+            <div class="brand">
+                <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="Dispatcharr Maid">
+                <div class="brand-text">
+                    <h1>Dispatcharr Maid</h1>
+                    <p>Live Monitoring Dashboard</p>
+                </div>
+            </div>
         </div>
         
         <div class="refresh-indicator" id="refreshIndicator">
