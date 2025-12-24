@@ -2619,7 +2619,7 @@ def generate_job_summary(config, specific_channel_ids=None):
 
 
 # Provider ranking
-def _build_provider_ranking(provider_stats, provider_names, provider_metadata):
+def _build_provider_ranking(provider_stats, provider_names, provider_metadata, window_label='last run'):
     """
     Normalize provider stats into a best->worst ranking list.
 
@@ -2680,11 +2680,11 @@ def _build_provider_ranking(provider_stats, provider_names, provider_metadata):
 
         note = None
         if total <= 0:
-            note = 'No streams tested in the last run.'
+            note = f'No streams tested in the {window_label}.'
         elif success_rate < 80:
-            note = 'High failure rate in the last run.'
+            note = f'High failure rate in the {window_label}.'
         elif avg_quality_f is not None and avg_quality_f < 60:
-            note = 'Low average quality in the last run.'
+            note = f'Low average quality in the {window_label}.'
 
         rows.append({
             'provider_id': provider_id,
@@ -2715,6 +2715,97 @@ def _build_provider_ranking(provider_stats, provider_names, provider_metadata):
         row['rank'] = idx
 
     return rows
+
+
+def _build_config_from_history_job(history_job):
+    """Create a Config instance scoped to a historical job entry dict."""
+    try:
+        workspace = history_job.get('workspace') if isinstance(history_job, dict) else None
+    except Exception:
+        workspace = None
+    if workspace:
+        try:
+            workspace_path = Path(workspace)
+            return Config(workspace_path / 'config.yaml', working_dir=workspace_path)
+        except Exception:
+            return Config('config.yaml')
+    return Config('config.yaml')
+
+
+def _aggregate_provider_stats(provider_stats_list):
+    """
+    Aggregate provider_stats from multiple summaries into one provider_stats dict.
+
+    Each entry in provider_stats_list is expected to be a dict: {provider_id: stats_dict}
+    where stats_dict contains: total, successful, failed, avg_quality.
+    """
+    neutral_quality = 70.0
+    unknown_penalty = 5.0
+    fallback_avg_quality = neutral_quality - unknown_penalty
+
+    totals = {}  # provider_id -> {'total': int, 'successful': int, 'failed': int, 'quality_sum': float}
+    for stats in provider_stats_list:
+        if not isinstance(stats, dict):
+            continue
+        for provider_id, row in stats.items():
+            pid = str(provider_id)
+            if not isinstance(row, dict):
+                row = {}
+            try:
+                total = int(row.get('total') or 0)
+            except Exception:
+                total = 0
+            try:
+                successful = int(row.get('successful') or 0)
+            except Exception:
+                successful = 0
+            try:
+                failed = int(row.get('failed') or max(0, total - successful))
+            except Exception:
+                failed = max(0, total - successful)
+            try:
+                avg_quality = float(row.get('avg_quality')) if row.get('avg_quality') is not None else None
+            except Exception:
+                avg_quality = None
+
+            if pid not in totals:
+                totals[pid] = {'total': 0, 'successful': 0, 'failed': 0, 'quality_sum': 0.0}
+            totals[pid]['total'] += max(0, total)
+            totals[pid]['successful'] += max(0, successful)
+            totals[pid]['failed'] += max(0, failed)
+
+            # Weight avg_quality by successful count. If avg_quality is missing,
+            # assume the same fallback used in generate_job_summary.
+            if successful > 0:
+                totals[pid]['quality_sum'] += (avg_quality if isinstance(avg_quality, (int, float)) else fallback_avg_quality) * successful
+
+    aggregated = {}
+    for pid, acc in totals.items():
+        total = int(acc.get('total') or 0)
+        successful = int(acc.get('successful') or 0)
+        failed = int(acc.get('failed') or max(0, total - successful))
+        if total > 0:
+            success_rate = round((successful / total) * 100.0, 1)
+        else:
+            success_rate = 0.0
+
+        if successful > 0:
+            avg_quality = acc.get('quality_sum', 0.0) / successful
+        else:
+            avg_quality = fallback_avg_quality
+
+        success_weight = (success_rate / 100.0) ** 2
+        weighted_score = avg_quality * success_weight
+
+        aggregated[pid] = {
+            'total': total,
+            'successful': successful,
+            'failed': failed,
+            'success_rate': round(success_rate, 1),
+            'avg_quality': round(avg_quality, 1),
+            'weighted_score': round(weighted_score, 1),
+        }
+    return aggregated
 
 
 # API Endpoints
@@ -3488,12 +3579,24 @@ def api_provider_ranking():
 
     Optional query params:
       - job_id: scope to a specific job
+      - window: integer (e.g. 1 or 5). When >1, aggregates the last N analyzed runs.
     """
     job_id = request.args.get('job_id')
+    window_raw = request.args.get('window')
     try:
+        window = 1
+        if window_raw is not None and str(window_raw).strip() != '':
+            try:
+                window = int(str(window_raw).strip())
+            except Exception:
+                return jsonify({'success': False, 'error': 'Invalid window; must be an integer'}), 400
+        window = max(1, min(50, window))
+
         summary = None
         config = None
         resolved_job_id = job_id
+        included_job_ids = []
+        most_recent_timestamp = None
 
         if job_id:
             results, analysis_ran, job_type, config, error = _get_job_results(job_id)
@@ -3501,23 +3604,92 @@ def api_provider_ranking():
                 return jsonify({'success': False, 'error': error}), 404
             summary = results if isinstance(results, dict) else None
         else:
-            # Prefer the most recent completed job that has a stored summary.
-            with job_lock:
-                completed_jobs = [j for j in jobs.values() if j.status == 'completed' and j.result_summary]
-                latest_job = max(completed_jobs, key=lambda j: j.started_at) if completed_jobs else None
+            # Prefer persisted history so rankings survive server restarts.
+            history = get_job_history()
+            if not isinstance(history, list):
+                history = []
 
-            if latest_job is not None:
-                resolved_job_id = latest_job.job_id
-                config = _build_config_from_job(latest_job)
-                summary = latest_job.result_summary if isinstance(latest_job.result_summary, dict) else None
-                # Reconstruct if provider stats aren't present.
-                if not (isinstance(summary, dict) and isinstance(summary.get('provider_stats'), dict)):
-                    summary = generate_job_summary(config, specific_channel_ids=latest_job.channels)
+            def _is_completed_analyzed(h):
+                if not isinstance(h, dict):
+                    return False
+                if h.get('status') != 'completed':
+                    return False
+                return _job_ran_analysis(h.get('job_type'))
+
+            analyzed = [h for h in history if _is_completed_analyzed(h)]
+
+            if window <= 1:
+                latest = analyzed[0] if analyzed else None
+                if latest is not None:
+                    resolved_job_id = latest.get('job_id')
+                    config = _build_config_from_history_job(latest)
+                    summary = latest.get('result_summary') if isinstance(latest.get('result_summary'), dict) else None
+                    most_recent_timestamp = summary.get('timestamp') if isinstance(summary, dict) else None
+                    included_job_ids = [resolved_job_id] if resolved_job_id else []
+
+                    # Reconstruct if provider stats aren't present.
+                    if not (isinstance(summary, dict) and isinstance(summary.get('provider_stats'), dict)):
+                        specific = latest.get('channels')
+                        try:
+                            specific = [int(x) for x in specific] if isinstance(specific, list) else None
+                        except Exception:
+                            specific = None
+                        summary = generate_job_summary(config, specific_channel_ids=specific)
+                        most_recent_timestamp = summary.get('timestamp') if isinstance(summary, dict) else None
+                else:
+                    # Fall back to CSV-based summary if no job history exists.
+                    latest_job = _get_latest_job_with_workspace()
+                    resolved_job_id = latest_job.job_id if latest_job else None
+                    config = _build_config_from_job(latest_job)
+                    summary = generate_job_summary(config)
+                    most_recent_timestamp = summary.get('timestamp') if isinstance(summary, dict) else None
+                    included_job_ids = [resolved_job_id] if resolved_job_id else []
             else:
-                latest_job = _get_latest_job_with_workspace()
-                resolved_job_id = latest_job.job_id if latest_job else None
-                config = _build_config_from_job(latest_job)
-                summary = generate_job_summary(config)
+                # Aggregate across the last N analyzed runs.
+                selected = analyzed[:window]
+                if not selected:
+                    return jsonify({'success': False, 'error': 'No analysis results available yet. Run a Quality Check first.'}), 404
+
+                # Use most recent run as the "base" for names/metadata.
+                resolved_job_id = selected[0].get('job_id')
+                config = _build_config_from_history_job(selected[0])
+
+                provider_stats_list = []
+                included_job_ids = []
+                most_recent_timestamp = None
+
+                for idx, h in enumerate(selected):
+                    jid = h.get('job_id')
+                    if jid:
+                        included_job_ids.append(jid)
+                    h_summary = h.get('result_summary') if isinstance(h.get('result_summary'), dict) else None
+                    if idx == 0 and isinstance(h_summary, dict):
+                        most_recent_timestamp = h_summary.get('timestamp')
+
+                    h_provider_stats = h_summary.get('provider_stats') if isinstance(h_summary, dict) else None
+                    if not isinstance(h_provider_stats, dict):
+                        # Rebuild from workspace CSVs when needed.
+                        h_config = _build_config_from_history_job(h)
+                        specific = h.get('channels')
+                        try:
+                            specific = [int(x) for x in specific] if isinstance(specific, list) else None
+                        except Exception:
+                            specific = None
+                        rebuilt = generate_job_summary(h_config, specific_channel_ids=specific)
+                        h_provider_stats = rebuilt.get('provider_stats') if isinstance(rebuilt, dict) else None
+                        if idx == 0 and isinstance(rebuilt, dict) and most_recent_timestamp is None:
+                            most_recent_timestamp = rebuilt.get('timestamp')
+
+                    if isinstance(h_provider_stats, dict):
+                        provider_stats_list.append(h_provider_stats)
+
+                if not provider_stats_list:
+                    return jsonify({'success': False, 'error': 'Provider stats are not available yet. Run a Quality Check first.'}), 404
+
+                summary = {
+                    'timestamp': most_recent_timestamp,
+                    'provider_stats': _aggregate_provider_stats(provider_stats_list),
+                }
 
         if config is None:
             config = Config('config.yaml')
@@ -3538,10 +3710,13 @@ def api_provider_ranking():
         provider_names = _load_provider_names(config)
         provider_metadata = _load_provider_metadata(config)
 
-        ranking = _build_provider_ranking(provider_stats, provider_names, provider_metadata)
+        window_label = 'last run' if window <= 1 else f'last {window} runs'
+        ranking = _build_provider_ranking(provider_stats, provider_names, provider_metadata, window_label=window_label)
         return jsonify({
             'success': True,
+            'window': window,
             'job_id': resolved_job_id,
+            'job_ids': included_job_ids,
             'timestamp': summary.get('timestamp'),
             'scoring': {
                 'formula': 'score = avg_quality × (success_rate/100)²',

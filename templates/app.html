@@ -1342,7 +1342,16 @@
             </div>
             <div id="provider-ranking-container" class="hidden">
                 <div style="margin-bottom: 12px; color: #718096; font-size: 0.95em;">
-                    <div id="provider-ranking-meta"></div>
+                    <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px;">
+                        <div id="provider-ranking-meta"></div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <label for="provider-ranking-window" style="font-weight:700; color:#4a5568;">Window</label>
+                            <select id="provider-ranking-window" style="padding:6px 10px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; color:#2d3748;">
+                                <option value="1">Latest run</option>
+                                <option value="5">Last 5 runs</option>
+                            </select>
+                        </div>
+                    </div>
                     <details style="margin-top: 8px;" class="provider-ranking-help">
                         <summary style="cursor: pointer; font-weight: 700; color: #4a5568;">How scoring works</summary>
                         <div style="margin-top: 8px; color: #4a5568; line-height: 1.45;">
@@ -3085,6 +3094,7 @@
             const empty = document.getElementById('provider-ranking-empty');
             const tbody = document.getElementById('provider-ranking-body');
             const meta = document.getElementById('provider-ranking-meta');
+            const windowSelect = document.getElementById('provider-ranking-window');
 
             if (tbody) tbody.innerHTML = '';
             if (meta) meta.textContent = '';
@@ -3093,7 +3103,22 @@
             if (loading) loading.classList.remove('hidden');
 
             try {
-                const resp = await fetch(`/api/provider-ranking?ts=${Date.now()}`, { cache: 'no-store' });
+                let windowVal = 1;
+                try {
+                    const stored = localStorage.getItem('providerRankingWindow');
+                    if (stored && windowSelect && !windowSelect.dataset._init) {
+                        windowSelect.value = stored;
+                    }
+                    if (windowSelect) {
+                        windowSelect.dataset._init = '1';
+                        windowVal = parseInt(windowSelect.value || '1', 10);
+                        if (!isFinite(windowVal) || windowVal <= 0) windowVal = 1;
+                    }
+                } catch (e) {
+                    // ignore
+                }
+
+                const resp = await fetch(`/api/provider-ranking?window=${encodeURIComponent(String(windowVal))}&ts=${Date.now()}`, { cache: 'no-store' });
                 const data = await resp.json();
 
                 if (!data || !data.success) {
@@ -3118,7 +3143,9 @@
                 if (meta) {
                     const when = data.timestamp ? new Date(data.timestamp).toLocaleString() : null;
                     const job = data.job_id ? String(data.job_id) : null;
-                    meta.textContent = `Based on the most recent analyzed run${when ? ` • ${when}` : ''}${job ? ` • job ${job}` : ''}`;
+                    const w = data.window ? parseInt(data.window, 10) : 1;
+                    const base = (w && w > 1) ? `Based on the last ${w} analyzed runs` : 'Based on the most recent analyzed run';
+                    meta.textContent = `${base}${when ? ` • latest ${when}` : ''}${job ? ` • job ${job}` : ''}`;
                 }
 
                 if (tbody) {
@@ -3159,6 +3186,15 @@
 
                 if (loading) loading.classList.add('hidden');
                 if (container) container.classList.remove('hidden');
+
+                // Persist selection (when available)
+                try {
+                    if (windowSelect) {
+                        localStorage.setItem('providerRankingWindow', String(windowSelect.value || '1'));
+                    }
+                } catch (e) {
+                    // ignore
+                }
             } catch (error) {
                 if (loading) loading.classList.add('hidden');
                 if (empty) {
@@ -3169,6 +3205,19 @@
                 }
             }
         }
+
+        // Provider ranking window selector
+        document.addEventListener('change', function(e) {
+            const t = e.target;
+            if (t && t.id === 'provider-ranking-window') {
+                try {
+                    localStorage.setItem('providerRankingWindow', String(t.value || '1'));
+                } catch (err) {
+                    // ignore
+                }
+                loadProviderRanking();
+            }
+        });
         
         // Render job history
         function renderJobHistory(history) {
