@@ -3511,6 +3511,9 @@ def api_dispatcharr_plan(job_id):
       - limit: int (default 200, max 2000)
       - offset: int (default 0)
       - changed_only: bool-ish ("1"/"true") (default 1)
+      - include_details: bool-ish ("1"/"true") (default 0)
+      - stream_preview_limit: int (default 60, max 500)  # per-row preview size for stream details
+      - include_before_preview: bool-ish ("1"/"true") (default 0)
     """
     try:
         job_id = str(job_id or '').strip()
@@ -3520,6 +3523,9 @@ def api_dispatcharr_plan(job_id):
         limit = request.args.get('limit', '200')
         offset = request.args.get('offset', '0')
         changed_only = str(request.args.get('changed_only', '1') or '1').strip().lower() in ('1', 'true', 'yes', 'y')
+        include_details = str(request.args.get('include_details', '0') or '0').strip().lower() in ('1', 'true', 'yes', 'y')
+        include_before_preview = str(request.args.get('include_before_preview', '0') or '0').strip().lower() in ('1', 'true', 'yes', 'y')
+        stream_preview_limit = request.args.get('stream_preview_limit', '60')
 
         try:
             limit_i = max(1, min(2000, int(limit)))
@@ -3529,6 +3535,10 @@ def api_dispatcharr_plan(job_id):
             offset_i = max(0, int(offset))
         except (TypeError, ValueError):
             offset_i = 0
+        try:
+            stream_preview_limit_i = max(1, min(500, int(stream_preview_limit)))
+        except (TypeError, ValueError):
+            stream_preview_limit_i = 60
 
         entry = _get_job_entry(job_id)
         workspace = None
@@ -3555,6 +3565,24 @@ def api_dispatcharr_plan(job_id):
         if changed_only:
             rows = [r for r in rows if isinstance(r, dict) and r.get('changed') is True]
 
+        # Stable display + commit order: channel_number asc, then channel_id asc.
+        def _row_sort_key(r):
+            if not isinstance(r, dict):
+                return (10**12, 10**12)
+            cn = r.get('channel_number')
+            cid = r.get('channel_id')
+            try:
+                cn_i = int(cn)
+            except Exception:
+                cn_i = 10**12
+            try:
+                cid_i = int(cid)
+            except Exception:
+                cid_i = 10**12
+            return (cn_i, cid_i)
+
+        rows.sort(key=_row_sort_key)
+
         total = len(rows)
         sliced = rows[offset_i: offset_i + limit_i]
 
@@ -3562,13 +3590,196 @@ def api_dispatcharr_plan(job_id):
         if isinstance(payload, dict):
             meta = {k: payload.get(k) for k in ('job_id', 'generated_at', 'streams_per_provider', 'groups', 'channels', 'stats')}
 
+        provider_names = {}
+        if include_details:
+            # Enrich rows with per-stream preview details (name/provider/quality/etc.) in the
+            # exact order they will be applied to Dispatcharr.
+            try:
+                job_config = Config('config.yaml', working_dir=str(ws))
+                provider_names = _load_provider_names(job_config) or {}
+            except Exception:
+                provider_names = {}
+
+            # Load stream details from the scored CSV (preferred) with fallback to measurements.
+            scored_file = str(ws / 'csv' / '05_iptv_streams_scored_sorted.csv')
+            measurements_file = str(ws / 'csv' / '03_iptv_stream_measurements.csv')
+
+            # Collect stream IDs we need to resolve (avoid building huge payloads for large plans).
+            needed_ids = set()
+            for r in sliced:
+                if not isinstance(r, dict):
+                    continue
+                for key in ('after_stream_ids', 'added_stream_ids', 'removed_stream_ids'):
+                    ids = r.get(key)
+                    if isinstance(ids, list) and ids:
+                        for sid in ids[:stream_preview_limit_i]:
+                            try:
+                                needed_ids.add(int(sid))
+                            except Exception:
+                                continue
+                if include_before_preview:
+                    ids = r.get('before_stream_ids')
+                    if isinstance(ids, list) and ids:
+                        for sid in ids[:min(stream_preview_limit_i, 30)]:
+                            try:
+                                needed_ids.add(int(sid))
+                            except Exception:
+                                continue
+
+            stream_details_map = {}
+
+            def _coerce_int(x):
+                try:
+                    return int(x)
+                except Exception:
+                    return None
+
+            def _coerce_float(x):
+                try:
+                    return float(x)
+                except Exception:
+                    return None
+
+            def _provider_label(pid):
+                if pid is None:
+                    return None
+                key = str(pid)
+                return provider_names.get(key) or provider_names.get(pid) or None
+
+            # Read scored CSV first (contains score + provider + name).
+            if needed_ids and os.path.exists(scored_file):
+                try:
+                    df = pd.read_csv(scored_file)
+                    sid_col = 'stream_id' if 'stream_id' in df.columns else ('id' if 'id' in df.columns else None)
+                    if sid_col:
+                        df[sid_col] = pd.to_numeric(df[sid_col], errors='coerce')
+                        df = df[df[sid_col].notna()]
+                        df[sid_col] = df[sid_col].astype(int)
+                        df = df[df[sid_col].isin(list(needed_ids))]
+
+                        # Prefer 'quality_score' but fall back to 'score'.
+                        score_col = 'quality_score' if 'quality_score' in df.columns else ('score' if 'score' in df.columns else None)
+                        name_col = 'stream_name' if 'stream_name' in df.columns else ('name' if 'name' in df.columns else None)
+                        provider_col = 'm3u_account' if 'm3u_account' in df.columns else None
+
+                        # Deduplicate per stream_id keeping the "best" row (highest score) if duplicates exist.
+                        if score_col:
+                            df[score_col] = pd.to_numeric(df[score_col], errors='coerce').fillna(0.0)
+                            df = df.sort_values(by=[sid_col, score_col], ascending=[True, False])
+                        else:
+                            df = df.sort_values(by=[sid_col], ascending=[True])
+                        df = df.drop_duplicates(subset=[sid_col], keep='first')
+
+                        for _, row in df.iterrows():
+                            sid = _coerce_int(row.get(sid_col))
+                            if sid is None:
+                                continue
+                            pid = _coerce_int(row.get(provider_col)) if provider_col else None
+                            stream_details_map[sid] = {
+                                'stream_id': sid,
+                                'stream_name': (None if name_col is None else (row.get(name_col) if not pd.isna(row.get(name_col)) else None)),
+                                'provider_id': pid,
+                                'provider_name': _provider_label(pid),
+                                'quality_score': _coerce_float(row.get(score_col)) if score_col else None,
+                                'resolution': (row.get('resolution') if 'resolution' in df.columns and not pd.isna(row.get('resolution')) else None),
+                                'video_codec': (row.get('video_codec') if 'video_codec' in df.columns and not pd.isna(row.get('video_codec')) else None),
+                                'status': (row.get('status') if 'status' in df.columns and not pd.isna(row.get('status')) else None),
+                            }
+                except Exception:
+                    logging.debug("Failed to load scored stream details for plan UI", exc_info=True)
+
+            # Fallback: measurements CSV for missing stream IDs (status/resolution/name/provider).
+            missing = [sid for sid in needed_ids if sid not in stream_details_map]
+            if missing and os.path.exists(measurements_file):
+                try:
+                    dfm = pd.read_csv(measurements_file)
+                    sid_col = 'stream_id' if 'stream_id' in dfm.columns else ('id' if 'id' in dfm.columns else None)
+                    if sid_col:
+                        dfm[sid_col] = pd.to_numeric(dfm[sid_col], errors='coerce')
+                        dfm = dfm[dfm[sid_col].notna()]
+                        dfm[sid_col] = dfm[sid_col].astype(int)
+                        dfm = dfm[dfm[sid_col].isin(list(missing))]
+                        # Prefer newest timestamp if present.
+                        if 'timestamp' in dfm.columns:
+                            dfm = dfm.sort_values(by=['timestamp'], ascending=[False])
+                        dfm = dfm.drop_duplicates(subset=[sid_col], keep='first')
+
+                        name_col = 'stream_name' if 'stream_name' in dfm.columns else ('name' if 'name' in dfm.columns else None)
+                        provider_col = 'm3u_account' if 'm3u_account' in dfm.columns else None
+                        score_col = 'quality_score' if 'quality_score' in dfm.columns else ('score' if 'score' in dfm.columns else None)
+
+                        for _, row in dfm.iterrows():
+                            sid = _coerce_int(row.get(sid_col))
+                            if sid is None or sid in stream_details_map:
+                                continue
+                            pid = _coerce_int(row.get(provider_col)) if provider_col else None
+                            stream_details_map[sid] = {
+                                'stream_id': sid,
+                                'stream_name': (None if name_col is None else (row.get(name_col) if not pd.isna(row.get(name_col)) else None)),
+                                'provider_id': pid,
+                                'provider_name': _provider_label(pid),
+                                'quality_score': _coerce_float(row.get(score_col)) if score_col else None,
+                                'resolution': (row.get('resolution') if 'resolution' in dfm.columns and not pd.isna(row.get('resolution')) else None),
+                                'video_codec': (row.get('video_codec') if 'video_codec' in dfm.columns and not pd.isna(row.get('video_codec')) else None),
+                                'status': (row.get('status') if 'status' in dfm.columns and not pd.isna(row.get('status')) else None),
+                            }
+                except Exception:
+                    logging.debug("Failed to load measurements stream details for plan UI", exc_info=True)
+
+            def _detail_list(ids, limit_n):
+                out = []
+                if not isinstance(ids, list) or not ids:
+                    return out
+                for idx, sid in enumerate(ids[:limit_n]):
+                    try:
+                        sid_i = int(sid)
+                    except Exception:
+                        continue
+                    d = stream_details_map.get(sid_i) or {'stream_id': sid_i}
+                    item = dict(d)
+                    item['order'] = int(idx) + 1
+                    out.append(item)
+                return out
+
+            # Attach preview fields to the sliced rows (do not mutate persisted plan file).
+            enriched = []
+            for r in sliced:
+                if not isinstance(r, dict):
+                    continue
+                rr = dict(r)
+                rr['stream_preview_limit'] = int(stream_preview_limit_i)
+                rr['after_streams_preview'] = _detail_list(rr.get('after_stream_ids'), stream_preview_limit_i)
+                rr['added_streams_preview'] = _detail_list(rr.get('added_stream_ids'), min(stream_preview_limit_i, 80))
+                rr['removed_streams_preview'] = _detail_list(rr.get('removed_stream_ids'), min(stream_preview_limit_i, 80))
+                if include_before_preview:
+                    rr['before_streams_preview'] = _detail_list(rr.get('before_stream_ids'), min(stream_preview_limit_i, 30))
+
+                # Lightweight per-provider counts for the after list (based on preview).
+                try:
+                    counts = {}
+                    for it in rr.get('after_streams_preview') or []:
+                        pid = it.get('provider_id')
+                        if pid is None:
+                            continue
+                        counts[str(pid)] = int(counts.get(str(pid), 0)) + 1
+                    rr['after_provider_counts_preview'] = counts
+                except Exception:
+                    rr['after_provider_counts_preview'] = {}
+
+                enriched.append(rr)
+            sliced = enriched
+
         return jsonify({
             'success': True,
             'total': int(total),
             'offset': int(offset_i),
             'limit': int(limit_i),
             'changed_only': bool(changed_only),
+            'include_details': bool(include_details),
+            'include_before_preview': bool(include_before_preview),
+            'stream_preview_limit': int(stream_preview_limit_i),
             'meta': meta,
+            'provider_names': provider_names if include_details else {},
             'rows': sliced,
         })
     except Exception as e:
@@ -3671,6 +3882,24 @@ def api_dispatcharr_plan_commit(job_id):
                 'failures': [],
                 'message': 'No matching plan rows to apply.'
             })
+
+        # Apply in a stable, user-friendly order (matches plan UI): channel_number asc then channel_id asc.
+        def _sort_key(r):
+            if not isinstance(r, dict):
+                return (10**12, 10**12)
+            cn = r.get('channel_number')
+            cid = r.get('channel_id')
+            try:
+                cn_i = int(cn)
+            except Exception:
+                cn_i = 10**12
+            try:
+                cid_i = int(cid)
+            except Exception:
+                cid_i = 10**12
+            return (cn_i, cid_i)
+
+        filtered.sort(key=_sort_key)
 
         # Apply the plan.
         api = DispatcharrAPI()
