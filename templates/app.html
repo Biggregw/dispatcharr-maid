@@ -1459,6 +1459,8 @@
                                     <tr>
                                         <th>Provider</th>
                                         <th>Requests</th>
+                                        <th>Sessions</th>
+                                        <th>Clients</th>
                                         <th>OK</th>
                                         <th>Unique Streams</th>
                                         <th>Data Sent</th>
@@ -1468,6 +1470,10 @@
                                 <tbody id="provider-usage-body"></tbody>
                             </table>
                         </div>
+                        <details id="provider-usage-unknown" class="hidden" style="margin-top: 12px;">
+                            <summary style="cursor:pointer; font-weight: 800; color: #4a5568;">Why is some usage “Unknown”?</summary>
+                            <div id="provider-usage-unknown-body" class="usage-meta" style="margin-top: 10px;"></div>
+                        </details>
                     </div>
                 </div>
             </div>
@@ -3267,17 +3273,24 @@
                 const rows = Object.entries(usageObj).map(([providerId, stats]) => {
                     const s = (stats && typeof stats === 'object') ? stats : {};
                     const requests = parseInt(String(s.requests ?? 0), 10) || 0;
+                    const sessions = parseInt(String(s.sessions ?? 0), 10) || 0;
+                    const clients = parseInt(String(s.unique_clients ?? 0), 10) || 0;
                     const ok = parseInt(String(s.ok_requests ?? 0), 10) || 0;
                     const errors = parseInt(String(s.error_requests ?? 0), 10) || 0;
                     const unique = parseInt(String(s.unique_streams ?? 0), 10) || 0;
                     const bytes = parseInt(String(s.bytes_sent ?? 0), 10) || 0;
                     const lastSeen = s.last_seen ? String(s.last_seen) : null;
-                    const name = s.provider_name ? String(s.provider_name) : String(providerId);
+                    const isUnknown = String(providerId) === 'unknown';
+                    const name = s.provider_name
+                        ? String(s.provider_name)
+                        : (isUnknown ? 'Unknown' : String(providerId));
                     const okRate = requests > 0 ? (ok / requests) * 100 : 0;
                     return {
                         provider_id: String(providerId),
                         name,
                         requests,
+                        sessions,
+                        clients,
                         ok,
                         errors,
                         unique_streams: unique,
@@ -3293,10 +3306,31 @@
                     const since = data.since ? new Date(data.since).toLocaleString() : null;
                     const totals = data.totals || {};
                     const totalReq = totals.playback_requests !== undefined ? parseInt(String(totals.playback_requests), 10) : rows.reduce((acc, r) => acc + r.requests, 0);
+                    const totalSessions = totals.playback_sessions !== undefined ? parseInt(String(totals.playback_sessions), 10) : rows.reduce((acc, r) => acc + r.sessions, 0);
                     const totalBytes = totals.bytes_sent !== undefined ? parseInt(String(totals.bytes_sent), 10) : rows.reduce((acc, r) => acc + r.bytes_sent, 0);
                     const logGlob = data.log_glob ? String(data.log_glob) : null;
                     const logDir = data.log_dir ? String(data.log_dir) : null;
-                    meta.textContent = `${since ? `Since ${since}` : 'Recent playback'} • ${rows.length} providers • ${Number(totalReq || 0).toLocaleString()} requests • ${formatBytes(totalBytes || 0)}${(logGlob || logDir) ? ` • logs: ${logGlob || ''}${(logGlob && logDir) ? ' in ' : ''}${logDir || ''}` : ''}`;
+                    const unknownRow = rows.find(r => r && r.provider_id === 'unknown') || null;
+                    const unknownReq = unknownRow ? Number(unknownRow.requests || 0) : 0;
+                    const unknownPct = (totalReq > 0) ? (unknownReq / totalReq) * 100 : 0;
+                    const diag = (data && typeof data.diagnostics === 'object' && data.diagnostics) ? data.diagnostics : {};
+                    const noSid = diag.playback_events_without_stream_id !== undefined ? parseInt(String(diag.playback_events_without_stream_id), 10) : 0;
+                    const playbackEvents = diag.playback_events !== undefined ? parseInt(String(diag.playback_events), 10) : 0;
+                    const mapSize = diag.stream_provider_map_size !== undefined ? parseInt(String(diag.stream_provider_map_size), 10) : null;
+                    const hint = (unknownReq > 0)
+                        ? `<div style="margin-top:6px;">
+                               <span class="usage-pill ${getOkRateClass(100 - unknownPct)}">Unknown: ${escapeHtml(unknownPct.toFixed(1))}%</span>
+                               <span class="provider-note" style="margin-left:8px;">
+                                   Streams can be “Unknown” if they’re not in Dispatcharr, or if <code>m3u_account</code> is missing.
+                               </span>
+                           </div>`
+                        : '';
+                    meta.innerHTML = `
+                        <div>${escapeHtml(since ? `Since ${since}` : 'Recent playback')} • ${escapeHtml(String(rows.length))} providers • ${escapeHtml(Number(totalReq || 0).toLocaleString())} requests • ${escapeHtml(Number(totalSessions || 0).toLocaleString())} sessions • ${escapeHtml(formatBytes(totalBytes || 0))}${(logGlob || logDir) ? ` • logs: <code>${escapeHtml(logGlob || '')}</code>${(logGlob && logDir) ? ' in ' : ''}<code>${escapeHtml(logDir || '')}</code>` : ''}</div>
+                        ${mapSize !== null ? `<div class="provider-note" style="margin-top:4px;">Dispatcharr stream/provider map: ${escapeHtml(mapSize.toLocaleString())} streams</div>` : ''}
+                        ${(playbackEvents || noSid) ? `<div class="provider-note" style="margin-top:4px;">Parsed playback events: ${escapeHtml(String(playbackEvents || 0))}${noSid ? ` • without stream_id: ${escapeHtml(String(noSid))}` : ''}</div>` : ''}
+                        ${hint}
+                    `;
                 }
 
                 if (tbody) {
@@ -3304,6 +3338,8 @@
                         const name = escapeHtml(r.name || r.provider_id || 'Unknown');
                         const pid = escapeHtml(r.provider_id || '');
                         const req = Number(r.requests || 0).toLocaleString();
+                        const sessionsText = Number(r.sessions || 0).toLocaleString();
+                        const clientsText = Number(r.clients || 0).toLocaleString();
                         const okRateText = (r.requests > 0 && isFinite(r.ok_rate)) ? `${r.ok_rate.toFixed(1)}%` : '—';
                         const okRateClass = getOkRateClass(r.ok_rate);
                         const unique = Number(r.unique_streams || 0).toLocaleString();
@@ -3318,6 +3354,8 @@
                                     ${pid ? `<span class="provider-subtle">ID ${pid}</span>` : ''}
                                 </td>
                                 <td style="font-weight:800; color:#2d3748;">${escapeHtml(req)}</td>
+                                <td>${escapeHtml(sessionsText)}</td>
+                                <td>${escapeHtml(clientsText)}</td>
                                 <td>
                                     <div style="display:flex; flex-direction:column; gap:4px;">
                                         <span class="usage-pill ${okRateClass}">${escapeHtml(okRateText)}</span>
@@ -3330,6 +3368,46 @@
                             </tr>
                         `;
                     }).join('');
+                }
+
+                // Unknown attribution details (best-effort)
+                const unknownDetails = document.getElementById('provider-usage-unknown');
+                const unknownBody = document.getElementById('provider-usage-unknown-body');
+                try {
+                    const diag = (data && typeof data.diagnostics === 'object' && data.diagnostics) ? data.diagnostics : {};
+                    const topStreams = Array.isArray(diag.unmapped_stream_details) ? diag.unmapped_stream_details : (Array.isArray(diag.unmapped_stream_ids_top) ? diag.unmapped_stream_ids_top : []);
+                    const topPaths = Array.isArray(diag.unmapped_paths_top) ? diag.unmapped_paths_top : [];
+                    if (unknownDetails && unknownBody) {
+                        if ((topStreams && topStreams.length) || (topPaths && topPaths.length)) {
+                            const streamLines = (topStreams || []).slice(0, 10).map((s) => {
+                                const sid = escapeHtml(String(s.stream_id ?? ''));
+                                const cnt = escapeHtml(Number(s.requests || 0).toLocaleString());
+                                const exists = (s.exists_in_dispatcharr === true) ? '✅ in Dispatcharr' : (s.exists_in_dispatcharr === false ? '❌ not in Dispatcharr' : '');
+                                const nm = s.stream_name ? ` — ${escapeHtml(String(s.stream_name))}` : '';
+                                const acc = (s.m3u_account !== undefined && s.m3u_account !== null) ? ` • m3u_account: ${escapeHtml(String(s.m3u_account))}` : '';
+                                return `<div class="provider-note"><code>${sid}</code>${nm} — ${cnt} req ${exists ? ` • ${exists}` : ''}${acc}</div>`;
+                            }).join('');
+                            const pathLines = (topPaths || []).slice(0, 8).map((p) => {
+                                const path = escapeHtml(String(p.path ?? ''));
+                                const cnt = escapeHtml(Number(p.requests || 0).toLocaleString());
+                                return `<div class="provider-note"><code>${path}</code> — ${cnt} req</div>`;
+                            }).join('');
+
+                            unknownBody.innerHTML = `
+                                <div style="margin-bottom:8px;">
+                                    If “Unknown” is high, double-check you selected the right <strong>Proxy host</strong> (top-right) so you only parse the Dispatcharr playback logs.
+                                </div>
+                                ${streamLines ? `<div style="font-weight:800; color:#2d3748; margin-top:8px;">Top unmapped stream IDs</div>${streamLines}` : ''}
+                                ${pathLines ? `<div style="font-weight:800; color:#2d3748; margin-top:10px;">Common unmapped playback paths (credentials redacted)</div>${pathLines}` : ''}
+                            `;
+                            unknownDetails.classList.remove('hidden');
+                        } else {
+                            unknownDetails.classList.add('hidden');
+                            unknownBody.innerHTML = '';
+                        }
+                    }
+                } catch (e) {
+                    // ignore
                 }
 
                 if (loading) loading.classList.add('hidden');

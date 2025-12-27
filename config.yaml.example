@@ -51,3 +51,6 @@ usage:
   access_log_glob: "proxy-host-*_access.log*"
   # Default lookback for the API endpoint (days)
   lookback_days: 7
+  # Approximate "sessions" by starting a new session when a client/stream has a gap > N seconds.
+  # This helps de-duplicate HLS segment requests into something closer to "plays".
+  session_gap_seconds: 30
