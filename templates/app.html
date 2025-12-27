@@ -3479,7 +3479,7 @@
                     // Calculate active (non-unknown) providers
                     const activeProviders = rows.filter(r => r.provider_id !== 'unknown');
                     const activeProvidersCount = activeProviders.length;
-                    const uniqueClients = Math.max(...rows.map(r => r.clients || 0));
+                    const uniqueClients = rows.length > 0 ? Math.max(...rows.map(r => r.clients || 0), 0) : 0;
                     const avgSessionSize = totalSessions > 0 ? Math.round(totalBytes / totalSessions) : 0;
                     
                     // Create stat cards
@@ -3551,7 +3551,7 @@
                         </div>
                         ${statsCards}
                         ${insights}
-                        ${mapSize !== null ? `<div class="provider-note" style="margin-top:8px;">Dispatcharr stream/provider map: ${escapeHtml(mapSize.toLocaleString())} streams • Parsed events: ${escapeHtml(String(playbackEvents || 0))}${noSid ? ` (${escapeHtml(String(noSid))} without stream_id)` : ''}` : ''}
+                        ${mapSize !== null ? `<div class="provider-note" style="margin-top:8px;">Dispatcharr stream/provider map: ${escapeHtml(mapSize.toLocaleString())} streams • Parsed events: ${escapeHtml(String(playbackEvents || 0))}${noSid ? ` (${escapeHtml(String(noSid))} without stream_id)` : ''}</div>` : ''}
                     `;
 
                 if (tbody) {
