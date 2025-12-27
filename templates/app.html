@@ -665,6 +665,42 @@
             padding: 2px 6px;
             border-radius: 8px;
         }
+
+        /* Provider usage (from access logs) */
+        .usage-meta {
+            color: #718096;
+            font-size: 0.92em;
+            line-height: 1.35;
+        }
+
+        .usage-controls label {
+            font-weight: 700;
+            color: #4a5568;
+            font-size: 0.92em;
+        }
+
+        .usage-controls select,
+        .usage-controls input {
+            padding: 6px 10px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: #fff;
+            color: #2d3748;
+        }
+
+        .usage-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-weight: 800;
+            font-size: 0.9em;
+            white-space: nowrap;
+        }
+
+        .usage-pill-good { background: #c6f6d5; color: #22543d; }
+        .usage-pill-ok { background: #feebc8; color: #7c2d12; }
+        .usage-pill-bad { background: #fed7d7; color: #742a2a; }
         
         /* Hidden class */
         .hidden {
@@ -1383,6 +1419,57 @@
                         <tbody id="provider-ranking-body"></tbody>
                     </table>
                 </div>
+
+                <!-- Provider usage -->
+                <div style="margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0;">
+                    <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin-bottom: 10px;">
+                        <div style="font-weight: 800; color: #2d3748;">📺 Provider Usage (from playback logs)</div>
+                        <div class="usage-controls" style="display:flex; flex-wrap:wrap; align-items:center; gap:10px;">
+                            <label for="provider-usage-days">Lookback</label>
+                            <select id="provider-usage-days">
+                                <option value="1">1 day</option>
+                                <option value="3">3 days</option>
+                                <option value="7">7 days</option>
+                                <option value="14">14 days</option>
+                                <option value="30">30 days</option>
+                                <option value="90">90 days</option>
+                            </select>
+                            <label for="provider-usage-proxy-host">Proxy host</label>
+                            <input id="provider-usage-proxy-host" type="number" min="1" inputmode="numeric" placeholder="(optional)" style="width: 130px;">
+                        </div>
+                    </div>
+
+                    <div class="usage-meta" style="margin-bottom: 10px;">
+                        Uses your reverse-proxy access logs to estimate which providers are actually being played (requires <code>usage.access_log_dir</code> in <code>config.yaml</code>).
+                    </div>
+
+                    <div id="provider-usage-loading" class="alert alert-info hidden">
+                        <span class="spinner"></span> Loading provider usage...
+                    </div>
+                    <div id="provider-usage-empty" class="hidden">
+                        <div class="alert alert-info">
+                            Provider usage is not available yet.
+                        </div>
+                    </div>
+                    <div id="provider-usage-container" class="hidden">
+                        <div id="provider-usage-meta" class="usage-meta"></div>
+                        <div class="ranking-table-wrap" style="margin-top: 10px;">
+                            <table class="ranking-table" style="min-width: 820px;">
+                                <thead>
+                                    <tr>
+                                        <th>Provider</th>
+                                        <th>Requests</th>
+                                        <th>OK</th>
+                                        <th>Unique Streams</th>
+                                        <th>Data Sent</th>
+                                        <th>Last Seen</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="provider-usage-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1496,6 +1583,7 @@
             loadGroups();
             loadJobHistory();
             loadProviderRanking();
+            loadProviderUsage();
             loadSavedPatterns();
             initSavedRegexPresetDropdown();
             loadSavedRegexPresets();
@@ -3066,6 +3154,8 @@
                     document.getElementById('history-container').classList.remove('hidden');
                     // Provider ranking is tied to the most recent analysis results.
                     loadProviderRanking();
+                    // Usage is independent but useful to refresh alongside history.
+                    loadProviderUsage();
                 }
             } catch (error) {
                 console.error('Failed to load history:', error);
@@ -3089,6 +3179,177 @@
             if (s >= 80) return 'score-good';
             if (s >= 60) return 'score-ok';
             return 'score-bad';
+        }
+
+        function formatBytes(bytes) {
+            const b = typeof bytes === 'number' ? bytes : parseFloat(bytes);
+            if (!isFinite(b) || b <= 0) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let v = b;
+            let i = 0;
+            while (v >= 1024 && i < units.length - 1) {
+                v /= 1024;
+                i += 1;
+            }
+            const dp = i === 0 ? 0 : (i >= 3 ? 2 : 1);
+            return `${v.toFixed(dp)} ${units[i]}`;
+        }
+
+        function getOkRateClass(okRate) {
+            const r = typeof okRate === 'number' ? okRate : parseFloat(okRate);
+            if (!isFinite(r)) return 'usage-pill-bad';
+            if (r >= 98) return 'usage-pill-good';
+            if (r >= 90) return 'usage-pill-ok';
+            return 'usage-pill-bad';
+        }
+
+        // Load provider usage from proxy access logs
+        async function loadProviderUsage() {
+            const loading = document.getElementById('provider-usage-loading');
+            const container = document.getElementById('provider-usage-container');
+            const empty = document.getElementById('provider-usage-empty');
+            const tbody = document.getElementById('provider-usage-body');
+            const meta = document.getElementById('provider-usage-meta');
+            const daysSelect = document.getElementById('provider-usage-days');
+            const proxyInput = document.getElementById('provider-usage-proxy-host');
+
+            if (tbody) tbody.innerHTML = '';
+            if (meta) meta.textContent = '';
+            if (container) container.classList.add('hidden');
+            if (empty) empty.classList.add('hidden');
+            if (loading) loading.classList.remove('hidden');
+
+            let daysParam = '7';
+            let proxyHostParam = '';
+            try {
+                const storedDays = localStorage.getItem('providerUsageDays');
+                if (storedDays && daysSelect && !daysSelect.dataset._init) {
+                    daysSelect.value = storedDays;
+                }
+                if (daysSelect) {
+                    daysSelect.dataset._init = '1';
+                    daysParam = String(daysSelect.value || '7').trim();
+                }
+
+                const storedProxy = localStorage.getItem('providerUsageProxyHost');
+                if (storedProxy && proxyInput && !proxyInput.dataset._init) {
+                    proxyInput.value = storedProxy;
+                }
+                if (proxyInput) {
+                    proxyInput.dataset._init = '1';
+                    proxyHostParam = String(proxyInput.value || '').trim();
+                }
+            } catch (e) {
+                // ignore
+            }
+
+            try {
+                const qs = new URLSearchParams();
+                qs.set('days', String(daysParam || '7'));
+                if (proxyHostParam) qs.set('proxy_host', proxyHostParam);
+                qs.set('ts', String(Date.now()));
+
+                const resp = await fetch(`/api/usage/providers?${qs.toString()}`, { cache: 'no-store' });
+                const data = await resp.json();
+
+                if (!data || !data.success) {
+                    if (loading) loading.classList.add('hidden');
+                    if (empty) {
+                        empty.classList.remove('hidden');
+                        const msg = data?.error ? String(data.error) : 'Provider usage is not available.';
+                        const box = empty.querySelector('.alert');
+                        if (box) box.textContent = msg;
+                    }
+                    return;
+                }
+
+                const usageObj = (data && typeof data.provider_usage === 'object' && data.provider_usage) ? data.provider_usage : {};
+                const rows = Object.entries(usageObj).map(([providerId, stats]) => {
+                    const s = (stats && typeof stats === 'object') ? stats : {};
+                    const requests = parseInt(String(s.requests ?? 0), 10) || 0;
+                    const ok = parseInt(String(s.ok_requests ?? 0), 10) || 0;
+                    const errors = parseInt(String(s.error_requests ?? 0), 10) || 0;
+                    const unique = parseInt(String(s.unique_streams ?? 0), 10) || 0;
+                    const bytes = parseInt(String(s.bytes_sent ?? 0), 10) || 0;
+                    const lastSeen = s.last_seen ? String(s.last_seen) : null;
+                    const name = s.provider_name ? String(s.provider_name) : String(providerId);
+                    const okRate = requests > 0 ? (ok / requests) * 100 : 0;
+                    return {
+                        provider_id: String(providerId),
+                        name,
+                        requests,
+                        ok,
+                        errors,
+                        unique_streams: unique,
+                        bytes_sent: bytes,
+                        last_seen: lastSeen,
+                        ok_rate: okRate
+                    };
+                });
+
+                rows.sort((a, b) => (b.requests - a.requests) || (b.bytes_sent - a.bytes_sent) || a.name.localeCompare(b.name));
+
+                if (meta) {
+                    const since = data.since ? new Date(data.since).toLocaleString() : null;
+                    const totals = data.totals || {};
+                    const totalReq = totals.playback_requests !== undefined ? parseInt(String(totals.playback_requests), 10) : rows.reduce((acc, r) => acc + r.requests, 0);
+                    const totalBytes = totals.bytes_sent !== undefined ? parseInt(String(totals.bytes_sent), 10) : rows.reduce((acc, r) => acc + r.bytes_sent, 0);
+                    const logGlob = data.log_glob ? String(data.log_glob) : null;
+                    const logDir = data.log_dir ? String(data.log_dir) : null;
+                    meta.textContent = `${since ? `Since ${since}` : 'Recent playback'} • ${rows.length} providers • ${Number(totalReq || 0).toLocaleString()} requests • ${formatBytes(totalBytes || 0)}${(logGlob || logDir) ? ` • logs: ${logGlob || ''}${(logGlob && logDir) ? ' in ' : ''}${logDir || ''}` : ''}`;
+                }
+
+                if (tbody) {
+                    tbody.innerHTML = rows.map(r => {
+                        const name = escapeHtml(r.name || r.provider_id || 'Unknown');
+                        const pid = escapeHtml(r.provider_id || '');
+                        const req = Number(r.requests || 0).toLocaleString();
+                        const okRateText = (r.requests > 0 && isFinite(r.ok_rate)) ? `${r.ok_rate.toFixed(1)}%` : '—';
+                        const okRateClass = getOkRateClass(r.ok_rate);
+                        const unique = Number(r.unique_streams || 0).toLocaleString();
+                        const bytesText = formatBytes(r.bytes_sent || 0);
+                        const lastSeenText = r.last_seen ? new Date(r.last_seen).toLocaleString() : '—';
+                        const okDetail = (r.requests > 0) ? `${Number(r.ok || 0).toLocaleString()} OK / ${Number(r.errors || 0).toLocaleString()} err` : 'No playback requests';
+
+                        return `
+                            <tr>
+                                <td>
+                                    <div style="font-weight:800; color:#2d3748;">${name}</div>
+                                    ${pid ? `<span class="provider-subtle">ID ${pid}</span>` : ''}
+                                </td>
+                                <td style="font-weight:800; color:#2d3748;">${escapeHtml(req)}</td>
+                                <td>
+                                    <div style="display:flex; flex-direction:column; gap:4px;">
+                                        <span class="usage-pill ${okRateClass}">${escapeHtml(okRateText)}</span>
+                                        <span class="provider-note">${escapeHtml(okDetail)}</span>
+                                    </div>
+                                </td>
+                                <td>${escapeHtml(unique)}</td>
+                                <td>${escapeHtml(bytesText)}</td>
+                                <td>${escapeHtml(lastSeenText)}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+
+                if (loading) loading.classList.add('hidden');
+                if (container) container.classList.remove('hidden');
+
+                try {
+                    if (daysSelect) localStorage.setItem('providerUsageDays', String(daysSelect.value || '7'));
+                    if (proxyInput) localStorage.setItem('providerUsageProxyHost', String(proxyInput.value || ''));
+                } catch (e) {
+                    // ignore
+                }
+            } catch (error) {
+                if (loading) loading.classList.add('hidden');
+                if (empty) {
+                    empty.classList.remove('hidden');
+                    const msg = `Unable to load provider usage: ${error.message}`;
+                    const box = empty.querySelector('.alert');
+                    if (box) box.textContent = msg;
+                }
+            }
         }
 
         // Load provider ranking
@@ -3230,6 +3491,15 @@
                     // ignore
                 }
                 loadProviderRanking();
+            }
+            if (t && (t.id === 'provider-usage-days' || t.id === 'provider-usage-proxy-host')) {
+                try {
+                    if (t.id === 'provider-usage-days') localStorage.setItem('providerUsageDays', String(t.value || '7'));
+                    if (t.id === 'provider-usage-proxy-host') localStorage.setItem('providerUsageProxyHost', String(t.value || ''));
+                } catch (err) {
+                    // ignore
+                }
+                loadProviderUsage();
             }
         });
         
