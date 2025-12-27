@@ -178,6 +178,20 @@ hitting per-provider max_streams limits. The existing round-robin ordering
 above is intentionally preserved to keep failover behavior consistent while
 maximizing diversity.
 
+### Provider Usage (Viewing Activity) via Access Logs (Optional)
+
+If your IPTV client uses the **Xtream/M3U connection served by Dispatcharr**, you can
+estimate real-world provider usage by parsing your reverse-proxy access logs
+(for example, **Nginx Proxy Manager** logs containing playback requests like
+`/live/<user>/<pass>/<stream_id>.ts`).
+
+Dispatcharr-Maid exposes an API endpoint:
+
+- `GET /api/usage/providers?days=7&proxy_host=1`
+
+Configure `config.yaml` under `usage:` and mount your proxy logs into the Maid
+container (see `config.yaml.example`).
+
 ---
 
 ## 📚 Documentation

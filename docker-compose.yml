@@ -15,9 +15,13 @@ services:
       - ./jobs:/app/jobs         # Per-job workspaces (persist results)
       - ./config.yaml:/app/config.yaml  # Configuration
       - ./.env:/app/.env         # Credentials
+      # Optional: mount reverse-proxy access logs for provider usage stats
+      # (e.g. Nginx Proxy Manager /data/logs). Update config.yaml usage.access_log_dir accordingly.
+      # - /path/on/host/npm-data/logs:/app/npm_logs:ro
       - ./dispatcharr_web_app.py:/app/dispatcharr_web_app.py  # Main web app
       - ./stream_analysis.py:/app/stream_analysis.py          # Stream analysis library
       - ./api_utils.py:/app/api_utils.py                      # API utilities
+      - ./provider_usage.py:/app/provider_usage.py            # Provider usage via access logs
       - ./interactive_maid.py:/app/interactive_maid.py        # Interactive CLI
       - ./web_monitor.py:/app/web_monitor.py                  # Web monitor
       - ./templates:/app/templates                            # HTML templates
