@@ -475,6 +475,12 @@ Now access via: `https://maid.yourdomain.com`
 If your IPTV client uses the **Xtream connection served by Dispatcharr**, you can
 derive provider-usage stats from Nginx Proxy Manager access logs.
 
+Quick setup (recommended):
+
+```bash
+bash scripts/enable_usage_from_npm.sh
+```
+
 1. **Mount NPM logs into the Maid container** (read-only).
    - NPM logs live at `/data/logs/` inside the NPM container.
    - On the host, that corresponds to your NPM data volume/bind mount (varies by install).

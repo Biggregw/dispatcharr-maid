@@ -192,6 +192,12 @@ Dispatcharr-Maid exposes an API endpoint:
 Configure `config.yaml` under `usage:` and mount your proxy logs into the Maid
 container (see `config.yaml.example`).
 
+If you use Nginx Proxy Manager, you can run:
+
+```bash
+bash scripts/enable_usage_from_npm.sh
+```
+
 ---
 
 ## 📚 Documentation
