@@ -1209,6 +1209,9 @@
                 </div>
             </div>
         </div>
+
+        <!-- Boot diagnostics banner (shown when initial API calls can't complete) -->
+        <div id="boot-banner" class="alert alert-error hidden" style="margin-bottom: 18px;"></div>
         
         <!-- Step Indicator -->
         <div class="steps">
@@ -1768,6 +1771,7 @@
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
+            bootCheck();
             loadGroups();
             loadJobHistory();
             loadProviderRanking();
@@ -1777,7 +1781,112 @@
             
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
+
+            // Failsafe: if something stalls and spinners never resolve, surface guidance.
+            setTimeout(failsafeInitialLoad, 25000);
         });
+
+        function setBootBanner(message, isError) {
+            const el = document.getElementById('boot-banner');
+            if (!el) return;
+            const msg = String(message || '').trim();
+            if (!msg) {
+                el.classList.add('hidden');
+                el.textContent = '';
+                el.classList.remove('alert-error');
+                el.classList.add('alert-info');
+                return;
+            }
+            el.classList.remove('hidden');
+            el.classList.toggle('alert-error', !!isError);
+            el.classList.toggle('alert-info', !isError);
+            el.innerHTML = msg;
+        }
+
+        async function bootCheck() {
+            try {
+                const data = await fetchJsonWithTimeout(`/api/boot?check=1&ts=${Date.now()}`, { cache: 'no-store' }, 8000);
+                if (!data || !data.success) {
+                    setBootBanner(`Unable to run startup diagnostics. Try opening <code>/api/boot</code> directly.`, true);
+                    return;
+                }
+
+                const env = data.env || {};
+                const paths = data.paths || {};
+                const missing = [];
+                if (!env.DISPATCHARR_BASE_URL_set) missing.push('DISPATCHARR_BASE_URL');
+                if (!env.DISPATCHARR_USER_set) missing.push('DISPATCHARR_USER');
+                if (!env.DISPATCHARR_PASS_set) missing.push('DISPATCHARR_PASS');
+
+                if (paths.env_is_dir) {
+                    setBootBanner(
+                        `Your <code>.env</code> appears to be a <strong>directory</strong> inside the container (<code>${escapeHtml(paths.env_path || '/app/.env')}</code>). ` +
+                        `This usually happens if the host file didn’t exist when Docker mounted it. ` +
+                        `Fix by creating a real <code>.env</code> file on the host and restarting the container. ` +
+                        `Details: <code>/api/boot</code>.`,
+                        true
+                    );
+                    return;
+                }
+
+                if (missing.length) {
+                    setBootBanner(
+                        `Missing required Dispatcharr settings: <code>${escapeHtml(missing.join(', '))}</code>. ` +
+                        `Run the setup wizard again (with <code>--write</code>) and restart the container if needed. ` +
+                        `Details: <code>/api/boot</code>.`,
+                        true
+                    );
+                    return;
+                }
+
+                const probe = data.dispatcharr_probe;
+                if (probe && probe.ok === false) {
+                    setBootBanner(
+                        `Can’t reach Dispatcharr from the Maid container (short probe failed): ` +
+                        `<code>${escapeHtml(probe.error || 'unknown error')}</code>. ` +
+                        `Details: <code>/api/boot</code>.`,
+                        true
+                    );
+                    return;
+                }
+
+                // Looks OK — hide banner.
+                setBootBanner('', false);
+            } catch (e) {
+                setBootBanner(`Startup diagnostics timed out. Try opening <code>/api/boot</code> directly.`, true);
+            }
+        }
+
+        function failsafeInitialLoad() {
+            try {
+                const groupLoading = document.getElementById('group-loading');
+                const groupError = document.getElementById('group-error');
+                if (groupLoading && !groupLoading.classList.contains('hidden') && groupError && groupError.classList.contains('hidden')) {
+                    showError('group-error', 'Still loading after 25s. Open /api/boot (and /api/boot?check=1) to see what the server is stuck on.');
+                    groupLoading.classList.add('hidden');
+                }
+            } catch (e) {}
+
+            try {
+                const histLoading = document.getElementById('history-loading');
+                const list = document.getElementById('history-list');
+                if (histLoading && !histLoading.classList.contains('hidden') && list && !list.textContent.trim()) {
+                    if (list) list.innerHTML = `<div class="alert alert-error">Still loading after 25s. Open <code>/api/boot</code> to diagnose.</div>`;
+                    histLoading.classList.add('hidden');
+                }
+            } catch (e) {}
+
+            try {
+                const prLoading = document.getElementById('provider-ranking-loading');
+                const empty = document.getElementById('provider-ranking-empty');
+                if (prLoading && !prLoading.classList.contains('hidden') && empty && empty.classList.contains('hidden')) {
+                    prLoading.classList.add('hidden');
+                    empty.classList.remove('hidden');
+                    const box = empty.querySelector('.alert');
+                    if (box) box.textContent = 'Still loading after 25s. Open /api/boot to diagnose.';
+                }
+            } catch (e) {}
+        }
 
         // Saved stream-name regex presets
         let savedRegexPresets = [];
@@ -1991,8 +2100,7 @@
         async function loadSavedPatterns() {
             try {
                 // Saved presets are stored alongside regex presets.
-                const resp = await fetch(`/api/regex/presets?ts=${Date.now()}`, { cache: 'no-store' });
-                const data = await resp.json();
+                const data = await fetchJsonWithTimeout(`/api/regex/presets?ts=${Date.now()}`, { cache: 'no-store' }, 15000);
                 if (!data.success) {
                     showSavedPatternStatus(data.error || 'Unable to load saved patterns.', true);
                     savedPatterns = [];
@@ -3771,8 +3879,11 @@
                     windowParam = (isFinite(parsed) && parsed > 0) ? String(parsed) : '1';
                 }
 
-                const resp = await fetch(`/api/provider-ranking?window=${encodeURIComponent(String(windowParam))}&ts=${Date.now()}`, { cache: 'no-store' });
-                const data = await resp.json();
+                const data = await fetchJsonWithTimeout(
+                    `/api/provider-ranking?window=${encodeURIComponent(String(windowParam))}&ts=${Date.now()}`,
+                    { cache: 'no-store' },
+                    15000
+                );
 
                 if (!data || !data.success) {
                     if (loading) loading.classList.add('hidden');

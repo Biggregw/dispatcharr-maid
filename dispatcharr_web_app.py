@@ -2850,6 +2850,68 @@ def health_check():
     return jsonify({'status': 'ok'}), 200
 
 
+@app.route('/api/boot')
+def api_boot():
+    """
+    Quick diagnostics used by the UI to avoid "silent" hangs.
+
+    Returns non-sensitive environment/config presence checks, and (optionally) a
+    short connectivity probe to Dispatcharr.
+
+    Query params:
+      - check=1 : perform a short Dispatcharr auth + groups probe (timeouts ~5s)
+    """
+    env_file = Path(__file__).resolve().parent / ".env"
+    cfg_file = Path(__file__).resolve().parent / "config.yaml"
+
+    def _bool(x):
+        return bool(x is not None and str(x).strip() != "")
+
+    payload = {
+        'success': True,
+        'server_time': datetime.now().isoformat(),
+        'paths': {
+            'env_path': str(env_file),
+            'env_exists': env_file.exists(),
+            'env_is_file': env_file.is_file(),
+            'env_is_dir': env_file.exists() and env_file.is_dir(),
+            'config_path': str(cfg_file),
+            'config_exists': cfg_file.exists(),
+            'config_is_file': cfg_file.is_file(),
+        },
+        'env': {
+            # Never return values; only presence.
+            'DISPATCHARR_BASE_URL_set': _bool(os.getenv('DISPATCHARR_BASE_URL')),
+            'DISPATCHARR_USER_set': _bool(os.getenv('DISPATCHARR_USER')),
+            'DISPATCHARR_PASS_set': _bool(os.getenv('DISPATCHARR_PASS')),
+            'DISPATCHARR_TOKEN_set': _bool(os.getenv('DISPATCHARR_TOKEN')),
+        },
+        'dispatcharr_probe': None,
+    }
+
+    # Optional short connectivity probe.
+    wants_check = request.args.get('check')
+    if wants_check is not None and str(wants_check).strip() not in ("", "0", "false", "False", "no", "No"):
+        try:
+            api = DispatcharrAPI()
+            # short auth probe
+            api.login(timeout=5)
+            # short "can we read groups" probe
+            groups = api.get('/api/channels/groups/', timeout=5)
+            ok = isinstance(groups, list)
+            payload['dispatcharr_probe'] = {
+                'ok': bool(ok),
+                'groups_count': len(groups) if isinstance(groups, list) else None,
+            }
+        except Exception as exc:
+            payload['dispatcharr_probe'] = {
+                'ok': False,
+                'error': str(exc),
+            }
+
+    return jsonify(payload), 200
+
+
 @app.route('/results')
 def results():
     """Results dashboard page"""
