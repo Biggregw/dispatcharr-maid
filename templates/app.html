@@ -1205,7 +1205,7 @@
                 <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="Dispatcharr Maid">
                 <div class="brand-text">
                     <h1>Dispatcharr Maid</h1>
-                    <p>Interactive Control Panel</p>
+                    <p>Interactive Control Panel <span id="ui-build" style="opacity:0.7; font-size: 0.9em; margin-left: 8px;">Build ff11dc6</span></p>
                 </div>
             </div>
         </div>
@@ -1691,10 +1691,26 @@
         let providerUsageLoadedOnce = false;
 
         async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 20000) {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            // Enforce a hard timeout even if the browser can't abort fetch.
+            const hasAbort = (typeof AbortController !== 'undefined');
+            const controller = hasAbort ? new AbortController() : null;
+            const signal = controller ? controller.signal : undefined;
+            let abortTimer = null;
+            let timeoutTimer = null;
+
+            const timeoutPromise = new Promise((_, reject) => {
+                timeoutTimer = setTimeout(() => reject(new Error(`Request timed out after ${timeoutMs}ms`)), timeoutMs);
+            });
+
             try {
-                const resp = await fetch(url, { ...(options || {}), signal: controller.signal });
+                if (controller) {
+                    abortTimer = setTimeout(() => {
+                        try { controller.abort(); } catch (e) { /* ignore */ }
+                    }, timeoutMs);
+                }
+
+                const fetchPromise = fetch(url, { ...(options || {}), signal });
+                const resp = await Promise.race([fetchPromise, timeoutPromise]);
                 const ct = (resp.headers && resp.headers.get) ? (resp.headers.get('content-type') || '') : '';
                 // Prefer JSON when possible; otherwise try to parse text.
                 if (ct.includes('application/json')) {
@@ -1708,7 +1724,8 @@
                     throw new Error(`Non-JSON response (${resp.status}): ${snippet}`);
                 }
             } finally {
-                clearTimeout(timer);
+                if (abortTimer) clearTimeout(abortTimer);
+                if (timeoutTimer) clearTimeout(timeoutTimer);
             }
         }
 
@@ -1768,6 +1785,8 @@
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
+            // If you still see loading spinners forever, confirm your browser is receiving this build id.
+            // It should appear next to "Interactive Control Panel" in the header.
             loadGroups();
             loadJobHistory();
             loadProviderRanking();
@@ -2289,8 +2308,11 @@
                 document.getElementById('channel-loading').classList.remove('hidden');
                 document.getElementById('channel-container').classList.add('hidden');
                 
-                const response = await fetch(`/api/channels?groups=${selectedGroups.join(',')}`);
-                const data = await response.json();
+                const data = await fetchJsonWithTimeout(
+                    `/api/channels?groups=${encodeURIComponent(selectedGroups.join(','))}`,
+                    { cache: 'no-store' },
+                    20000
+                );
                 
                 if (data.success) {
                     allChannels = data.channels;
@@ -2300,9 +2322,11 @@
                     document.getElementById('channel-loading').classList.add('hidden');
                     document.getElementById('channel-container').classList.remove('hidden');
                 } else {
+                    document.getElementById('channel-loading').classList.add('hidden');
                     showError('channel-error', data.error);
                 }
             } catch (error) {
+                document.getElementById('channel-loading').classList.add('hidden');
                 showError('channel-error', 'Failed to load channels: ' + error.message);
             }
         }
@@ -3771,8 +3795,11 @@
                     windowParam = (isFinite(parsed) && parsed > 0) ? String(parsed) : '1';
                 }
 
-                const resp = await fetch(`/api/provider-ranking?window=${encodeURIComponent(String(windowParam))}&ts=${Date.now()}`, { cache: 'no-store' });
-                const data = await resp.json();
+                const data = await fetchJsonWithTimeout(
+                    `/api/provider-ranking?window=${encodeURIComponent(String(windowParam))}&ts=${Date.now()}`,
+                    { cache: 'no-store' },
+                    15000
+                );
 
                 if (!data || !data.success) {
                     if (loading) loading.classList.add('hidden');
