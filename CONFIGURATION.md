@@ -18,6 +18,35 @@ The following files contain YOUR data and are NOT committed to GitHub:
 FIRST-TIME SETUP
 ================
 
+OPTION A: Setup Wizard (RECOMMENDED)
+===================================
+
+You can use the interactive wizard to create/update your local files:
+- `.env` (Dispatcharr connection)
+- `config.yaml` (your settings)
+- `docker-compose.yml` (optional: mount reverse-proxy logs for Provider Usage)
+
+Preview changes (no files written):
+
+```bash
+python3 setup_wizard.py
+```
+
+Apply changes:
+
+```bash
+python3 setup_wizard.py --write
+```
+
+If you enable the log mount, restart the container afterwards:
+
+```bash
+docker compose restart dispatcharr-maid-web
+```
+
+OPTION B: Manual Setup
+=====================
+
 Step 1: Copy Example Files
 ---------------------------
 When you first clone this repository, copy the example files:
