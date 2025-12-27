@@ -1196,6 +1196,14 @@
             border-color: #e2e8f0;
             color: #718096;
         }
+
+        .build-info {
+            margin-top: 4px;
+            font-size: 0.85em;
+            color: rgba(255, 255, 255, 0.88);
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }
     </style>
 </head>
 <body>
@@ -1206,9 +1214,12 @@
                 <div class="brand-text">
                     <h1>Dispatcharr Maid</h1>
                     <p>Interactive Control Panel</p>
+                    <div class="build-info" id="build-info">Build: unknown</div>
                 </div>
             </div>
         </div>
+
+        <div id="global-js-error" class="alert alert-error hidden" style="margin-top: 10px;"></div>
         
         <!-- Step Indicator -->
         <div class="steps">
@@ -1676,6 +1687,54 @@
     </div>
 
     <script>
+        // Minimal debug/diagnostics bootstrap (ES5-friendly).
+        (function () {
+            window.__MAID_UI_BUILD__ = 'ui-debug-2025-12-27-1';
+
+            function setText(id, text) {
+                try {
+                    var el = document.getElementById(id);
+                    if (el) el.textContent = String(text || '');
+                } catch (e) {}
+            }
+
+            function showGlobalError(msg) {
+                try {
+                    var box = document.getElementById('global-js-error');
+                    if (!box) return;
+                    box.textContent = String(msg || 'An unexpected error occurred.');
+                    box.classList.remove('hidden');
+                } catch (e) {}
+            }
+
+            window.addEventListener('error', function (ev) {
+                try {
+                    var message = (ev && ev.message) ? String(ev.message) : 'JavaScript error';
+                    showGlobalError(message);
+                } catch (e) {}
+            });
+
+            window.addEventListener('unhandledrejection', function (ev) {
+                try {
+                    var reason = ev && ev.reason;
+                    var message = (reason && reason.message) ? String(reason.message) : String(reason || 'Unhandled promise rejection');
+                    showGlobalError(message);
+                } catch (e) {}
+            });
+
+            document.addEventListener('DOMContentLoaded', function () {
+                setText('build-info', 'Build: ' + String(window.__MAID_UI_BUILD__ || 'unknown'));
+                // If the main script never starts, surface that instead of a forever spinner.
+                setTimeout(function () {
+                    if (!window.__MAID_MAIN_INIT__) {
+                        showGlobalError('UI JavaScript did not start (or crashed during parse). This usually means a cached old page, a browser compatibility issue, or a server-side template not updated.');
+                    }
+                }, 2500);
+            });
+        })();
+    </script>
+
+    <script>
         // Global state
         let selectedGroups = [];
         let selectedChannels = null; // null = all channels, [] = specific channels
@@ -1792,6 +1851,8 @@
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
+            // Marker for the bootstrap diagnostics above.
+            window.__MAID_MAIN_INIT__ = true;
             loadGroups();
             loadJobHistory();
             loadProviderRanking();
@@ -2217,7 +2278,7 @@
             if (loading) loading.classList.remove('hidden');
 
             try {
-                const data = await fetchJsonWithTimeout('/api/groups', { cache: 'no-store' }, 20000);
+                const data = await fetchJsonWithTimeout(`/api/groups?ts=${Date.now()}`, { cache: 'no-store' }, 20000);
                 
                 if (data.success) {
                     allGroups = data.groups;
@@ -3375,7 +3436,7 @@
                 if (container) container.classList.add('hidden');
                 if (loading) loading.classList.remove('hidden');
 
-                const data = await fetchJsonWithTimeout('/api/job-history', { cache: 'no-store' }, 15000);
+                const data = await fetchJsonWithTimeout(`/api/job-history?ts=${Date.now()}`, { cache: 'no-store' }, 15000);
                 
                 if (data.success) {
                     renderJobHistory(data.history);
@@ -3800,8 +3861,11 @@
                     windowParam = (isFinite(parsed) && parsed > 0) ? String(parsed) : '1';
                 }
 
-                const resp = await fetch(`/api/provider-ranking?window=${encodeURIComponent(String(windowParam))}&ts=${Date.now()}`, { cache: 'no-store' });
-                const data = await resp.json();
+                const data = await fetchJsonWithTimeout(
+                    `/api/provider-ranking?window=${encodeURIComponent(String(windowParam))}&ts=${Date.now()}`,
+                    { cache: 'no-store' },
+                    15000
+                );
 
                 if (!data || !data.success) {
                     if (loading) loading.classList.add('hidden');
