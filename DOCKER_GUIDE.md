@@ -477,7 +477,25 @@ derive provider-usage stats from Nginx Proxy Manager access logs.
 
 1. **Mount NPM logs into the Maid container** (read-only).
    - NPM logs live at `/data/logs/` inside the NPM container.
-   - On the host, that corresponds to your NPM data volume/bind mount (varies by install).
+   - On the host, that corresponds to your NPM “data” folder’s `logs/` subfolder (varies by install).
+   - If you don’t know the host path yet, you can skip this step; everything else works without it.
+
+#### How to find the host path (common NPM installs)
+
+- **Bind mount install**: find the host folder mapped to `/data`, then append `/logs`.
+  - Example: if you mapped `./data:/data`, and NPM lives at `/root/nginx-proxy-manager`, then logs are:
+    - `/root/nginx-proxy-manager/data/logs`
+- **Docker named volume install**: inspect the container mounts and locate the mount whose Destination is `/data`.
+
+Examples (run on the host):
+
+```bash
+# Find your NPM container name
+docker ps --format '{{.Names}}' | grep -i -E 'npm|nginx-proxy-manager'
+
+# Inspect mounts and locate the one whose Destination is /data
+docker inspect <NPM_CONTAINER_NAME> --format '{{json .Mounts}}' | jq
+```
 2. Set `usage.access_log_dir` in `config.yaml` (see `config.yaml.example`).
 3. Call the endpoint:
    - `GET /api/usage/providers?days=7&proxy_host=1`

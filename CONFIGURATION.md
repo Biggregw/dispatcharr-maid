@@ -26,6 +26,23 @@ You can use the interactive wizard to create/update your local files:
 - `config.yaml` (your settings)
 - `docker-compose.yml` (optional: mount reverse-proxy logs for Provider Usage)
 
+About the optional reverse-proxy log mount
+------------------------------------------
+
+If you enable the optional log mount, the wizard asks for a **host path** to your reverse-proxy **access logs**.
+This is only needed for “provider usage” statistics derived from access logs; **everything else works without it**.
+
+- If you don't know it, just **press Enter to skip** in the wizard (you can enable it later).
+- For Nginx Proxy Manager specifically, logs are at `/data/logs/` *inside* the NPM container. On the host, that
+  corresponds to the host folder you mounted to `/data`, with `/logs` appended.
+
+To find it, inspect the reverse-proxy container mounts and look for the mount whose Destination is `/data`:
+
+```bash
+docker ps --format '{{.Names}}' | grep -i -E 'npm|nginx-proxy-manager'
+docker inspect <NPM_CONTAINER_NAME> --format '{{json .Mounts}}' | jq
+```
+
 Preview changes (no files written):
 
 ```bash
