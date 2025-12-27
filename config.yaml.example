@@ -43,14 +43,40 @@ web:
 # Optional: derive "viewing activity" from reverse-proxy access logs (e.g. Nginx Proxy Manager).
 # This is ONLY relevant if your IPTV app streams via Dispatcharr (Xtream/M3U served by Dispatcharr),
 # so the proxy can see playback URLs like /live/<user>/<pass>/<stream_id>.ts.
+#
+# Setup requirements:
+#   1. Mount NPM logs into container (edit docker-compose.yml)
+#   2. Set access_log_dir below to the mounted path
+#   3. Restart container: docker-compose restart dispatcharr-maid-web
+#
+# See DOCKER_GUIDE.md section "Provider usage (viewing activity) from NPM access logs"
 usage:
-  # Mount your proxy log directory into the Maid container, then point at it here.
-  # Example for NPM: mount the NPM /data/logs/ folder into Maid at /app/npm_logs
+  # Directory containing Nginx Proxy Manager access logs
+  # Mount NPM /data/logs into Maid container (see docker-compose.yml comments)
+  # Example docker-compose.yml volume:
+  #   - /path/to/npm/data/logs:/app/npm_logs:ro
   access_log_dir: "/app/npm_logs"
-  # Which files to parse (glob, non-recursive within access_log_dir)
+  
+  # Which log files to parse (glob pattern, non-recursive within access_log_dir)
+  # Default matches all NPM proxy host logs: proxy-host-1_access.log, proxy-host-2_access.log.gz, etc.
   access_log_glob: "proxy-host-*_access.log*"
-  # Default lookback for the API endpoint (days)
+  
+  # How many days of history to analyze when API is called (default: 7)
+  # Larger values = more events to parse = slower API response
   lookback_days: 7
-  # Approximate "sessions" by starting a new session when a client/stream has a gap > N seconds.
-  # This helps de-duplicate HLS segment requests into something closer to "plays".
+  
+  # Gap in seconds to consider a new playback session (default: 30)
+  # HLS streaming sends many segment requests; this groups them into "sessions"
+  # Smaller value = more granular session tracking (may overcount)
+  # Larger value = fewer false "new sessions" from brief reconnects
   session_gap_seconds: 30
+  
+  # Cache duration for provider usage statistics in seconds (default: 300 = 5 minutes)
+  # Parsing logs is expensive; increase this if logs are large and change infrequently
+  # Set to 60 for more real-time updates, or 600 (10min) for less frequent refreshes
+  cache_ttl_seconds: 300
+  
+  # Cache duration for stream→provider mapping in seconds (default: 3600 = 1 hour)
+  # This mapping rarely changes, so longer cache improves performance significantly
+  # Only refreshes when cache expires or server restarts
+  stream_map_cache_ttl: 3600

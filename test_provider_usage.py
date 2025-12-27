@@ -88,3 +88,51 @@ def test_aggregate_provider_usage_detailed_sessions_and_unknown_diagnostics():
     assert diag["unmapped_stream_requests"] == 1
     assert any(int(x.get("stream_id")) == 999 for x in diag.get("unmapped_stream_ids_top", []))
 
+
+def test_parse_npm_access_line_without_timezone():
+    """Test timezone fallback for logs without explicit timezone."""
+    # NPM log line without timezone (some configurations)
+    line_no_tz = (
+        '[21/Dec/2025:17:02:33] - 200 200 - GET http tv.example.com '
+        '"/live/user/pass/93.ts" [Client 188.28.40.77] [Length 1604072]'
+    )
+    # This should not match the current regex (which expects timezone)
+    # but the fallback should handle logs that somehow get through with modified format
+    
+    # Test with proper timezone
+    line_with_tz = (
+        '[21/Dec/2025:17:02:33 +0000] - 200 200 - GET http tv.example.com '
+        '"/live/user/pass/93.ts" [Client 188.28.40.77] [Length 1604072] [Gzip -] '
+        '[Sent-to 46.62.199.187] "TiviMate/5.2.0 (Android 11)" "-"'
+    )
+    
+    ev = parse_npm_access_line(line_with_tz)
+    assert ev is not None
+    assert ev.ts.tzinfo is not None  # Should have timezone
+    assert ev.extract_stream_id() == 93
+
+
+def test_aggregate_provider_usage_detailed_out_of_order_logs():
+    """Test that out-of-order log entries don't create false new sessions."""
+    # Logs from multiple rotated files may not be strictly chronological
+    lines = [
+        '[21/Dec/2025:17:02:00 +0000] - 200 200 - GET http tv.example.com "/live/u/p/93.ts" [Client 1.1.1.1] [Length 10] "UA" "-"',
+        '[21/Dec/2025:17:02:20 +0000] - 200 200 - GET http tv.example.com "/live/u/p/93.ts" [Client 1.1.1.1] [Length 20] "UA" "-"',
+        # Out of order entry (earlier timestamp)
+        '[21/Dec/2025:17:02:10 +0000] - 200 200 - GET http tv.example.com "/live/u/p/93.ts" [Client 1.1.1.1] [Length 15] "UA" "-"',
+        # Back to normal sequence
+        '[21/Dec/2025:17:02:25 +0000] - 200 200 - GET http tv.example.com "/live/u/p/93.ts" [Client 1.1.1.1] [Length 25] "UA" "-"',
+    ]
+
+    events = [parse_npm_access_line(l) for l in lines]
+    events = [e for e in events if e is not None and e.is_playback()]
+    mapping = {93: "1"}
+
+    usage, diag = aggregate_provider_usage_detailed(events, mapping, session_gap_seconds=30)
+
+    assert usage["1"]["requests"] == 4
+    # Should be 1 session despite out-of-order entry (all within 30s gap)
+    assert usage["1"]["sessions"] == 1
+    assert usage["1"]["unique_clients"] == 1
+    assert usage["1"]["bytes_sent"] == 70
+

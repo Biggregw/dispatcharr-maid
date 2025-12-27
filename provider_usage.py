@@ -104,6 +104,13 @@ def parse_npm_access_line(line: str) -> Optional[AccessEvent]:
     # Example: 21/Dec/2025:17:02:33 +0000
     try:
         ts = datetime.strptime(ts_raw, "%d/%b/%Y:%H:%M:%S %z")
+    except ValueError:
+        # Fallback: some NPM configs may omit timezone; assume UTC
+        try:
+            ts = datetime.strptime(ts_raw, "%d/%b/%Y:%H:%M:%S")
+            ts = ts.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
     except Exception:
         return None
 
@@ -331,15 +338,22 @@ def aggregate_provider_usage_detailed(
         key = (client, int(sid))
         prev = last_seen_by_client_stream.get(key)
         if prev is None:
+            # First time seeing this client+stream combination
             bucket["sessions"] += 1
             last_seen_by_client_stream[key] = ev.ts
         else:
             dt = (ev.ts - prev).total_seconds()
-            # If logs are not strictly chronological, dt can be negative; treat as same session.
-            if dt > gap:
+            
+            if dt < 0:
+                # Log entries out of chronological order - don't increment session.
+                # This can happen when parsing multiple rotated logs.
+                pass
+            elif dt > gap:
+                # Significant time gap - new session
                 bucket["sessions"] += 1
-            # Update to the max timestamp observed.
-            last_seen_by_client_stream[key] = ev.ts if ev.ts >= prev else prev
+            
+            # Always track the latest timestamp seen (even if out of order)
+            last_seen_by_client_stream[key] = max(ev.ts, prev)
 
         if bucket["first_seen"] is None or ev.ts < bucket["first_seen"]:
             bucket["first_seen"] = ev.ts
