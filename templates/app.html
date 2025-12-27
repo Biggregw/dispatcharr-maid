@@ -3553,6 +3553,7 @@
                         ${insights}
                         ${mapSize !== null ? `<div class="provider-note" style="margin-top:8px;">Dispatcharr stream/provider map: ${escapeHtml(mapSize.toLocaleString())} streams • Parsed events: ${escapeHtml(String(playbackEvents || 0))}${noSid ? ` (${escapeHtml(String(noSid))} without stream_id)` : ''}</div>` : ''}
                     `;
+                }
 
                 if (tbody) {
                     // Calculate total requests for percentage
