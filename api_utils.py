@@ -176,9 +176,57 @@ class DispatcharrAPI:
         """Fetch all channel groups"""
         return self.get('/api/channels/groups/')
     
-    def fetch_channels(self):
-        """Fetch all channels"""
-        return self.get('/api/channels/channels/')
+    def fetch_channels(self, limit=500, timeout=30, max_pages=200):
+        """
+        Fetch all channels.
+
+        Dispatcharr may return either:
+          - a plain list of channels, or
+          - a DRF-style paginated dict: {results: [...], next: "..."}.
+
+        This method normalizes both into a single list.
+        """
+        channels = []
+        try:
+            lim = int(limit) if limit is not None else 0
+        except Exception:
+            lim = 500
+
+        next_url = f'/api/channels/channels/?limit={lim}' if lim > 0 else '/api/channels/channels/'
+        pages = 0
+
+        while next_url:
+            payload = self.get(next_url, timeout=timeout)
+
+            # DRF-style pagination
+            if isinstance(payload, dict) and 'results' in payload:
+                results = payload.get('results') or []
+                if isinstance(results, list):
+                    channels.extend([c for c in results if isinstance(c, dict)])
+                next_link = payload.get('next')
+
+                if next_link and pages < int(max_pages):
+                    # Convert absolute next URL to API-relative endpoint
+                    if '/api/' in str(next_link):
+                        next_url = '/api/' + str(next_link).split('/api/')[-1]
+                    else:
+                        next_url = None
+                else:
+                    next_url = None
+
+            # Unpaginated list
+            elif isinstance(payload, list):
+                channels.extend([c for c in payload if isinstance(c, dict)])
+                next_url = None
+
+            else:
+                raise ValueError("Unexpected channels response shape; expected dict or list.")
+
+            pages += 1
+            if pages >= int(max_pages):
+                break
+
+        return channels
     
     def fetch_channel_streams(self, channel_id):
         """Fetch streams for a specific channel"""
