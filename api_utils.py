@@ -31,7 +31,7 @@ class DispatcharrAPI:
                 "Required: DISPATCHARR_BASE_URL, DISPATCHARR_USER, DISPATCHARR_PASS"
             )
     
-    def login(self):
+    def login(self, timeout=30):
         """Authenticate with Dispatcharr and save token"""
         url = f"{self.base_url}/api/accounts/token/"
         
@@ -40,7 +40,7 @@ class DispatcharrAPI:
                 url,
                 headers={"Content-Type": "application/json"},
                 json={'username': self.username, 'password': self.password},
-                timeout=30
+                timeout=timeout
             )
             response.raise_for_status()
             
@@ -176,9 +176,9 @@ class DispatcharrAPI:
     
     # Convenience methods for common operations
     
-    def fetch_channel_groups(self):
+    def fetch_channel_groups(self, timeout=30):
         """Fetch all channel groups"""
-        return self.get('/api/channels/groups/')
+        return self.get('/api/channels/groups/', timeout=timeout)
     
     def fetch_channels(self, limit=500, timeout=30, max_pages=200):
         """

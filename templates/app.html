@@ -1691,24 +1691,48 @@
         let providerUsageLoadedOnce = false;
 
         async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 20000) {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            // Important: do not rely solely on AbortController to end the await.
+            // Some WebViews/browsers don't reject fetch() on abort, which can
+            // leave the UI stuck "Loading..." forever. Promise.race guarantees
+            // we reject on timeout even if fetch never settles.
+            const hasAbort = (typeof AbortController !== 'undefined');
+            const controller = hasAbort ? new AbortController() : null;
+
+            let timeoutId = null;
+            const timeoutPromise = new Promise((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    try {
+                        if (controller) controller.abort();
+                    } catch (e) {
+                        // ignore
+                    }
+                    reject(new Error(`Request timed out after ${timeoutMs}ms`));
+                }, timeoutMs);
+            });
+
+            const fetchPromise = fetch(url, {
+                ...(options || {}),
+                ...(controller ? { signal: controller.signal } : {})
+            });
+
+            let resp;
             try {
-                const resp = await fetch(url, { ...(options || {}), signal: controller.signal });
-                const ct = (resp.headers && resp.headers.get) ? (resp.headers.get('content-type') || '') : '';
-                // Prefer JSON when possible; otherwise try to parse text.
-                if (ct.includes('application/json')) {
-                    return await resp.json();
-                }
-                const text = await resp.text();
-                try {
-                    return JSON.parse(text);
-                } catch (e) {
-                    const snippet = String(text || '').slice(0, 200);
-                    throw new Error(`Non-JSON response (${resp.status}): ${snippet}`);
-                }
+                resp = await Promise.race([fetchPromise, timeoutPromise]);
             } finally {
-                clearTimeout(timer);
+                if (timeoutId) clearTimeout(timeoutId);
+            }
+
+            const ct = (resp.headers && resp.headers.get) ? (resp.headers.get('content-type') || '') : '';
+            // Prefer JSON when possible; otherwise try to parse text.
+            if (ct.includes('application/json')) {
+                return await resp.json();
+            }
+            const text = await resp.text();
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                const snippet = String(text || '').slice(0, 200);
+                throw new Error(`Non-JSON response (${resp.status}): ${snippet}`);
             }
         }
 
@@ -2288,9 +2312,12 @@
             try {
                 document.getElementById('channel-loading').classList.remove('hidden');
                 document.getElementById('channel-container').classList.add('hidden');
-                
-                const response = await fetch(`/api/channels?groups=${selectedGroups.join(',')}`);
-                const data = await response.json();
+
+                const data = await fetchJsonWithTimeout(
+                    `/api/channels?groups=${selectedGroups.join(',')}`,
+                    { cache: 'no-store' },
+                    20000
+                );
                 
                 if (data.success) {
                     allChannels = data.channels;
@@ -2300,9 +2327,11 @@
                     document.getElementById('channel-loading').classList.add('hidden');
                     document.getElementById('channel-container').classList.remove('hidden');
                 } else {
+                    document.getElementById('channel-loading').classList.add('hidden');
                     showError('channel-error', data.error);
                 }
             } catch (error) {
+                try { document.getElementById('channel-loading').classList.add('hidden'); } catch (e) {}
                 showError('channel-error', 'Failed to load channels: ' + error.message);
             }
         }
