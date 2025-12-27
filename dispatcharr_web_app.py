@@ -216,6 +216,7 @@ def _render_auth_error(error_message):
                     <p>
                         - In Docker, use the Dispatcharr service name (not <code>localhost</code>) for the base URL.<br>
                         - Ensure Dispatcharr and Maid are on the same Docker network.<br>
+                        - If your password contains spaces or <code>#</code>, quote it in <code>.env</code> (e.g. <code>DISPATCHARR_PASS="p@ss#word"</code>).<br>
                         - Check container logs for auth failures.
                     </p>
                 </details>

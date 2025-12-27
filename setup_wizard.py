@@ -31,6 +31,29 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent
 
 
+def _env_format_value(value: str) -> str:
+    """
+    Format a value for .env safely.
+
+    If it contains characters that commonly break dotenv parsing (e.g. '#', spaces),
+    wrap in double-quotes and escape backslashes and quotes.
+    """
+    v = "" if value is None else str(value)
+    stripped = v.strip()
+
+    # If user already provided a quoted value, keep it as-is.
+    if (stripped.startswith('"') and stripped.endswith('"')) or (stripped.startswith("'") and stripped.endswith("'")):
+        return stripped
+
+    # Characters that can break dotenv parsing when unquoted
+    needs_quotes = any(ch in v for ch in ["#", " ", "\t", "\n", "\r"])
+    if not needs_quotes:
+        return v
+
+    escaped = v.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def _format_path_choices(paths: List[Path]) -> str:
     if not paths:
         return ""
@@ -219,7 +242,7 @@ def update_env_file(env_path: Path, updates: Dict[str, str]) -> Tuple[bool, str]
         key, rest = line.split("=", 1)
         key = key.strip()
         if key in updates:
-            out.append(f"{key}={updates[key]}\n")
+            out.append(f"{key}={_env_format_value(updates[key])}\n")
             updated_keys.add(key)
         else:
             out.append(line)
@@ -231,7 +254,7 @@ def update_env_file(env_path: Path, updates: Dict[str, str]) -> Tuple[bool, str]
             out[-1] += "\n"
         out.append("\n# Added by setup_wizard.py\n")
         for k in missing:
-            out.append(f"{k}={updates[k]}\n")
+            out.append(f"{k}={_env_format_value(updates[k])}\n")
 
     new_content = "".join(out)
     changed = new_content != original

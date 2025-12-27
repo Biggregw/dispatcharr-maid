@@ -54,8 +54,23 @@ class DispatcharrAPI:
             logging.info("Login successful - token saved")
             return True
             
+        except requests.exceptions.HTTPError as e:
+            # Include response body to help diagnose 401s (bad creds vs wrong endpoint).
+            status = getattr(e.response, "status_code", None)
+            body = ""
+            try:
+                body = e.response.text if e.response is not None else ""
+            except Exception:
+                body = ""
+            hint = ""
+            if status == 401:
+                hint = (
+                    " (401 Unauthorized). If you set credentials via setup_wizard.py and your password contains "
+                    "spaces or '#', ensure it is quoted in .env (e.g. DISPATCHARR_PASS=\"p@ss#word\")."
+                )
+            raise Exception(f"Login failed: HTTP {status} for {url}{hint}\nResponse: {body}") from e
         except requests.exceptions.RequestException as e:
-            raise Exception(f"Login failed: {e}")
+            raise Exception(f"Login failed: {e}") from e
     
     def _get_headers(self):
         """Get authorization headers"""
