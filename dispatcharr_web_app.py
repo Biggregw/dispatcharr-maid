@@ -68,6 +68,12 @@ _provider_usage_cache = {
     # (log_dir, glob, days) -> {'ts': epoch_seconds, 'payload': dict}
 }
 
+# Cache stream→provider mapping separately (changes infrequently, can use longer TTL).
+_stream_provider_map_cache_lock = threading.Lock()
+_stream_provider_map_cache = {
+    # Single key: 'data' -> {'ts': epoch_seconds, 'map': dict}
+}
+
 # Cache channel group listing/counts (fetching all channels can be expensive).
 _groups_cache_lock = threading.Lock()
 _groups_cache = {
@@ -3619,6 +3625,48 @@ def api_job_history():
     return jsonify({'success': True, 'history': history})
 
 
+def get_stream_provider_map_cached(api, config):
+    """
+    Get stream→provider map with longer cache (1 hour default).
+    This mapping rarely changes, so longer TTL improves performance significantly.
+    
+    Args:
+        api: DispatcharrAPI instance (already logged in)
+        config: Config instance
+        
+    Returns:
+        dict: {stream_id: provider_id} mapping
+    """
+    usage_cfg = config.get('usage') or {}
+    cache_ttl = int(usage_cfg.get('stream_map_cache_ttl', 3600))  # 1 hour default
+    
+    with _stream_provider_map_cache_lock:
+        cached = _stream_provider_map_cache.get('data')
+        now = time.time()
+        
+        if cached and (now - cached['ts']) < cache_ttl:
+            logging.debug(f"Using cached stream→provider map ({len(cached['map'])} streams, age: {now - cached['ts']:.0f}s)")
+            return cached['map']
+    
+    # Fetch fresh data
+    logging.info("Fetching stream→provider map from Dispatcharr...")
+    start = time.time()
+    stream_provider_map = api.fetch_stream_provider_map()
+    elapsed = time.time() - start
+    logging.info(f"Fetched {len(stream_provider_map)} stream mappings in {elapsed:.1f}s")
+    
+    # Normalize to str provider ids for stable keys
+    stream_id_to_provider_id = {int(k): str(v) for k, v in stream_provider_map.items()}
+    
+    with _stream_provider_map_cache_lock:
+        _stream_provider_map_cache['data'] = {
+            'ts': time.time(),
+            'map': stream_id_to_provider_id
+        }
+    
+    return stream_id_to_provider_id
+
+
 @app.route('/api/usage/providers')
 def api_usage_providers():
     """
@@ -3662,10 +3710,27 @@ def api_usage_providers():
     if not log_dir:
         return jsonify({
             'success': False,
-            'error': (
-                "Missing usage.access_log_dir in config.yaml. "
-                "Mount your proxy logs into the Maid container and set usage.access_log_dir accordingly."
-            )
+            'error': 'Provider usage not configured',
+            'setup_required': True,
+            'help': {
+                'issue': 'usage.access_log_dir not set in config.yaml',
+                'what_it_does': 'Provider usage tracks viewing activity by parsing Nginx Proxy Manager access logs',
+                'requirements': [
+                    'NPM proxying Dispatcharr Xtream/M3U connections',
+                    'NPM logs mounted into Maid container',
+                    'config.yaml usage section configured'
+                ],
+                'setup_steps': [
+                    '1. Find NPM data path: docker inspect nginxproxymanager | grep -A 5 Mounts | grep data',
+                    '2. Edit docker-compose.yml and add volume under dispatcharr-maid-web:',
+                    '     volumes:',
+                    '       - /your/npm/data/logs:/app/npm_logs:ro',
+                    '3. Edit config.yaml and set: usage.access_log_dir: "/app/npm_logs"',
+                    '4. Restart: docker-compose restart dispatcharr-maid-web',
+                    '5. Test: Visit this endpoint again'
+                ],
+                'docs': 'See DOCKER_GUIDE.md section "Provider usage (viewing activity) from NPM access logs"'
+            }
         }), 400
 
     log_dir_path = Path(str(log_dir))
@@ -3673,26 +3738,42 @@ def api_usage_providers():
     if not log_files:
         return jsonify({
             'success': False,
-            'error': (
-                f"No access logs found in {str(log_dir_path)} matching {str(log_glob)}. "
-                "If you're using Nginx Proxy Manager, mount its /data/logs directory into the Maid container."
-            )
+            'error': 'No access logs found',
+            'error_details': {
+                'searched_path': str(log_dir_path),
+                'pattern': str(log_glob),
+                'possible_causes': [
+                    'Log directory not mounted correctly in Docker',
+                    'NPM hasn\'t logged any proxy requests yet',
+                    f'Wrong proxy_host parameter (no logs match {log_glob})'
+                ],
+                'debug_steps': [
+                    f'1. Check mount: docker exec dispatcharr-maid-web ls -la {str(log_dir_path)}',
+                    '2. Verify NPM is logging: check NPM dashboard → Proxy Hosts',
+                    '3. Try without proxy_host parameter to see all available logs',
+                    '4. Check docker-compose.yml volume mount is correct'
+                ],
+                'example_mount': [
+                    'In docker-compose.yml under dispatcharr-maid-web volumes:',
+                    f'  - /path/to/npm/data/logs:{str(log_dir_path)}:ro'
+                ]
+            }
         }), 404
 
     cache_key = (str(log_dir_path), str(log_glob), int(days_int))
+    cache_ttl = int(usage_cfg.get('cache_ttl_seconds', 300))  # 5 minutes default
     now = time.time()
     with _provider_usage_cache_lock:
         cached = _provider_usage_cache.get(cache_key)
-        if isinstance(cached, dict) and (now - float(cached.get('ts', 0))) < 120:
+        if isinstance(cached, dict) and (now - float(cached.get('ts', 0))) < cache_ttl:
+            logging.debug(f"Using cached provider usage (age: {now - cached['ts']:.0f}s)")
             return jsonify(cached.get('payload', {'success': True}))
 
     # Map stream_id -> provider (m3u_account) using Dispatcharr API.
     try:
         api = DispatcharrAPI()
         api.login()
-        stream_provider_map = api.fetch_stream_provider_map()
-        # Normalize to str provider ids for stable keys.
-        stream_id_to_provider_id = {int(k): str(v) for k, v in stream_provider_map.items()}
+        stream_id_to_provider_id = get_stream_provider_map_cached(api, config)
     except Exception as exc:
         return jsonify({'success': False, 'error': f'Failed to fetch stream/provider map from Dispatcharr: {exc}'}), 500
 
@@ -4896,11 +4977,73 @@ def api_update_config():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def validate_provider_usage_config():
+    """
+    Validate provider usage configuration at startup.
+    Logs warnings but doesn't fail startup.
+    """
+    try:
+        config = Config('config.yaml')
+    except Exception:
+        return  # Config loading already logged elsewhere
+    
+    usage_cfg = config.get('usage') or {}
+    log_dir = usage_cfg.get('access_log_dir')
+    
+    if not log_dir:
+        logging.info("ℹ️  Provider usage not configured (usage.access_log_dir not set)")
+        return
+    
+    log_dir_path = Path(log_dir)
+    if not log_dir_path.exists():
+        logging.warning(
+            f"⚠️  Provider usage log directory not accessible: {log_dir}\n"
+            f"    Check docker-compose.yml volume mounts.\n"
+            f"    Expected: /path/to/npm/logs:{log_dir}:ro"
+        )
+        return
+    
+    log_glob = usage_cfg.get('access_log_glob') or 'proxy-host-*_access.log*'
+    log_files = find_log_files(log_dir_path, log_glob)
+    
+    if not log_files:
+        logging.warning(
+            f"⚠️  No access logs found in {log_dir} matching {log_glob}\n"
+            f"    If NPM is logging, check the volume mount path."
+        )
+        return
+    
+    # Test parse first 10 lines from newest log
+    success_count = 0
+    test_file = log_files[0]
+    for i, line in enumerate(iter_access_log_lines(test_file)):
+        if i >= 10:
+            break
+        if parse_npm_access_line(line):
+            success_count += 1
+    
+    if success_count == 0:
+        logging.warning(
+            f"⚠️  Could not parse any log lines in {test_file.name}\n"
+            f"    Log format may not match NPM format.\n"
+            f"    Expected: [DD/Mon/YYYY:HH:MM:SS +0000] - 200 200 - GET http ..."
+        )
+    else:
+        logging.info(
+            f"✅ Provider usage ready: {len(log_files)} log file(s), "
+            f"successfully parsed {success_count}/10 test lines"
+        )
+
+
 if __name__ == '__main__':
     print("\n" + "="*70)
     print("🧹 DISPATCHARR MAID - WEB APPLICATION")
     print("="*70)
     print("\nStarting web application...")
+    
+    # Validate optional provider usage configuration
+    validate_provider_usage_config()
+    
     print("Access the dashboard at: http://localhost:5000")
     print("Or from another device: http://YOUR-SERVER-IP:5000")
     print("\n✨ Full interactive mode - no CLI needed!")
