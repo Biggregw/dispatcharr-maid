@@ -15,7 +15,11 @@ class DispatcharrAPI:
     """Unified API client for Dispatcharr"""
     
     def __init__(self):
-        load_dotenv()
+        # Always reload/override from the local `.env` so changes made by the
+        # setup wizard take effect immediately without requiring a container restart.
+        # In Docker, this file is typically bind-mounted into /app/.env.
+        env_path = Path(__file__).resolve().parent / ".env"
+        load_dotenv(dotenv_path=env_path, override=True)
         self.base_url = os.getenv('DISPATCHARR_BASE_URL', '').rstrip('/')
         self.username = os.getenv('DISPATCHARR_USER')
         self.password = os.getenv('DISPATCHARR_PASS')
