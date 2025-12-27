@@ -14,7 +14,7 @@ Runs Dispatcharr Maid in Docker containers that:
 
 ## 📋 Prerequisites
 
-- Docker and docker-compose installed ✅ 
+- Docker and Docker Compose v2 installed ✅
 - Dispatcharr running ✅ 
 - Your Dispatcharr credentials
 
@@ -92,17 +92,17 @@ DISPATCHARR_TOKEN=
 
 ```bash
 # Build the containers
-docker-compose build
+docker compose build
 
 # Start everything
-docker-compose up -d
+docker compose up -d
 
 # Note: You may see warnings about unset variables - this is a known issue and safe to ignore
 # WARNING: The xxxxxxxxx variable is not set. Defaulting to a blank string.
 # Containers will start successfully
 
 # Check they're running
-docker-compose ps
+docker compose ps
 ```
 
 You should see:

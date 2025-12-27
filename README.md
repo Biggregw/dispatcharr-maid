@@ -83,11 +83,13 @@ nano .env         # Set DISPATCHARR_BASE_URL / USER / PASS
 nano config.yaml  # Set filters.channel_group_ids (or use the Web UI to save regex selection)
 
 # 4. Start the container
-docker-compose up -d
+docker compose up -d
 
 # 5. Access the web interface
 # Open http://YOUR-SERVER-IP:5000 in your browser
 ```
+
+**Note:** Use Docker Compose v2 (`docker compose`). The legacy Compose v1 (`docker-compose` python package) can fail on newer Docker engines with errors like `KeyError: 'ContainerConfig'`.
 
 **🎉 That's it!** You should see the Dispatcharr Maid dashboard.
 
