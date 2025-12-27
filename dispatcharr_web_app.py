@@ -68,6 +68,12 @@ _provider_usage_cache = {
     # (log_dir, glob, days) -> {'ts': epoch_seconds, 'payload': dict}
 }
 
+# Cache channel group listing/counts (fetching all channels can be expensive).
+_groups_cache_lock = threading.Lock()
+_groups_cache = {
+    # {'ts': epoch_seconds, 'payload': dict}
+}
+
 
 # Check authentication lazily on first UI request to avoid crashing when Dispatcharr is temporarily unavailable.
 def _ensure_dispatcharr_ready():
@@ -2851,27 +2857,55 @@ def results():
 def api_groups():
     """Get all channel groups with channel counts"""
     try:
+        # Serve short-lived cache to keep the UI responsive.
+        now = time.time()
+        with _groups_cache_lock:
+            cached = _groups_cache.get('payload')
+            ts = float(_groups_cache.get('ts') or 0.0)
+            if isinstance(cached, dict) and (now - ts) < 60:
+                return jsonify(cached)
+
         api = DispatcharrAPI()
         api.login()
         
         groups = api.fetch_channel_groups()
-        channels = api.fetch_channels()
-        
-        # Count channels per group
+        groups = groups if isinstance(groups, list) else []
+
+        counts_available = False
         group_counts = {}
-        for channel in channels:
-            group_id = channel.get('channel_group_id')
-            if group_id:
-                group_counts[group_id] = group_counts.get(group_id, 0) + 1
-        
-        # Add counts to groups
+        try:
+            # Best-effort: counting channels can be expensive on large setups.
+            # Use a shorter timeout; still return groups if this fails.
+            channels = api.fetch_channels(timeout=10)
+            counts_available = True
+
+            for channel in channels:
+                if not isinstance(channel, dict):
+                    continue
+                group_id = channel.get('channel_group_id')
+                if group_id:
+                    group_counts[group_id] = group_counts.get(group_id, 0) + 1
+        except Exception:
+            counts_available = False
+            group_counts = {}
+
         for group in groups:
-            group['channel_count'] = group_counts.get(group['id'], 0)
-        
-        # Filter to groups with channels
-        groups = [g for g in groups if g.get('channel_count', 0) > 0]
-        
-        return jsonify({'success': True, 'groups': groups})
+            if not isinstance(group, dict):
+                continue
+            gid = group.get('id')
+            group['channel_count'] = group_counts.get(gid, 0) if counts_available else None
+
+        # Only filter to groups-with-channels when counts are known.
+        if counts_available:
+            groups = [g for g in groups if isinstance(g, dict) and (g.get('channel_count') or 0) > 0]
+        else:
+            groups = [g for g in groups if isinstance(g, dict)]
+
+        payload = {'success': True, 'groups': groups, 'counts_available': counts_available}
+        with _groups_cache_lock:
+            _groups_cache['ts'] = now
+            _groups_cache['payload'] = payload
+        return jsonify(payload)
     
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

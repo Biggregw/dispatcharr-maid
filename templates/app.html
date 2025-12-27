@@ -1686,6 +1686,28 @@
         let lastTerminalJobId = null;
         const terminalStatuses = ['completed', 'failed', 'cancelled'];
 
+        async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 20000) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                const resp = await fetch(url, { ...(options || {}), signal: controller.signal });
+                const ct = (resp.headers && resp.headers.get) ? (resp.headers.get('content-type') || '') : '';
+                // Prefer JSON when possible; otherwise try to parse text.
+                if (ct.includes('application/json')) {
+                    return await resp.json();
+                }
+                const text = await resp.text();
+                try {
+                    return JSON.parse(text);
+                } catch (e) {
+                    const snippet = String(text || '').slice(0, 200);
+                    throw new Error(`Non-JSON response (${resp.status}): ${snippet}`);
+                }
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
         let autoScrollToCurrentJobRequested = false;
@@ -2160,19 +2182,27 @@
         
         // Load channel groups
         async function loadGroups() {
+            const loading = document.getElementById('group-loading');
+            const container = document.getElementById('group-container');
+            const errorBox = document.getElementById('group-error');
+            if (errorBox) errorBox.classList.add('hidden');
+            if (container) container.classList.add('hidden');
+            if (loading) loading.classList.remove('hidden');
+
             try {
-                const response = await fetch('/api/groups');
-                const data = await response.json();
+                const data = await fetchJsonWithTimeout('/api/groups', { cache: 'no-store' }, 20000);
                 
                 if (data.success) {
                     allGroups = data.groups;
                     renderGroups();
-                    document.getElementById('group-loading').classList.add('hidden');
-                    document.getElementById('group-container').classList.remove('hidden');
+                    if (loading) loading.classList.add('hidden');
+                    if (container) container.classList.remove('hidden');
                 } else {
-                    showError('group-error', data.error);
+                    if (loading) loading.classList.add('hidden');
+                    showError('group-error', data.error || 'Failed to load channel groups.');
                 }
             } catch (error) {
+                if (loading) loading.classList.add('hidden');
                 showError('group-error', 'Failed to load groups: ' + error.message);
             }
         }
@@ -2192,7 +2222,7 @@
                         <input type="checkbox" id="group-${group.id}" ${selectedGroups.includes(group.id) ? 'checked' : ''}>
                         <div>
                             <div class="group-name">${group.name}</div>
-                            <div class="group-count">${group.channel_count} channels</div>
+                            <div class="group-count">${(group.channel_count === null || group.channel_count === undefined) ? '—' : group.channel_count} channels</div>
                         </div>
                     </label>
                 `;
@@ -3307,20 +3337,34 @@
         // Load job history
         async function loadJobHistory() {
             try {
-                const response = await fetch('/api/job-history');
-                const data = await response.json();
+                const loading = document.getElementById('history-loading');
+                const container = document.getElementById('history-container');
+                const list = document.getElementById('history-list');
+                if (container) container.classList.add('hidden');
+                if (loading) loading.classList.remove('hidden');
+
+                const data = await fetchJsonWithTimeout('/api/job-history', { cache: 'no-store' }, 15000);
                 
                 if (data.success) {
                     renderJobHistory(data.history);
-                    document.getElementById('history-loading').classList.add('hidden');
-                    document.getElementById('history-container').classList.remove('hidden');
+                    if (loading) loading.classList.add('hidden');
+                    if (container) container.classList.remove('hidden');
                     // Provider ranking is tied to the most recent analysis results.
                     loadProviderRanking();
                     // Usage is independent but useful to refresh alongside history.
                     loadProviderUsage();
+                } else {
+                    if (list) list.innerHTML = `<div class="alert alert-error">${escapeHtml(data.error || 'Failed to load job history.')}</div>`;
+                    if (loading) loading.classList.add('hidden');
+                    if (container) container.classList.remove('hidden');
                 }
             } catch (error) {
-                console.error('Failed to load history:', error);
+                const loading = document.getElementById('history-loading');
+                const container = document.getElementById('history-container');
+                const list = document.getElementById('history-list');
+                if (list) list.innerHTML = `<div class="alert alert-error">${escapeHtml('Failed to load job history: ' + error.message)}</div>`;
+                if (loading) loading.classList.add('hidden');
+                if (container) container.classList.remove('hidden');
             }
         }
 
