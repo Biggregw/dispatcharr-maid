@@ -1598,7 +1598,7 @@
                     </div>
 
                     <div class="usage-meta" style="margin-bottom: 10px;">
-                        Uses your reverse-proxy access logs to estimate which providers are actually being played (requires <code>usage.access_log_dir</code> in <code>config.yaml</code>).
+                        Uses your reverse-proxy access logs to estimate which providers are actually being played. If logs are mounted to <code>/app/npm_logs</code>, this works automatically; otherwise set <code>usage.access_log_dir</code> in <code>config.yaml</code>.
                     </div>
 
                     <div id="provider-usage-loading" class="alert alert-info hidden">
