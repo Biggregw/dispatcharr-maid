@@ -1199,6 +1199,43 @@
     </style>
 </head>
 <body>
+    <div id="js-fatal-banner" class="alert alert-error hidden" style="max-width: 1100px; margin: 10px auto 0; padding: 12px 14px;">
+        <strong>UI error:</strong> <span id="js-fatal-message"></span>
+    </div>
+    <script>
+        // Keep this tiny + ES5 compatible. If the main script fails to parse/run,
+        // this banner still shows a useful error instead of endless spinners.
+        (function () {
+            function byId(id) { return document.getElementById(id); }
+            function show(msg) {
+                try {
+                    var banner = byId('js-fatal-banner');
+                    var message = byId('js-fatal-message');
+                    if (message) message.textContent = String(msg || 'Unknown error');
+                    if (banner) banner.classList.remove('hidden');
+                } catch (e) {
+                    // ignore
+                }
+            }
+            window.addEventListener('error', function (ev) {
+                try {
+                    var m = ev && (ev.message || (ev.error && ev.error.message)) || 'Unknown JS error';
+                    show(m);
+                } catch (e) {
+                    show('Unknown JS error');
+                }
+            });
+            window.addEventListener('unhandledrejection', function (ev) {
+                try {
+                    var reason = ev && ev.reason;
+                    var m = (reason && (reason.message || String(reason))) || 'Unhandled promise rejection';
+                    show(m);
+                } catch (e) {
+                    show('Unhandled promise rejection');
+                }
+            });
+        })();
+    </script>
     <div class="container">
         <div class="header">
             <div class="brand">

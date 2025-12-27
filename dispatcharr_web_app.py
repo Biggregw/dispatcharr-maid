@@ -62,6 +62,25 @@ _dispatcharr_auth_state = {
     'last_error': None
 }
 
+
+@app.after_request
+def _no_cache_html(resp):
+    """
+    Prevent stale HTML in mobile browsers / proxies.
+
+    The UI is served as an HTML template with inline JS; if a client caches it,
+    they can get "stuck" on an older, buggy build even after the container updates.
+    """
+    try:
+        if getattr(resp, "mimetype", None) == "text/html":
+            resp.headers["Cache-Control"] = "no-store, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+    except Exception:
+        # Never fail a request due to cache headers.
+        pass
+    return resp
+
 # Cache provider-usage computations (log parsing can be expensive).
 _provider_usage_cache_lock = threading.Lock()
 _provider_usage_cache = {
