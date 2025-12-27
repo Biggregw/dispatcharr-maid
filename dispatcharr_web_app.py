@@ -2872,9 +2872,10 @@ def api_groups():
                 return jsonify(cached)
 
         api = DispatcharrAPI()
-        api.login()
+        # Keep the UI responsive on misconfiguration / unreachable hosts.
+        api.login(timeout=10)
         
-        groups = api.fetch_channel_groups()
+        groups = api.fetch_channel_groups(timeout=10)
         groups = groups if isinstance(groups, list) else []
 
         counts_available = False
