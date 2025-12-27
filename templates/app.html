@@ -1707,6 +1707,16 @@
                 } catch (e) {}
             }
 
+            function isGlobalErrorVisible() {
+                try {
+                    var box = document.getElementById('global-js-error');
+                    if (!box) return false;
+                    return !box.classList.contains('hidden') && String(box.textContent || '').trim().length > 0;
+                } catch (e) {
+                    return false;
+                }
+            }
+
             window.addEventListener('error', function (ev) {
                 try {
                     var message = (ev && ev.message) ? String(ev.message) : 'JavaScript error';
@@ -1727,7 +1737,10 @@
                 // If the main script never starts, surface that instead of a forever spinner.
                 setTimeout(function () {
                     if (!window.__MAID_MAIN_INIT__) {
-                        showGlobalError('UI JavaScript did not start (or crashed during parse). This usually means a cached old page, a browser compatibility issue, or a server-side template not updated.');
+                        // Don't overwrite a real error message if we already have one.
+                        if (!isGlobalErrorVisible()) {
+                            showGlobalError('UI JavaScript did not start (or crashed during parse). This usually means a cached old page, a browser compatibility issue, or a server-side template not updated.');
+                        }
                     }
                 }, 2500);
             });
@@ -1736,6 +1749,9 @@
 
     <script>
         // Global state
+        // Set immediately so the diagnostics banner can distinguish parse/runtime issues.
+        // If your browser can't parse this script at all, the flag will never be set.
+        window.__MAID_MAIN_INIT__ = 'parsed';
         let selectedGroups = [];
         let selectedChannels = null; // null = all channels, [] = specific channels
         let allGroups = [];
@@ -1852,7 +1868,7 @@
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             // Marker for the bootstrap diagnostics above.
-            window.__MAID_MAIN_INIT__ = true;
+            window.__MAID_MAIN_INIT__ = 'dom';
             loadGroups();
             loadJobHistory();
             loadProviderRanking();
