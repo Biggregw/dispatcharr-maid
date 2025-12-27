@@ -3672,7 +3672,10 @@ def api_usage_providers():
     """
     Derive provider usage from reverse-proxy access logs (e.g. Nginx Proxy Manager).
 
-    Requires config.yaml:
+    Default behavior:
+      - If usage.access_log_dir is not set, auto-try /app/npm_logs (when mounted into the container).
+
+    Optional config.yaml:
       usage.access_log_dir: directory containing access log files
       usage.access_log_glob: file glob (non-recursive)
 
@@ -3708,31 +3711,35 @@ def api_usage_providers():
         log_glob = f'proxy-host-{proxy_host_id}_access.log*'
 
     if not log_dir:
-        return jsonify({
-            'success': False,
-            'error': 'Provider usage not configured',
-            'setup_required': True,
-            'help': {
-                'issue': 'usage.access_log_dir not set in config.yaml',
-                'what_it_does': 'Provider usage tracks viewing activity by parsing Nginx Proxy Manager access logs',
-                'requirements': [
-                    'NPM proxying Dispatcharr Xtream/M3U connections',
-                    'NPM logs mounted into Maid container',
-                    'config.yaml usage section configured'
-                ],
-                'setup_steps': [
-                    '1. Find NPM data path: docker inspect nginxproxymanager | grep -A 5 Mounts | grep data',
-                    '2. Edit docker-compose.yml and add volume under dispatcharr-maid-web:',
-                    '     volumes:',
-                    '       - /your/npm/data/logs:/app/npm_logs:ro',
-                    '3. Edit config.yaml and set: usage.access_log_dir: "/app/npm_logs"',
-                    '4. Restart: docker-compose restart dispatcharr-maid-web',
-                    '5. Test: Visit this endpoint again'
-                ],
-                'docs': 'See DOCKER_GUIDE.md section "Provider usage (viewing activity) from NPM access logs"'
-            }
-        }), 400
-
+        # Auto-detect the common Docker mount path used in docs/compose examples.
+        # This avoids requiring a config.yaml change for the default setup.
+        autodetect_dir = Path("/app/npm_logs")
+        if autodetect_dir.exists() and autodetect_dir.is_dir():
+            log_dir = str(autodetect_dir)
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Provider usage not configured',
+                'setup_required': True,
+                'help': {
+                    'issue': 'No access logs mounted (usage.access_log_dir not set and /app/npm_logs not available)',
+                    'what_it_does': 'Provider usage tracks viewing activity by parsing reverse-proxy access logs (e.g. Nginx Proxy Manager)',
+                    'requirements': [
+                        'Your IPTV app streams via Dispatcharr (Xtream/M3U served by Dispatcharr)',
+                        'Reverse-proxy access logs mounted into the Maid container (read-only)',
+                    ],
+                    'setup_steps': [
+                        '1. Edit docker-compose.yml and add a volume under dispatcharr-maid-web:',
+                        '     - /your/npm/data/logs:/app/npm_logs:ro',
+                        '2. Restart: docker-compose restart dispatcharr-maid-web',
+                        '3. Click Refresh in the UI again',
+                        'Optional: set usage.access_log_dir in config.yaml if you mounted logs elsewhere'
+                    ],
+                    'docs': 'See DOCKER_GUIDE.md section "Provider usage (viewing activity) from NPM access logs"'
+                }
+            }), 400
+    
+    # Normalize to a Path once we've resolved log_dir (explicit or auto-detected).
     log_dir_path = Path(str(log_dir))
     log_files = find_log_files(log_dir_path, str(log_glob))
     if not log_files:
