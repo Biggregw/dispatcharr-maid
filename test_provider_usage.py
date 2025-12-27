@@ -2,6 +2,7 @@ from datetime import timezone
 
 from provider_usage import (
     aggregate_provider_usage,
+    aggregate_provider_usage_detailed,
     parse_npm_access_line,
 )
 
@@ -57,4 +58,33 @@ def test_aggregate_provider_usage_basic():
     assert usage["2"]["ok_requests"] == 0
     assert usage["2"]["error_requests"] == 1
     assert usage["2"]["unique_streams"] == 1
+
+
+def test_aggregate_provider_usage_detailed_sessions_and_unknown_diagnostics():
+    # Two requests close together => 1 session; a later request => new session.
+    lines = [
+        '[21/Dec/2025:17:02:00 +0000] - 200 200 - GET http tv.example.com "/live/u/p/93.ts" [Client 1.1.1.1] [Length 10] "UA" "-"',
+        '[21/Dec/2025:17:02:10 +0000] - 200 200 - GET http tv.example.com "/live/u/p/93.ts" [Client 1.1.1.1] [Length 20] "UA" "-"',
+        '[21/Dec/2025:17:03:00 +0000] - 200 200 - GET http tv.example.com "/live/u/p/93.ts" [Client 1.1.1.1] [Length 30] "UA" "-"',
+        # Different client should count as a separate session for the same stream.
+        '[21/Dec/2025:17:03:05 +0000] - 200 200 - GET http tv.example.com "/live/u/p/93.ts" [Client 2.2.2.2] [Length 40] "UA" "-"',
+        # Unmapped stream id => unknown bucket
+        '[21/Dec/2025:17:03:10 +0000] - 200 200 - GET http tv.example.com "/live/u/p/999.ts" [Client 1.1.1.1] [Length 1] "UA" "-"',
+    ]
+
+    events = [parse_npm_access_line(l) for l in lines]
+    events = [e for e in events if e is not None and e.is_playback()]
+    mapping = {93: "1"}  # 999 intentionally missing
+
+    usage, diag = aggregate_provider_usage_detailed(events, mapping, session_gap_seconds=30)
+
+    assert usage["1"]["requests"] == 4
+    # sessions: (1.1.1.1,93) => 2 sessions (gap 50s), (2.2.2.2,93) => 1 session
+    assert usage["1"]["sessions"] == 3
+    assert usage["1"]["unique_clients"] == 2
+    assert usage["1"]["bytes_sent"] == 100
+
+    assert usage["unknown"]["requests"] == 1
+    assert diag["unmapped_stream_requests"] == 1
+    assert any(int(x.get("stream_id")) == 999 for x in diag.get("unmapped_stream_ids_top", []))
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import gzip
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -237,6 +238,158 @@ def aggregate_provider_usage(
             "last_seen": bucket["last_seen"].isoformat() if bucket["last_seen"] else None,
         }
     return normalized
+
+
+def aggregate_provider_usage_detailed(
+    events: Iterable[AccessEvent],
+    stream_id_to_provider_id: Dict[int, str],
+    *,
+    session_gap_seconds: int = 30,
+    top_n_unknown_streams: int = 15,
+    top_n_unmapped_paths: int = 10,
+    sample_paths_per_bucket: int = 5,
+) -> Tuple[Dict[str, dict], Dict[str, object]]:
+    """
+    Like aggregate_provider_usage(), but also returns diagnostics and more meaningful metrics:
+      - sessions: approximate playback sessions, de-duplicated from HLS segments
+      - unique_clients: distinct client IPs observed (best-effort)
+      - diagnostics about unmapped/unknown and playback paths that couldn't be attributed
+
+    Returns: (usage_named, diagnostics)
+    """
+    # Provider buckets
+    out: Dict[str, dict] = {}
+
+    # Diagnostics
+    parsed_playback_events = 0
+    skipped_no_stream_id = 0
+    unmapped_stream_requests = 0
+    unmapped_stream_ids: Counter[int] = Counter()
+    unmapped_paths: Counter[str] = Counter()
+    # For approximate sessions: track last event time per (client_ip, stream_id).
+    last_seen_by_client_stream: Dict[Tuple[str, int], datetime] = {}
+
+    gap = max(1, int(session_gap_seconds))
+
+    for ev in events:
+        # Caller may already be playback_only=True, but keep this robust.
+        if not ev.is_playback():
+            continue
+        parsed_playback_events += 1
+
+        sid = ev.extract_stream_id()
+        if sid is None:
+            skipped_no_stream_id += 1
+            try:
+                unmapped_paths[redact_xtream_credentials(ev.path or "")] += 1
+            except Exception:
+                # Never let diagnostics break aggregation.
+                pass
+            continue
+
+        provider_id = stream_id_to_provider_id.get(int(sid))
+        if provider_id is None:
+            provider_key = "unknown"
+            unmapped_stream_requests += 1
+            unmapped_stream_ids[int(sid)] += 1
+            try:
+                unmapped_paths[redact_xtream_credentials(ev.path or "")] += 1
+            except Exception:
+                pass
+        else:
+            provider_key = str(provider_id)
+
+        bucket = out.get(provider_key)
+        if bucket is None:
+            bucket = {
+                "requests": 0,
+                "bytes_sent": 0,
+                "ok_requests": 0,
+                "error_requests": 0,
+                "unique_stream_ids": set(),
+                "unique_clients": set(),
+                "sessions": 0,
+                "last_seen": None,
+                "first_seen": None,
+                "sample_paths": [],
+            }
+            out[provider_key] = bucket
+
+        bucket["requests"] += 1
+        if ev.bytes_sent is not None:
+            bucket["bytes_sent"] += int(ev.bytes_sent)
+        if 200 <= ev.status < 400:
+            bucket["ok_requests"] += 1
+        else:
+            bucket["error_requests"] += 1
+        bucket["unique_stream_ids"].add(int(sid))
+
+        client = (ev.client_ip or "").strip() or "unknown"
+        bucket["unique_clients"].add(client)
+
+        # Approximate sessions (de-dup HLS segments).
+        key = (client, int(sid))
+        prev = last_seen_by_client_stream.get(key)
+        if prev is None:
+            bucket["sessions"] += 1
+            last_seen_by_client_stream[key] = ev.ts
+        else:
+            dt = (ev.ts - prev).total_seconds()
+            # If logs are not strictly chronological, dt can be negative; treat as same session.
+            if dt > gap:
+                bucket["sessions"] += 1
+            # Update to the max timestamp observed.
+            last_seen_by_client_stream[key] = ev.ts if ev.ts >= prev else prev
+
+        if bucket["first_seen"] is None or ev.ts < bucket["first_seen"]:
+            bucket["first_seen"] = ev.ts
+        if bucket["last_seen"] is None or ev.ts > bucket["last_seen"]:
+            bucket["last_seen"] = ev.ts
+
+        # Store a small redacted sample of paths for UI debugging.
+        if sample_paths_per_bucket > 0 and len(bucket["sample_paths"]) < int(sample_paths_per_bucket):
+            try:
+                bucket["sample_paths"].append(redact_xtream_credentials(ev.path or ""))
+            except Exception:
+                pass
+
+    # Normalize JSON-friendly output
+    normalized: Dict[str, dict] = {}
+    for provider_id, bucket in out.items():
+        unique_count = len(bucket["unique_stream_ids"])
+        unique_clients = len(bucket["unique_clients"])
+        normalized[provider_id] = {
+            "requests": int(bucket["requests"]),
+            "sessions": int(bucket.get("sessions", 0) or 0),
+            "unique_clients": int(unique_clients),
+            "bytes_sent": int(bucket["bytes_sent"]),
+            "ok_requests": int(bucket["ok_requests"]),
+            "error_requests": int(bucket["error_requests"]),
+            "unique_streams": int(unique_count),
+            "first_seen": bucket["first_seen"].isoformat() if bucket["first_seen"] else None,
+            "last_seen": bucket["last_seen"].isoformat() if bucket["last_seen"] else None,
+            "sample_paths": list(bucket.get("sample_paths") or []),
+        }
+
+    top_unknown = [
+        {"stream_id": int(sid), "requests": int(cnt)}
+        for sid, cnt in unmapped_stream_ids.most_common(max(0, int(top_n_unknown_streams)))
+    ]
+    top_paths = [
+        {"path": p, "requests": int(cnt)}
+        for p, cnt in unmapped_paths.most_common(max(0, int(top_n_unmapped_paths)))
+    ]
+
+    diagnostics: Dict[str, object] = {
+        "playback_events": int(parsed_playback_events),
+        "playback_events_without_stream_id": int(skipped_no_stream_id),
+        "unmapped_stream_requests": int(unmapped_stream_requests),
+        "unmapped_stream_ids_top": top_unknown,
+        "unmapped_paths_top": top_paths,
+        "session_gap_seconds": int(gap),
+    }
+
+    return normalized, diagnostics
 
 
 def compute_since(days: Optional[int]) -> Optional[datetime]:

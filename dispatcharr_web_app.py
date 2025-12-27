@@ -38,6 +38,7 @@ from stream_analysis import (
 from job_workspace import create_job_workspace
 from provider_usage import (
     aggregate_provider_usage,
+    aggregate_provider_usage_detailed,
     compute_since,
     find_log_files,
     iter_access_events,
@@ -3663,7 +3664,11 @@ def api_usage_providers():
 
     since = compute_since(days_int)
     events = iter_access_events(log_files, since=since, playback_only=True)
-    usage = aggregate_provider_usage(events, stream_id_to_provider_id)
+    usage, diagnostics = aggregate_provider_usage_detailed(
+        events,
+        stream_id_to_provider_id,
+        session_gap_seconds=int(usage_cfg.get('session_gap_seconds', 30) or 30),
+    )
 
     # Attach provider display names (best-effort).
     provider_names = _load_provider_names(config) if config else {}
@@ -3674,6 +3679,42 @@ def api_usage_providers():
             'provider_name': provider_names.get(str(provider_id)) if isinstance(provider_names, dict) else None,
         }
 
+    # Best-effort: enrich "unknown" with a few stream details to explain why attribution failed.
+    try:
+        top_unknown = diagnostics.get('unmapped_stream_ids_top') if isinstance(diagnostics, dict) else None
+        if isinstance(top_unknown, list) and top_unknown:
+            details = []
+            for row in top_unknown[:10]:
+                sid = row.get('stream_id') if isinstance(row, dict) else None
+                if sid is None:
+                    continue
+                info = None
+                try:
+                    info = api.fetch_stream_details(int(sid))
+                except Exception:
+                    info = None
+                exists = isinstance(info, dict)
+                # Dispatcharr field names vary; be defensive.
+                name = None
+                m3u_account = None
+                if exists:
+                    name = info.get('stream_name') or info.get('name') or info.get('title')
+                    m3u_account = info.get('m3u_account')
+                details.append({
+                    'stream_id': int(sid),
+                    'requests': int(row.get('requests') or 0) if isinstance(row, dict) else 0,
+                    'exists_in_dispatcharr': bool(exists),
+                    'stream_name': str(name) if name is not None else None,
+                    'm3u_account': int(m3u_account) if isinstance(m3u_account, int) else (str(m3u_account) if m3u_account is not None else None),
+                })
+            diagnostics['unmapped_stream_details'] = details
+    except Exception:
+        # Never fail provider usage if enrichment fails.
+        pass
+
+    if isinstance(diagnostics, dict):
+        diagnostics['stream_provider_map_size'] = int(len(stream_id_to_provider_id))
+
     payload = {
         'success': True,
         'since': since.isoformat() if since else None,
@@ -3682,9 +3723,11 @@ def api_usage_providers():
         'log_glob': str(log_glob),
         'log_files': [p.name for p in log_files[:50]],
         'provider_usage': usage_named,
+        'diagnostics': diagnostics if isinstance(diagnostics, dict) else {},
         'totals': {
             'providers': len(usage_named),
             'playback_requests': sum(int(v.get('requests', 0) or 0) for v in usage_named.values()),
+            'playback_sessions': sum(int(v.get('sessions', 0) or 0) for v in usage_named.values()),
             'bytes_sent': sum(int(v.get('bytes_sent', 0) or 0) for v in usage_named.values()),
         }
     }
