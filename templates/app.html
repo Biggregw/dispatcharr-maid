@@ -701,6 +701,161 @@
         .usage-pill-good { background: #c6f6d5; color: #22543d; }
         .usage-pill-ok { background: #feebc8; color: #7c2d12; }
         .usage-pill-bad { background: #fed7d7; color: #742a2a; }
+
+        /* Provider usage stats cards */
+        .usage-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin: 16px 0;
+        }
+
+        .usage-stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            padding: 16px;
+            color: white;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .usage-stat-card.green {
+            background: linear-gradient(135deg, #56ab2f 0%, #a8e063 100%);
+        }
+
+        .usage-stat-card.blue {
+            background: linear-gradient(135deg, #2196F3 0%, #21CBF3 100%);
+        }
+
+        .usage-stat-card.orange {
+            background: linear-gradient(135deg, #f46b45 0%, #eea849 100%);
+        }
+
+        .usage-stat-card.teal {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        }
+
+        .usage-stat-label {
+            font-size: 0.85em;
+            opacity: 0.9;
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .usage-stat-value {
+            font-size: 1.8em;
+            font-weight: 800;
+            line-height: 1.2;
+        }
+
+        .usage-stat-detail {
+            font-size: 0.8em;
+            opacity: 0.85;
+            margin-top: 4px;
+        }
+
+        /* Provider usage bars */
+        .provider-usage-bar {
+            width: 100%;
+            height: 24px;
+            background: #f3f4f6;
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 8px 0;
+            position: relative;
+        }
+
+        .provider-usage-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.6s ease-out;
+            display: flex;
+            align-items: center;
+            padding: 0 8px;
+            color: white;
+            font-size: 0.75em;
+            font-weight: 700;
+        }
+
+        .provider-usage-bar-label {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.75em;
+            font-weight: 700;
+            color: #2d3748;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+
+        .usage-section-header {
+            font-weight: 800;
+            color: #2d3748;
+            font-size: 1.05em;
+            margin: 20px 0 10px 0;
+            padding-bottom: 6px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        .usage-provider-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 0;
+            border-bottom: 1px solid #f3f4f6;
+        }
+
+        .usage-provider-name {
+            flex: 0 0 180px;
+            font-weight: 700;
+            color: #2d3748;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .usage-provider-bar-container {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .usage-provider-stats {
+            flex: 0 0 auto;
+            display: flex;
+            gap: 12px;
+            font-size: 0.85em;
+            color: #718096;
+        }
+
+        .usage-insight-box {
+            background: #f7fafc;
+            border-left: 4px solid #4299e1;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 12px 0;
+        }
+
+        .usage-insight-box.warning {
+            border-left-color: #ed8936;
+            background: #fffaf0;
+        }
+
+        .usage-insight-box.success {
+            border-left-color: #48bb78;
+            background: #f0fff4;
+        }
+
+        .usage-insight-title {
+            font-weight: 800;
+            color: #2d3748;
+            margin-bottom: 6px;
+        }
+
+        .usage-insight-text {
+            color: #4a5568;
+            font-size: 0.92em;
+            line-height: 1.5;
+        }
         
         /* Hidden class */
         .hidden {
@@ -1454,10 +1609,11 @@
                     <div id="provider-usage-container" class="hidden">
                         <div id="provider-usage-meta" class="usage-meta"></div>
                         <div class="ranking-table-wrap" style="margin-top: 10px;">
-                            <table class="ranking-table" style="min-width: 820px;">
+                            <table class="ranking-table" style="min-width: 920px;">
                                 <thead>
                                     <tr>
                                         <th>Provider</th>
+                                        <th>Usage %</th>
                                         <th>Requests</th>
                                         <th>Sessions</th>
                                         <th>Clients</th>
@@ -3317,27 +3473,97 @@
                     const noSid = diag.playback_events_without_stream_id !== undefined ? parseInt(String(diag.playback_events_without_stream_id), 10) : 0;
                     const playbackEvents = diag.playback_events !== undefined ? parseInt(String(diag.playback_events), 10) : 0;
                     const mapSize = diag.stream_provider_map_size !== undefined ? parseInt(String(diag.stream_provider_map_size), 10) : null;
-                    const hint = (unknownReq > 0)
-                        ? `<div style="margin-top:6px;">
-                               <span class="usage-pill ${getOkRateClass(100 - unknownPct)}">Unknown: ${escapeHtml(unknownPct.toFixed(1))}%</span>
-                               <span class="provider-note" style="margin-left:8px;">
-                                   Streams can be “Unknown” if they’re not in Dispatcharr, or if <code>m3u_account</code> is missing.
-                               </span>
-                           </div>`
-                        : '';
-                    meta.innerHTML = `
-                        <div>${escapeHtml(since ? `Since ${since}` : 'Recent playback')} • ${escapeHtml(String(rows.length))} providers • ${escapeHtml(Number(totalReq || 0).toLocaleString())} requests • ${escapeHtml(Number(totalSessions || 0).toLocaleString())} sessions • ${escapeHtml(formatBytes(totalBytes || 0))}${(logGlob || logDir) ? ` • logs: <code>${escapeHtml(logGlob || '')}</code>${(logGlob && logDir) ? ' in ' : ''}<code>${escapeHtml(logDir || '')}</code>` : ''}</div>
-                        ${mapSize !== null ? `<div class="provider-note" style="margin-top:4px;">Dispatcharr stream/provider map: ${escapeHtml(mapSize.toLocaleString())} streams</div>` : ''}
-                        ${(playbackEvents || noSid) ? `<div class="provider-note" style="margin-top:4px;">Parsed playback events: ${escapeHtml(String(playbackEvents || 0))}${noSid ? ` • without stream_id: ${escapeHtml(String(noSid))}` : ''}</div>` : ''}
-                        ${hint}
+                    const knownReq = totalReq - unknownReq;
+                    const knownPct = (totalReq > 0) ? (knownReq / totalReq) * 100 : 0;
+                    
+                    // Calculate active (non-unknown) providers
+                    const activeProviders = rows.filter(r => r.provider_id !== 'unknown');
+                    const activeProvidersCount = activeProviders.length;
+                    const uniqueClients = Math.max(...rows.map(r => r.clients || 0));
+                    const avgSessionSize = totalSessions > 0 ? Math.round(totalBytes / totalSessions) : 0;
+                    
+                    // Create stat cards
+                    const statsCards = `
+                        <div class="usage-stats-grid">
+                            <div class="usage-stat-card green">
+                                <div class="usage-stat-label">Attribution Success</div>
+                                <div class="usage-stat-value">${knownPct.toFixed(1)}%</div>
+                                <div class="usage-stat-detail">${Number(knownReq || 0).toLocaleString()} of ${Number(totalReq || 0).toLocaleString()} requests</div>
+                            </div>
+                            <div class="usage-stat-card blue">
+                                <div class="usage-stat-label">Active Providers</div>
+                                <div class="usage-stat-value">${activeProvidersCount}</div>
+                                <div class="usage-stat-detail">${Number(totalSessions || 0).toLocaleString()} sessions tracked</div>
+                            </div>
+                            <div class="usage-stat-card orange">
+                                <div class="usage-stat-label">Data Transfer</div>
+                                <div class="usage-stat-value">${formatBytes(totalBytes || 0)}</div>
+                                <div class="usage-stat-detail">${avgSessionSize > 0 ? formatBytes(avgSessionSize) + ' per session' : 'N/A'}</div>
+                            </div>
+                            <div class="usage-stat-card teal">
+                                <div class="usage-stat-label">Viewing Activity</div>
+                                <div class="usage-stat-value">${uniqueClients}</div>
+                                <div class="usage-stat-detail">${uniqueClients === 1 ? 'client' : 'clients'} detected</div>
+                            </div>
+                        </div>
                     `;
-                }
+                    
+                    // Create insights
+                    let insights = '';
+                    if (unknownPct > 50) {
+                        insights += `
+                            <div class="usage-insight-box warning">
+                                <div class="usage-insight-title">⚠️ High Unknown Attribution (${unknownPct.toFixed(1)}%)</div>
+                                <div class="usage-insight-text">
+                                    Over half of your playback requests couldn't be attributed to providers. This usually means:
+                                    <ul style="margin: 8px 0 0 20px; padding: 0;">
+                                        <li>You may be parsing logs from the wrong Proxy host (check the filter above)</li>
+                                        <li>Streams don't have <code>m3u_account</code> set in Dispatcharr</li>
+                                        <li>Streams were deleted from Dispatcharr but still being played</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        `;
+                    } else if (unknownPct > 10) {
+                        insights += `
+                            <div class="usage-insight-box">
+                                <div class="usage-insight-title">ℹ️ Some Unknown Attribution (${unknownPct.toFixed(1)}%)</div>
+                                <div class="usage-insight-text">
+                                    Most playback is attributed, but ${unknownPct.toFixed(1)}% couldn't be mapped to providers. 
+                                    Check the details below to see which streams need attention.
+                                </div>
+                            </div>
+                        `;
+                    } else if (activeProvidersCount > 0) {
+                        insights += `
+                            <div class="usage-insight-box success">
+                                <div class="usage-insight-title">✅ Excellent Attribution</div>
+                                <div class="usage-insight-text">
+                                    ${knownPct.toFixed(1)}% of playback successfully attributed across ${activeProvidersCount} provider${activeProvidersCount === 1 ? '' : 's'}!
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    meta.innerHTML = `
+                        <div class="provider-note" style="margin-bottom:8px;">
+                            ${escapeHtml(since ? `Since ${since}` : 'Recent playback')}${(logGlob || logDir) ? ` • logs: <code>${escapeHtml(logGlob || '')}</code>${(logGlob && logDir) ? ' in ' : ''}<code>${escapeHtml(logDir || '')}</code>` : ''}
+                        </div>
+                        ${statsCards}
+                        ${insights}
+                        ${mapSize !== null ? `<div class="provider-note" style="margin-top:8px;">Dispatcharr stream/provider map: ${escapeHtml(mapSize.toLocaleString())} streams • Parsed events: ${escapeHtml(String(playbackEvents || 0))}${noSid ? ` (${escapeHtml(String(noSid))} without stream_id)` : ''}` : ''}
+                    `;
 
                 if (tbody) {
+                    // Calculate total requests for percentage
+                    const totalReq = rows.reduce((acc, r) => acc + (r.requests || 0), 0);
+                    
                     tbody.innerHTML = rows.map(r => {
                         const name = escapeHtml(r.name || r.provider_id || 'Unknown');
                         const pid = escapeHtml(r.provider_id || '');
-                        const req = Number(r.requests || 0).toLocaleString();
+                        const reqCount = Number(r.requests || 0);
+                        const req = reqCount.toLocaleString();
+                        const reqPct = totalReq > 0 ? (reqCount / totalReq) * 100 : 0;
                         const sessionsText = Number(r.sessions || 0).toLocaleString();
                         const clientsText = Number(r.clients || 0).toLocaleString();
                         const okRateText = (r.requests > 0 && isFinite(r.ok_rate)) ? `${r.ok_rate.toFixed(1)}%` : '—';
@@ -3346,12 +3572,24 @@
                         const bytesText = formatBytes(r.bytes_sent || 0);
                         const lastSeenText = r.last_seen ? new Date(r.last_seen).toLocaleString() : '—';
                         const okDetail = (r.requests > 0) ? `${Number(r.ok || 0).toLocaleString()} OK / ${Number(r.errors || 0).toLocaleString()} err` : 'No playback requests';
+                        const isUnknown = r.provider_id === 'unknown';
 
                         return `
-                            <tr>
+                            <tr style="${isUnknown ? 'background: #fef3c7;' : ''}">
                                 <td>
-                                    <div style="font-weight:800; color:#2d3748;">${name}</div>
+                                    <div style="font-weight:800; color:#2d3748;">${isUnknown ? '❓ ' : ''}${name}</div>
                                     ${pid ? `<span class="provider-subtle">ID ${pid}</span>` : ''}
+                                </td>
+                                <td>
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <div style="flex: 0 0 80px;">
+                                            <div class="provider-usage-bar">
+                                                <div class="provider-usage-bar-fill" style="width: ${Math.min(reqPct, 100)}%; background: ${isUnknown ? 'linear-gradient(90deg, #f59e0b 0%, #d97706 100%)' : 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)'};">
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <span style="font-weight: 700; color: #2d3748; font-size: 0.9em;">${reqPct.toFixed(1)}%</span>
+                                    </div>
                                 </td>
                                 <td style="font-weight:800; color:#2d3748;">${escapeHtml(req)}</td>
                                 <td>${escapeHtml(sessionsText)}</td>
