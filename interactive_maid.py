@@ -330,12 +330,31 @@ def main():
     print("DISPATCHARR MAID - Interactive Stream Manager")
     print("="*70)
     
-    # Check for .env file
-    if not Path('.env').exists():
-        print("\n✗ Error: .env file not found!")
-        print("Please create a .env file with your Dispatcharr credentials.")
+    # Credentials can be provided via a local .env file OR environment variables.
+    # In Docker, prefer mounting .env (so token refresh can be persisted), but
+    # don't hard-fail if the file is missing.
+    if Path('.env').exists():
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except Exception:
+            # If python-dotenv isn't available for some reason, DispatcharrAPI
+            # will still read from environment variables.
+            pass
+
+    required = ("DISPATCHARR_BASE_URL", "DISPATCHARR_USER", "DISPATCHARR_PASS")
+    missing = [k for k in required if not os.getenv(k)]
+    if missing:
+        print("\n✗ Error: missing Dispatcharr credentials!")
+        if not Path('.env').exists():
+            print("No .env file found, and required environment variables are not set.")
+        else:
+            print("Required environment variables are not set (check your .env file).")
+        print("\nRequired:")
+        for k in required:
+            print(f"  {k}=...")
         print("\nExample:")
-        print("  DISPATCHARR_BASE_URL=http://your-server:9191")
+        print("  DISPATCHARR_BASE_URL=http://dispatcharr:9191")
         print("  DISPATCHARR_USER=your-username")
         print("  DISPATCHARR_PASS=your-password")
         print("  DISPATCHARR_TOKEN=")

@@ -24,4 +24,5 @@ RUN mkdir -p /app/csv /app/logs
 ENV PYTHONUNBUFFERED=1
 
 # Default command (can be overridden)
-CMD ["python3", "interactive_maid.py"]
+# The docker-compose.yml runs the web UI, so make that the default too.
+CMD ["python3", "dispatcharr_web_app.py"]
