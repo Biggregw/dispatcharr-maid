@@ -31,6 +31,106 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent
 
 
+def _format_path_choices(paths: List[Path]) -> str:
+    if not paths:
+        return ""
+    lines = ["\nFound these possible log directories on this host:"]
+    for idx, p in enumerate(paths, start=1):
+        lines.append(f"  {idx}) {p}")
+    lines.append("Enter a number to use it, paste a path, or press Enter to skip.\n")
+    return "\n".join(lines)
+
+
+def _guess_reverse_proxy_log_dirs() -> List[Path]:
+    """
+    Best-effort guesses for where reverse-proxy access logs live on the *host*.
+
+    This is intentionally conservative (small set of common locations).
+    """
+    candidates: List[Path] = []
+
+    # Common bind-mount locations people use for Nginx Proxy Manager (NPM)
+    for p in [
+        Path("/srv/npm/data/logs"),
+        Path("/opt/nginx-proxy-manager/data/logs"),
+        Path("/root/nginx-proxy-manager/data/logs"),
+        Path("/home/nginx-proxy-manager/data/logs"),
+    ]:
+        candidates.append(p)
+
+    # Common non-containerized reverse-proxy logs (rarely used with NPM, but helpful)
+    for p in [
+        Path("/var/log/nginx"),
+        Path("/var/log/apache2"),
+        Path("/var/log/traefik"),
+        Path("/var/log/caddy"),
+        Path("/var/log/haproxy"),
+    ]:
+        candidates.append(p)
+
+    # Docker volume based installs (e.g. nginx-proxy-manager "data" volume)
+    # Look for a small number of likely volume names and check their _data/logs.
+    vol_root = Path("/var/lib/docker/volumes")
+    if vol_root.exists() and vol_root.is_dir():
+        for pattern in ["*nginx-proxy-manager*", "*npm*"]:
+            try:
+                for vol in sorted(vol_root.glob(pattern))[:50]:
+                    logs = vol / "_data" / "logs"
+                    candidates.append(logs)
+            except Exception:
+                # If Docker isn't installed or permissions block listing, ignore.
+                pass
+
+    # Filter to real directories, de-dup, keep stable ordering
+    seen: set[str] = set()
+    out: List[Path] = []
+    for p in candidates:
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        if p.exists() and p.is_dir():
+            out.append(p)
+    return out
+
+
+def _prompt_log_dir() -> str:
+    """
+    Prompt for a host path to reverse-proxy access logs.
+    Allows skipping (blank) and supports choosing from detected directories.
+    """
+    guesses = _guess_reverse_proxy_log_dirs()
+    if guesses:
+        print(_format_path_choices(guesses))
+
+    label = (
+        "Host path to reverse-proxy access logs\n"
+        "  - If you use Nginx Proxy Manager: this is the HOST folder that corresponds to /data/logs inside the NPM container\n"
+        "  - If unsure: press Enter to skip (you can enable it later)\n"
+        "Example: /srv/npm/data/logs"
+    )
+
+    while True:
+        raw = _prompt(label, default="", required=False)
+        if raw.strip() == "":
+            return ""
+
+        # Allow picking by number if we printed guesses
+        if raw.isdigit():
+            idx = int(raw)
+            if 1 <= idx <= len(guesses):
+                return str(guesses[idx - 1])
+            print("  -> Invalid choice number.")
+            continue
+
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            print("  -> Please enter an absolute path (starts with /), or press Enter to skip.")
+            continue
+        # Don't hard-fail if it doesn't exist; users may create it later.
+        return str(p)
+
+
 def _prompt(
     label: str,
     *,
@@ -379,12 +479,12 @@ def main() -> int:
                 print("  -> Invalid integer; skipping results_retention_days.")
 
         if wants_compose and _prompt_yes_no("Enable provider-usage log mount in docker-compose.yml?", default=True):
-            host_path = _prompt(
-                "Host path to reverse-proxy access logs (e.g. /srv/npm/data/logs)",
-                default="",
-                required=True,
-            )
-            args.npm_logs_host_path = host_path
+            host_path = _prompt_log_dir()
+            if host_path.strip() == "":
+                print("  -> Skipping log mount (provider-usage from access logs will be unavailable).")
+                args.npm_logs_host_path = None
+            else:
+                args.npm_logs_host_path = host_path
 
     # Compute previews
     previews: List[Tuple[str, Path, bool, str]] = []  # (label, path, changed, content)
