@@ -59,8 +59,17 @@ CORS(app)
 
 _dispatcharr_auth_state = {
     'authenticated': False,
-    'last_error': None
+    'last_error': None,
+    # Protect the main UI from hanging indefinitely if Dispatcharr connectivity
+    # stalls (e.g., DNS resolution can block before requests' timeouts apply).
+    'attempt_in_progress': False,
+    'attempt_started_at': None,
 }
+
+# Single-flight auth attempt coordination (prevents spawning many stuck threads).
+_dispatcharr_auth_lock = threading.Lock()
+_dispatcharr_auth_event = None
+_dispatcharr_auth_result = {'ok': False, 'error': None}
 
 # Cache provider-usage computations (log parsing can be expensive).
 _provider_usage_cache_lock = threading.Lock()
@@ -93,17 +102,74 @@ def _ensure_dispatcharr_ready():
     if _dispatcharr_auth_state['authenticated']:
         return True, None
 
-    try:
-        api = DispatcharrAPI()
-        api.login()
-        api.fetch_channel_groups()
-        _dispatcharr_auth_state['authenticated'] = True
-        _dispatcharr_auth_state['last_error'] = None
-        return True, None
-    except Exception as exc:
-        _dispatcharr_auth_state['last_error'] = str(exc)
-        logging.error("Dispatcharr authentication check failed: %s", exc)
-        return False, _dispatcharr_auth_state['last_error']
+    # Hard deadline for the entire readiness check. This guarantees forward progress
+    # for the web request even if underlying network/DNS calls hang indefinitely.
+    deadline_s = 20.0
+
+    def _auth_worker(done_event):
+        try:
+            logging.info("Dispatcharr readiness check: start")
+            api = DispatcharrAPI()
+            api.login()
+            api.fetch_channel_groups()
+            with _dispatcharr_auth_lock:
+                _dispatcharr_auth_state['authenticated'] = True
+                _dispatcharr_auth_state['last_error'] = None
+                _dispatcharr_auth_result['ok'] = True
+                _dispatcharr_auth_result['error'] = None
+            logging.info("Dispatcharr readiness check: success")
+        except Exception as exc:
+            with _dispatcharr_auth_lock:
+                _dispatcharr_auth_state['last_error'] = str(exc)
+                _dispatcharr_auth_result['ok'] = False
+                _dispatcharr_auth_result['error'] = _dispatcharr_auth_state['last_error']
+            logging.error("Dispatcharr readiness check failed: %s", exc)
+        finally:
+            with _dispatcharr_auth_lock:
+                _dispatcharr_auth_state['attempt_in_progress'] = False
+            try:
+                done_event.set()
+            except Exception:
+                pass
+
+    global _dispatcharr_auth_event
+    with _dispatcharr_auth_lock:
+        if _dispatcharr_auth_state['authenticated']:
+            return True, None
+
+        if not _dispatcharr_auth_state.get('attempt_in_progress'):
+            _dispatcharr_auth_state['attempt_in_progress'] = True
+            _dispatcharr_auth_state['attempt_started_at'] = time.time()
+            _dispatcharr_auth_result['ok'] = False
+            _dispatcharr_auth_result['error'] = None
+            _dispatcharr_auth_event = threading.Event()
+            threading.Thread(
+                target=_auth_worker,
+                args=(_dispatcharr_auth_event,),
+                daemon=True,
+                name="dispatcharr-auth-check",
+            ).start()
+
+        done_event = _dispatcharr_auth_event
+
+    if done_event is None:
+        # Shouldn't happen, but avoid hanging if it does.
+        return False, _dispatcharr_auth_state.get('last_error') or 'Dispatcharr readiness check not started.'
+
+    if not done_event.wait(timeout=deadline_s):
+        started_at = _dispatcharr_auth_state.get('attempt_started_at')
+        age_s = (time.time() - started_at) if isinstance(started_at, (int, float)) else None
+        logging.warning(
+            "Dispatcharr readiness check timed out after %.1fs (age=%s).",
+            deadline_s,
+            f"{age_s:.1f}s" if isinstance(age_s, (int, float)) else "unknown",
+        )
+        return False, f"Timed out while contacting Dispatcharr (>{int(deadline_s)}s)."
+
+    with _dispatcharr_auth_lock:
+        if _dispatcharr_auth_state['authenticated']:
+            return True, None
+        return False, _dispatcharr_auth_result.get('error') or _dispatcharr_auth_state.get('last_error')
 
 
 def _render_auth_error(error_message):
