@@ -1891,7 +1891,7 @@
 
             // Keep selection if it still exists.
             const selectedPreset = selectedRegexPresetId
-                ? savedRegexPresets.find(p => String(p?.id) === String(selectedRegexPresetId))
+                ? savedRegexPresets.find(p => String(p && p.id) === String(selectedRegexPresetId))
                 : null;
             if (!selectedPreset) {
                 selectedRegexPresetId = '';
@@ -1965,9 +1965,9 @@
         }
 
         function applyRegexPreset(preset) {
-            if (!preset?.regex) return;
+            if (!preset || !preset.regex) return;
 
-            const mode = String(preset?.regex_mode || '').trim().toLowerCase();
+            const mode = String((preset && preset.regex_mode) || '').trim().toLowerCase();
             const overrideInput = document.getElementById('streamNameRegexOverride');
             const filterInput = document.getElementById('streamNameRegex');
 
@@ -2032,7 +2032,7 @@
                 }
                 const presets = Array.isArray(data.presets) ? data.presets : [];
                 // Only show presets that can drive the pipeline (must have groups saved).
-                savedPatterns = presets.filter(p => Array.isArray(p?.groups) && p.groups.length > 0);
+                savedPatterns = presets.filter(p => Array.isArray(p && p.groups) && p.groups.length > 0);
                 renderSavedPatterns();
             } catch (e) {
                 showSavedPatternStatus(`Unable to load saved patterns: ${e.message}`, true);
@@ -2096,7 +2096,7 @@
             const nameEl = document.getElementById('saved-pattern-preview-name');
             const countEl = document.getElementById('saved-pattern-preview-count');
 
-            const patternId = select?.value || '';
+            const patternId = (select && select.value) || '';
             if (!patternId) {
                 if (runBtn) runBtn.disabled = true;
                 if (delBtn) delBtn.disabled = true;
@@ -2107,7 +2107,7 @@
             if (delBtn) delBtn.disabled = false;
 
             const pattern = savedPatterns.find(p => p.id === patternId);
-            if (nameEl) nameEl.textContent = pattern?.name || 'Saved pattern';
+            if (nameEl) nameEl.textContent = (pattern && pattern.name) || 'Saved pattern';
             if (countEl) countEl.textContent = 'Resolving...';
             if (preview) preview.classList.remove('hidden');
 
@@ -2122,8 +2122,8 @@
                     if (countEl) countEl.textContent = `${data.count} channels`;
                     // If preset stored suggested settings, apply them.
                     const preset = data.preset;
-                    const spp = preset?.streams_per_provider;
-                    const ex4k = preset?.exclude_4k;
+                    const spp = preset && preset.streams_per_provider;
+                    const ex4k = preset && preset.exclude_4k;
                     const sppInput = document.getElementById('streamsPerProvider');
                     const ex4kCb = document.getElementById('exclude4K');
                     if (sppInput && typeof spp === 'number' && spp >= 1) sppInput.value = String(spp);
@@ -2142,12 +2142,13 @@
                 event.preventDefault();
                 event.stopPropagation();
             }
-            const patternId = document.getElementById('saved-pattern-select')?.value || '';
+            const patternSelect = document.getElementById('saved-pattern-select');
+            const patternId = (patternSelect && patternSelect.value) || '';
             if (!patternId) return;
             const pattern = savedPatterns.find(p => p.id === patternId);
 
             // UI feedback
-            renderOptimisticStartingJob('pattern_refresh_full_cleanup', pattern?.name || 'Saved pattern', 'Resolving channels…');
+            renderOptimisticStartingJob('pattern_refresh_full_cleanup', (pattern && pattern.name) || 'Saved pattern', 'Resolving channels…');
             // User initiated a job — bring the Current Job card into view (centered).
             const scrollToken = requestAutoScrollToCurrentJob();
             maybeAutoScrollToCurrentJob(scrollToken);
@@ -2156,8 +2157,8 @@
             const payload = {
                 job_type: 'pattern_refresh_full_cleanup',
                 regex_preset_id: patternId,
-                streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
-                exclude_4k: document.getElementById('exclude4K')?.checked || false
+                streams_per_provider: parseInt(((document.getElementById('streamsPerProvider') || {}).value), 10) || 2,
+                exclude_4k: !!((document.getElementById('exclude4K') || {}).checked)
             };
 
             try {
@@ -2203,11 +2204,11 @@
             }
 
             const select = document.getElementById('saved-pattern-select');
-            const patternId = select?.value || '';
+            const patternId = (select && select.value) || '';
             if (!patternId) return;
 
-            const pattern = savedPatterns.find(p => String(p?.id) === String(patternId));
-            await deleteRegexPreset(patternId, pattern?.name || 'Saved preset');
+            const pattern = savedPatterns.find(p => String(p && p.id) === String(patternId));
+            await deleteRegexPreset(patternId, (pattern && pattern.name) || 'Saved preset');
 
             // Best-effort reset in case the browser holds a stale selected value.
             if (select) select.value = '';
@@ -2432,7 +2433,7 @@
                 if (selectedChannels && selectedChannels.length === 1) {
                     const selectedChannelId = selectedChannels[0];
                     const channelElement = document.querySelector(`.channel-item[data-channel-id="${selectedChannelId}"]`);
-                    baseSearchInput.value = channelElement?.dataset.baseSearchText || '';
+                    baseSearchInput.value = (channelElement && channelElement.dataset && channelElement.dataset.baseSearchText) ? channelElement.dataset.baseSearchText : '';
                 } else {
                     baseSearchInput.value = '';
                 }
@@ -2533,7 +2534,7 @@
                 <label class="preview-item">
                     <input type="checkbox" class="refresh-stream-checkbox" value="${stream.id}" checked>
                     <div>
-                        <div class="preview-name">${escapeHtml(String(stream.name ?? ''))}${(stream.provider_name || stream.m3u_account) ? ` <span class="preview-provider">(${escapeHtml(String(stream.provider_name || stream.m3u_account))})</span>` : ''}</div>
+                        <div class="preview-name">${escapeHtml(String((stream.name === null || stream.name === undefined) ? '' : stream.name))}${(stream.provider_name || stream.m3u_account) ? ` <span class="preview-provider">(${escapeHtml(String(stream.provider_name || stream.m3u_account))})</span>` : ''}</div>
                         <div class="preview-meta">ID: ${stream.id}${stream.resolution ? ` • ${stream.resolution}` : ''}</div>
                     </div>
                 </label>
@@ -2560,12 +2561,13 @@
                     : null;
                 // Prefer a human-friendly default preset name.
                 // `baseSearchText` is often the "base" channel name (e.g., "BBC One") even when the channel display name includes regions.
-                const baseSearchText = (channelElement?.dataset?.baseSearchText || '').trim();
-                const channelDisplayName = (channelElement?.querySelector?.('.channel-name')?.textContent || '').trim();
-                const channelName = baseSearchText || channelDisplayName || channelElement?.dataset?.channelNumber || '';
-                const groupName = (channelElement?.closest?.('.channel-group-section')
-                    ?.querySelector?.('.channel-group-title')
-                    ?.textContent || '').trim();
+                const baseSearchText = ((channelElement && channelElement.dataset && channelElement.dataset.baseSearchText) || '').trim();
+                const channelNameEl = (channelElement && channelElement.querySelector) ? channelElement.querySelector('.channel-name') : null;
+                const channelDisplayName = ((channelNameEl && channelNameEl.textContent) || '').trim();
+                const channelName = baseSearchText || channelDisplayName || ((channelElement && channelElement.dataset && channelElement.dataset.channelNumber) || '');
+                const groupEl = (channelElement && channelElement.closest) ? channelElement.closest('.channel-group-section') : null;
+                const groupTitleEl = (groupEl && groupEl.querySelector) ? groupEl.querySelector('.channel-group-title') : null;
+                const groupName = ((groupTitleEl && groupTitleEl.textContent) || '').trim();
 
                 if (channelName && groupName) {
                     // Append the channel group for clarity (even when the group name
@@ -2598,7 +2600,7 @@
 
             for (const cb of checkboxes) {
                 const stream = byId.get(String(cb.value));
-                const streamName = stream?.name;
+                const streamName = stream && stream.name;
                 if (!streamName) continue;
                 if (cb.checked) include.push(streamName);
                 else exclude.push(streamName);
@@ -2616,7 +2618,7 @@
             }
 
             try {
-                const overrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
+                const overrideValue = String(((document.getElementById('streamNameRegexOverride') || {}).value) || '').trim();
                 let regex = overrideValue;
                 let regexMode = 'override';
 
@@ -2646,12 +2648,12 @@
                         regex_mode: regexMode,
                         groups: (Array.isArray(selectedGroups) && selectedGroups.length > 0) ? selectedGroups : undefined,
                         channels: Array.isArray(selectedChannels) ? selectedChannels : null,
-                        streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
-                        exclude_4k: document.getElementById('exclude4K')?.checked || false,
-                        exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
-                        base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                        include_filter: document.getElementById('includeFilter')?.value || null,
-                        exclude_filter: document.getElementById('excludeFilter')?.value || null
+                        streams_per_provider: parseInt(((document.getElementById('streamsPerProvider') || {}).value), 10) || 2,
+                        exclude_4k: !!((document.getElementById('exclude4K') || {}).checked),
+                        exclude_plus_one: !!((document.getElementById('excludePlusOne') || {}).checked),
+                        base_search_text: (document.getElementById('baseSearchText') ? document.getElementById('baseSearchText').value : null),
+                        include_filter: (((document.getElementById('includeFilter') || {}).value) || null),
+                        exclude_filter: (((document.getElementById('excludeFilter') || {}).value) || null)
                     })
                 });
                 const saveData = await saveResp.json();
@@ -2672,11 +2674,11 @@
                 await loadSavedRegexPresets();
                 await loadSavedPatterns();
                 // Best-effort select the newly saved preset.
-                const presetId = saveData.preset?.id;
+                const presetId = saveData && saveData.preset ? saveData.preset.id : null;
                 if (presetId) {
                     selectedRegexPresetId = String(presetId);
-                    const preset = savedRegexPresets.find(p => String(p?.id) === String(presetId));
-                    setSavedRegexLabel(preset?.name || 'Saved regex');
+                    const preset = savedRegexPresets.find(p => String(p && p.id) === String(presetId));
+                    setSavedRegexLabel((preset && preset.name) || 'Saved regex');
                 }
 
                 alert(saveData.replaced ? 'Saved regex preset (overwrote existing preset with same name).' : 'Saved regex preset.');
@@ -2703,15 +2705,15 @@
             document.getElementById('refresh-preview-description').textContent = '';
 
             try {
-                const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
-                const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
+                const regexOverrideValue = String(((document.getElementById('streamNameRegexOverride') || {}).value) || '').trim();
+                const regexFilterValue = String(((document.getElementById('streamNameRegex') || {}).value) || '').trim();
                 const payload = {
                     channel_id: selectedChannels[0],
-                    base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                    include_filter: document.getElementById('includeFilter')?.value || null,
-                    exclude_filter: document.getElementById('excludeFilter')?.value || null,
-                    exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
-                    exclude_4k: document.getElementById('exclude4K')?.checked || false,
+                    base_search_text: (document.getElementById('baseSearchText') ? document.getElementById('baseSearchText').value : null),
+                    include_filter: (((document.getElementById('includeFilter') || {}).value) || null),
+                    exclude_filter: (((document.getElementById('excludeFilter') || {}).value) || null),
+                    exclude_plus_one: !!((document.getElementById('excludePlusOne') || {}).checked),
+                    exclude_4k: !!((document.getElementById('exclude4K') || {}).checked),
                     stream_name_regex: regexFilterValue ? regexFilterValue : null,
                     stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
                 };
@@ -2842,7 +2844,11 @@
 
         function getClickedButton(event) {
             // Prefer currentTarget (stable) over target (may be inner span/svg)
-            return event?.currentTarget || event?.target?.closest?.('button') || null;
+            if (!event) return null;
+            if (event.currentTarget) return event.currentTarget;
+            const t = event.target;
+            if (t && t.closest) return t.closest('button');
+            return null;
         }
 
         function setButtonLoading(btn, isLoading) {
@@ -2901,20 +2907,20 @@
                 const scrollToken = requestAutoScrollToCurrentJob();
                 maybeAutoScrollToCurrentJob(scrollToken);
                 
-                const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
-                const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
+                const regexOverrideValue = String(((document.getElementById('streamNameRegexOverride') || {}).value) || '').trim();
+                const regexFilterValue = String(((document.getElementById('streamNameRegex') || {}).value) || '').trim();
                 const payload = {
                     job_type: jobType,
                     groups: selectedGroups,
                     channels: selectedChannels,
                     group_names: groupNames,
                     channel_names: channelNames,
-                    streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
-                    base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                    include_filter: document.getElementById('includeFilter')?.value || null,
-                    exclude_filter: document.getElementById('excludeFilter')?.value || null,
-                    exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
-                    exclude_4k: document.getElementById('exclude4K')?.checked || false,
+                    streams_per_provider: parseInt(((document.getElementById('streamsPerProvider') || {}).value), 10) || 2,
+                    base_search_text: (document.getElementById('baseSearchText') ? document.getElementById('baseSearchText').value : null),
+                    include_filter: (((document.getElementById('includeFilter') || {}).value) || null),
+                    exclude_filter: (((document.getElementById('excludeFilter') || {}).value) || null),
+                    exclude_plus_one: !!((document.getElementById('excludePlusOne') || {}).checked),
+                    exclude_4k: !!((document.getElementById('exclude4K') || {}).checked),
                     selected_stream_ids: selectedStreamIds,
                     stream_name_regex: regexFilterValue ? regexFilterValue : null,
                     stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
@@ -3406,7 +3412,7 @@
         }
 
         function escapeHtml(value) {
-            const str = String(value ?? '');
+            const str = String((value === null || value === undefined) ? '' : value);
             return str.replace(/[&<>"']/g, (ch) => ({
                 '&': '&amp;',
                 '<': '&lt;',
@@ -3500,7 +3506,7 @@
                     if (loading) loading.classList.add('hidden');
                     if (empty) {
                         empty.classList.remove('hidden');
-                        const msg = data?.error ? String(data.error) : 'Provider usage is not available.';
+                        const msg = (data && data.error) ? String(data.error) : 'Provider usage is not available.';
                         const box = empty.querySelector('.alert');
                         if (box) box.textContent = msg;
                     }
@@ -3510,13 +3516,13 @@
                 const usageObj = (data && typeof data.provider_usage === 'object' && data.provider_usage) ? data.provider_usage : {};
                 const rows = Object.entries(usageObj).map(([providerId, stats]) => {
                     const s = (stats && typeof stats === 'object') ? stats : {};
-                    const requests = parseInt(String(s.requests ?? 0), 10) || 0;
-                    const sessions = parseInt(String(s.sessions ?? 0), 10) || 0;
-                    const clients = parseInt(String(s.unique_clients ?? 0), 10) || 0;
-                    const ok = parseInt(String(s.ok_requests ?? 0), 10) || 0;
-                    const errors = parseInt(String(s.error_requests ?? 0), 10) || 0;
-                    const unique = parseInt(String(s.unique_streams ?? 0), 10) || 0;
-                    const bytes = parseInt(String(s.bytes_sent ?? 0), 10) || 0;
+                    const requests = parseInt(String((s.requests === null || s.requests === undefined) ? 0 : s.requests), 10) || 0;
+                    const sessions = parseInt(String((s.sessions === null || s.sessions === undefined) ? 0 : s.sessions), 10) || 0;
+                    const clients = parseInt(String((s.unique_clients === null || s.unique_clients === undefined) ? 0 : s.unique_clients), 10) || 0;
+                    const ok = parseInt(String((s.ok_requests === null || s.ok_requests === undefined) ? 0 : s.ok_requests), 10) || 0;
+                    const errors = parseInt(String((s.error_requests === null || s.error_requests === undefined) ? 0 : s.error_requests), 10) || 0;
+                    const unique = parseInt(String((s.unique_streams === null || s.unique_streams === undefined) ? 0 : s.unique_streams), 10) || 0;
+                    const bytes = parseInt(String((s.bytes_sent === null || s.bytes_sent === undefined) ? 0 : s.bytes_sent), 10) || 0;
                     const lastSeen = s.last_seen ? String(s.last_seen) : null;
                     const isUnknown = String(providerId) === 'unknown';
                     const name = s.provider_name
@@ -3700,7 +3706,7 @@
                     if (unknownDetails && unknownBody) {
                         if ((topStreams && topStreams.length) || (topPaths && topPaths.length)) {
                             const streamLines = (topStreams || []).slice(0, 10).map((s) => {
-                                const sid = escapeHtml(String(s.stream_id ?? ''));
+                                const sid = escapeHtml(String((s.stream_id === null || s.stream_id === undefined) ? '' : s.stream_id));
                                 const cnt = escapeHtml(Number(s.requests || 0).toLocaleString());
                                 const exists = (s.exists_in_dispatcharr === true) ? '✅ in Dispatcharr' : (s.exists_in_dispatcharr === false ? '❌ not in Dispatcharr' : '');
                                 const nm = s.stream_name ? ` — ${escapeHtml(String(s.stream_name))}` : '';
@@ -3708,7 +3714,7 @@
                                 return `<div class="provider-note"><code>${sid}</code>${nm} — ${cnt} req ${exists ? ` • ${exists}` : ''}${acc}</div>`;
                             }).join('');
                             const pathLines = (topPaths || []).slice(0, 8).map((p) => {
-                                const path = escapeHtml(String(p.path ?? ''));
+                                const path = escapeHtml(String((p.path === null || p.path === undefined) ? '' : p.path));
                                 const cnt = escapeHtml(Number(p.requests || 0).toLocaleString());
                                 return `<div class="provider-note"><code>${path}</code> — ${cnt} req</div>`;
                             }).join('');
@@ -3815,7 +3821,7 @@
                     if (empty) {
                         empty.classList.remove('hidden');
                         // If we have a server error string, surface it.
-                        const msg = data?.error ? String(data.error) : 'No provider ranking yet.';
+                        const msg = (data && data.error) ? String(data.error) : 'No provider ranking yet.';
                         const box = empty.querySelector('.alert');
                         if (box) box.textContent = msg;
                     }
@@ -3842,9 +3848,11 @@
 
                 if (tbody) {
                     tbody.innerHTML = providers.map(p => {
-                        const rank = p.rank ?? '';
-                        const name = escapeHtml(p.name ?? p.provider_id ?? 'Unknown');
-                        const pid = escapeHtml(p.provider_id ?? '');
+                        const rank = (p.rank === null || p.rank === undefined) ? '' : p.rank;
+                        const name = escapeHtml((p.name === null || p.name === undefined)
+                            ? ((p.provider_id === null || p.provider_id === undefined) ? 'Unknown' : p.provider_id)
+                            : p.name);
+                        const pid = escapeHtml((p.provider_id === null || p.provider_id === undefined) ? '' : p.provider_id);
                         const score = typeof p.score === 'number' ? p.score : parseFloat(p.score);
                         const scoreText = isFinite(score) ? score.toFixed(1) : '—';
                         const successRate = typeof p.success_rate === 'number' ? p.success_rate : parseFloat(p.success_rate);
