@@ -2850,6 +2850,145 @@ def health_check():
     return jsonify({'status': 'ok'}), 200
 
 
+@app.route('/api/status')
+def api_status():
+    """
+    Lightweight status endpoint for the monitor dashboard (`templates/app.html`).
+
+    Important: this must stay fast. It intentionally avoids Dispatcharr API calls and
+    only returns in-memory job state + cached group data + local config values.
+    """
+    try:
+        # Current running job (if any)
+        with job_lock:
+            running_jobs = [j for j in jobs.values() if getattr(j, 'status', None) == 'running']
+            # Prefer most recently started job if multiple are running.
+            running_job = max(running_jobs, key=lambda j: getattr(j, 'started_at', '') or '', default=None)
+
+        current_progress = None
+        if running_job is not None:
+            # Use stage progress when available; otherwise fall back to generic fields.
+            processed = getattr(running_job, 'stage_progress', None)
+            total = getattr(running_job, 'stage_total', None)
+            if not isinstance(processed, (int, float)):
+                processed = getattr(running_job, 'progress', 0)
+            if not isinstance(total, (int, float)) or int(total) <= 0:
+                total = getattr(running_job, 'total', 0)
+
+            percent = getattr(running_job, 'overall_progress', None)
+            if not isinstance(percent, (int, float)):
+                try:
+                    percent = (float(processed) / float(total) * 100.0) if total else 0.0
+                except Exception:
+                    percent = 0.0
+
+            step = getattr(running_job, 'current_step', '') or ''
+            stage_name = getattr(running_job, 'stage_name', '') or ''
+
+            current_progress = {
+                'processed': int(processed) if isinstance(processed, (int, float)) else 0,
+                'total': int(total) if isinstance(total, (int, float)) else 0,
+                'failed': int(getattr(running_job, 'failed', 0) or 0),
+                'percent': float(max(0.0, min(100.0, percent))),
+                'current_step': stage_name or step,
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        # Last completed run summary (best-effort from job history)
+        last_run = None
+        try:
+            history = get_job_history()
+            last_completed = next(
+                (h for h in history if isinstance(h, dict) and h.get('status') == 'completed'),
+                None,
+            )
+            if isinstance(last_completed, dict):
+                summary = last_completed.get('result_summary')
+                if isinstance(summary, dict) and isinstance(summary.get('total'), (int, float)):
+                    config = None
+                    try:
+                        workspace = last_completed.get('workspace')
+                        config = Config(Path(workspace) / 'config.yaml', working_dir=Path(workspace)) if workspace else Config('config.yaml')
+                    except Exception:
+                        config = None
+
+                    provider_names = _load_provider_names(config) if config else {}
+                    provider_stats = summary.get('provider_stats') if isinstance(summary.get('provider_stats'), dict) else {}
+                    providers = []
+                    for pid, stats in provider_stats.items():
+                        if not isinstance(stats, dict):
+                            continue
+                        total = int(stats.get('total') or 0)
+                        successful = int(stats.get('successful') or 0)
+                        failed = int(stats.get('failed') or max(0, total - successful))
+                        if total <= 0:
+                            continue
+                        fail_rate = (failed / total * 100.0) if total else 0.0
+                        pid_key = str(pid)
+                        providers.append({
+                            'id': pid_key,
+                            'name': provider_names.get(pid_key) if isinstance(provider_names, dict) else pid_key,
+                            'total': total,
+                            'success': successful,
+                            'failed': failed,
+                            'fail_rate': float(round(fail_rate, 1)),
+                        })
+
+                    # Top providers: by total streams in run (desc), then fail_rate (asc)
+                    providers_sorted = sorted(
+                        providers,
+                        key=lambda p: (-(p.get('total') or 0), (p.get('fail_rate') or 0.0), p.get('name') or ''),
+                    )
+                    top_providers = providers_sorted[:10]
+                    problematic_providers = [p for p in providers_sorted if (p.get('fail_rate') or 0.0) > 10.0][:20]
+
+                    last_run = {
+                        'timestamp': last_completed.get('completed_at') or last_completed.get('started_at') or 'Unknown',
+                        'total': int(summary.get('total') or 0),
+                        'successful': int(summary.get('successful') or 0),
+                        'failed': int(summary.get('failed') or 0),
+                        'success_rate': float(summary.get('success_rate') or 0.0),
+                        'top_providers': top_providers,
+                        'problematic_providers': problematic_providers,
+                    }
+        except Exception:
+            last_run = None
+
+        # Config snapshot for the dashboard (best-effort; return None on errors)
+        cfg = None
+        try:
+            config = Config('config.yaml')
+            filters = config.get('filters') or {}
+            analysis = config.get('analysis') or {}
+            web_cfg = config.get('web') or {}
+            group_ids = filters.get('channel_group_ids') if isinstance(filters, dict) else None
+            cfg = {
+                'groups': group_ids if isinstance(group_ids, list) else [],
+                'channel_range': None,
+                'workers': int(analysis.get('workers') or 0) if isinstance(analysis, dict) else None,
+                'duration': int(analysis.get('duration') or 0) if isinstance(analysis, dict) else None,
+                'results_retention_days': int(web_cfg.get('results_retention_days') or 0) if isinstance(web_cfg, dict) else 0,
+            }
+        except Exception:
+            cfg = None
+
+        # Cached group list (from /api/groups). Do not fetch here.
+        groups = []
+        with _groups_cache_lock:
+            cached = _groups_cache.get('payload')
+            if isinstance(cached, dict) and cached.get('success') is True and isinstance(cached.get('groups'), list):
+                groups = cached.get('groups') or []
+
+        return jsonify({
+            'current_progress': current_progress,
+            'last_run': last_run,
+            'config': cfg,
+            'groups': groups,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/results')
 def results():
     """Results dashboard page"""
