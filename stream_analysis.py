@@ -1268,6 +1268,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     import re
     import subprocess
     import json
+    import os
+    from pathlib import Path
 
     # Performance: precompile regexes used in matching loops
     _QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
@@ -1320,6 +1322,50 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             pat = re.escape(part).replace(r'\*', '.*')
             regexes.append(re.compile(pat))
         return regexes
+
+    def _load_provider_names_for_preview(cfg):
+        """
+        Best-effort provider id -> display name mapping.
+
+        Preference order:
+          1) provider_map.json (Dispatcharr-derived mapping, if present)
+          2) provider_names.json (user overrides, if present) overrides provider_map
+
+        Both files are looked up first in the config working dir (job workspace),
+        then in the repo root.
+        """
+        if cfg is None:
+            return {}
+
+        def _try_load_json_object(path_str):
+            try:
+                p = Path(path_str)
+                if not p.exists():
+                    return None
+                with p.open('r', encoding='utf-8') as handle:
+                    data = json.load(handle)
+                if isinstance(data, dict):
+                    return {str(k): str(v) for k, v in data.items()}
+            except Exception:
+                return None
+            return None
+
+        def _resolve_or_root(rel_name):
+            try:
+                # Config.resolve_path returns an absolute path inside the working dir.
+                resolved = cfg.resolve_path(rel_name)
+            except Exception:
+                resolved = rel_name
+            # Prefer resolved path if it exists; otherwise try repo root.
+            if resolved and os.path.exists(resolved):
+                return resolved
+            return rel_name
+
+        provider_map = _try_load_json_object(_resolve_or_root('provider_map.json')) or {}
+        overrides = _try_load_json_object(_resolve_or_root('provider_names.json')) or {}
+        if overrides:
+            provider_map.update(overrides)
+        return provider_map
 
     # Optional regex for stream name filtering (applied after base match + wildcard include/exclude).
     _stream_name_re = None
@@ -1449,6 +1495,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
                 next_url = None
     
     logging.info(f"Checking {len(all_streams)} streams from all providers...")
+
+    provider_names = _load_provider_names_for_preview(config) if preview else {}
     
     # Preview responses can become very large when regex override is broad.
     # Cap the returned stream list while still computing accurate counts.
@@ -1474,6 +1522,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             stream_name = stream.get('name', '')
             stream_id = stream.get('id')
             stream_url = stream.get('url', '')
+            provider_id = stream.get('m3u_account')
 
             if not matches_stream(stream_name):
                 continue
@@ -1494,7 +1543,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
                 'id': stream_id,
                 'name': stream_name,
                 # URL is not used by the UI and can be large/sensitive; omit.
-                'resolution': resolution
+                'resolution': resolution,
+                'm3u_account': provider_id,
+                'provider_name': provider_names.get(str(provider_id)) if provider_id is not None else None,
             }
 
             if preview:
@@ -1512,6 +1563,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         for stream in all_streams:
             stream_name = stream.get('name', '')
             stream_id = stream.get('id')
+            provider_id = stream.get('m3u_account')
 
             if not matches_stream(stream_name):
                 continue
@@ -1527,7 +1579,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
                 'id': stream_id,
                 'name': stream_name,
                 # URL is not used by the UI and can be large/sensitive; omit.
-                'resolution': None
+                'resolution': None,
+                'm3u_account': provider_id,
+                'provider_name': provider_names.get(str(provider_id)) if provider_id is not None else None,
             }
 
             if preview:
