@@ -80,6 +80,12 @@ _groups_cache = {
     # {'ts': epoch_seconds, 'payload': dict}
 }
 
+# Cache provider-ranking responses (CSV/pandas rebuilds can be expensive).
+_provider_ranking_cache_lock = threading.Lock()
+_provider_ranking_cache = {
+    # (job_id, window, history_mtime) -> {'ts': epoch_seconds, 'ttl': seconds, 'status': int, 'payload': dict}
+}
+
 
 # Check authentication lazily on first UI request to avoid crashing when Dispatcharr is temporarily unavailable.
 def _ensure_dispatcharr_ready():
@@ -3999,6 +4005,109 @@ def api_usage_providers():
 
     return jsonify(payload)
 
+def _generate_provider_stats_fast(config, specific_channel_ids=None):
+    """
+    Fast path for provider ranking: compute only provider_stats (and a timestamp)
+    from the most relevant CSV, avoiding the heavier generate_job_summary().
+
+    Returns:
+      dict|None: {'timestamp': iso_str, 'provider_stats': {...}} or None if unavailable.
+    """
+    try:
+        measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
+        scored_file = config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
+
+        # Prefer the scored file if present; it often includes quality/score columns.
+        src = scored_file if os.path.exists(scored_file) else measurements_file
+        if not os.path.exists(src):
+            return None
+
+        # Read header only to choose safe usecols.
+        header = pd.read_csv(src, nrows=0)
+        cols = set([str(c) for c in getattr(header, "columns", [])])
+
+        if 'm3u_account' not in cols or 'status' not in cols:
+            return None
+
+        quality_col = None
+        if 'quality_score' in cols:
+            quality_col = 'quality_score'
+        elif 'score' in cols:
+            quality_col = 'score'
+
+        usecols = ['status', 'm3u_account']
+        if quality_col:
+            usecols.append(quality_col)
+        if specific_channel_ids and 'channel_id' in cols:
+            usecols.append('channel_id')
+
+        df = pd.read_csv(src, usecols=usecols)
+        if df is None or len(df) == 0:
+            return None
+
+        if specific_channel_ids and 'channel_id' in df.columns:
+            df['channel_id'] = pd.to_numeric(df['channel_id'], errors='coerce')
+            df = df[df['channel_id'].isin(specific_channel_ids)]
+            if len(df) == 0:
+                return None
+
+        provider_stats = {}
+        neutral_quality = 70
+        unknown_penalty = 5
+
+        for provider_id in df['m3u_account'].unique():
+            if pd.isna(provider_id):
+                continue
+            provider_df = df[df['m3u_account'] == provider_id]
+            provider_total = len(provider_df)
+            if provider_total <= 0:
+                continue
+
+            success_df = provider_df[provider_df['status'] == 'OK']
+            provider_success = len(success_df)
+
+            avg_score = neutral_quality - unknown_penalty
+            if quality_col and provider_success > 0 and quality_col in provider_df.columns:
+                quality_series = pd.to_numeric(success_df[quality_col], errors='coerce')
+                known_quality = quality_series[quality_series >= 0]
+                if not known_quality.empty:
+                    avg_score = float(known_quality.mean())
+
+            success_rate = round((provider_success / provider_total) * 100, 1) if provider_total > 0 else 0.0
+            weighted_score = float(avg_score) * ((success_rate / 100.0) ** 2)
+
+            # Stable provider key: numeric ids become int-like strings when possible.
+            provider_key = None
+            try:
+                if isinstance(provider_id, (int, float)) and float(provider_id).is_integer():
+                    provider_key = str(int(provider_id))
+            except Exception:
+                provider_key = None
+            if not provider_key:
+                provider_key = str(provider_id)
+
+            provider_stats[provider_key] = {
+                'total': int(provider_total),
+                'successful': int(provider_success),
+                'failed': int(provider_total - provider_success),
+                'success_rate': float(success_rate),
+                'avg_quality': float(round(float(avg_score), 1)),
+                'weighted_score': float(round(float(weighted_score), 1)),
+            }
+
+        try:
+            ts = datetime.fromtimestamp(os.path.getmtime(src)).isoformat()
+        except Exception:
+            ts = datetime.now().isoformat()
+
+        return {
+            'timestamp': ts,
+            'provider_stats': provider_stats,
+        }
+    except Exception as exc:
+        logging.debug("Fast provider_stats rebuild failed: %s", exc)
+        return None
+
 
 @app.route('/api/provider-ranking')
 def api_provider_ranking():
@@ -4013,6 +4122,13 @@ def api_provider_ranking():
     job_id = request.args.get('job_id')
     window_raw = request.args.get('window')
     try:
+        # Cache by request params + job history mtime (rankings depend on history).
+        history_file = 'logs/job_history.json'
+        try:
+            history_mtime = float(os.path.getmtime(history_file)) if os.path.exists(history_file) else 0.0
+        except Exception:
+            history_mtime = 0.0
+
         window = 1
         window_is_all = False
         if window_raw is not None and str(window_raw).strip() != '':
@@ -4027,6 +4143,17 @@ def api_provider_ranking():
         if not window_is_all:
             window = max(1, min(50, window))
 
+        cache_key = (str(job_id or ''), ('all' if window_is_all else str(window)), history_mtime)
+        now = time.time()
+        with _provider_ranking_cache_lock:
+            cached = _provider_ranking_cache.get(cache_key)
+            if isinstance(cached, dict):
+                age = now - float(cached.get('ts') or 0.0)
+                ttl = float(cached.get('ttl') or 0.0)
+                if ttl > 0 and age >= 0 and age < ttl:
+                    return jsonify(cached.get('payload') or {}), int(cached.get('status') or 200)
+
+        start_time = time.time()
         summary = None
         config = None
         resolved_job_id = job_id
@@ -4069,21 +4196,27 @@ def api_provider_ranking():
                             specific = [int(x) for x in specific] if isinstance(specific, list) else None
                         except Exception:
                             specific = None
-                        summary = generate_job_summary(config, specific_channel_ids=specific)
+                        rebuilt = _generate_provider_stats_fast(config, specific_channel_ids=specific)
+                        if rebuilt is None:
+                            rebuilt = generate_job_summary(config, specific_channel_ids=specific)
+                        summary = rebuilt
                         most_recent_timestamp = summary.get('timestamp') if isinstance(summary, dict) else None
                 else:
                     # Fall back to CSV-based summary if no job history exists.
                     latest_job = _get_latest_job_with_workspace()
                     resolved_job_id = latest_job.job_id if latest_job else None
                     config = _build_config_from_job(latest_job)
-                    summary = generate_job_summary(config)
+                    summary = _generate_provider_stats_fast(config) or generate_job_summary(config)
                     most_recent_timestamp = summary.get('timestamp') if isinstance(summary, dict) else None
                     included_job_ids = [resolved_job_id] if resolved_job_id else []
             else:
                 # Aggregate across the last N analyzed runs.
                 selected = analyzed if window_is_all else analyzed[:window]
                 if not selected:
-                    return jsonify({'success': False, 'error': 'No analysis results available yet. Run a Quality Check first.'}), 404
+                    payload = {'success': False, 'error': 'No analysis results available yet. Run a Quality Check first.'}
+                    with _provider_ranking_cache_lock:
+                        _provider_ranking_cache[cache_key] = {'ts': now, 'ttl': 15.0, 'status': 404, 'payload': payload}
+                    return jsonify(payload), 404
 
                 # Use most recent run as the "base" for names/metadata.
                 resolved_job_id = selected[0].get('job_id')
@@ -4110,7 +4243,9 @@ def api_provider_ranking():
                             specific = [int(x) for x in specific] if isinstance(specific, list) else None
                         except Exception:
                             specific = None
-                        rebuilt = generate_job_summary(h_config, specific_channel_ids=specific)
+                        rebuilt = _generate_provider_stats_fast(h_config, specific_channel_ids=specific)
+                        if rebuilt is None:
+                            rebuilt = generate_job_summary(h_config, specific_channel_ids=specific)
                         h_provider_stats = rebuilt.get('provider_stats') if isinstance(rebuilt, dict) else None
                         if idx == 0 and isinstance(rebuilt, dict) and most_recent_timestamp is None:
                             most_recent_timestamp = rebuilt.get('timestamp')
@@ -4119,7 +4254,10 @@ def api_provider_ranking():
                         provider_stats_list.append(h_provider_stats)
 
                 if not provider_stats_list:
-                    return jsonify({'success': False, 'error': 'Provider stats are not available yet. Run a Quality Check first.'}), 404
+                    payload = {'success': False, 'error': 'Provider stats are not available yet. Run a Quality Check first.'}
+                    with _provider_ranking_cache_lock:
+                        _provider_ranking_cache[cache_key] = {'ts': now, 'ttl': 15.0, 'status': 404, 'payload': payload}
+                    return jsonify(payload), 404
 
                 summary = {
                     'timestamp': most_recent_timestamp,
@@ -4135,19 +4273,22 @@ def api_provider_ranking():
         provider_stats = summary.get('provider_stats')
         if not isinstance(provider_stats, dict):
             # Try rebuilding from CSV if the stored payload was not an analysis summary.
-            rebuilt = generate_job_summary(config)
+            rebuilt = _generate_provider_stats_fast(config) or generate_job_summary(config)
             if isinstance(rebuilt, dict) and isinstance(rebuilt.get('provider_stats'), dict):
                 summary = rebuilt
                 provider_stats = summary.get('provider_stats')
             else:
-                return jsonify({'success': False, 'error': 'Provider stats are not available yet. Run a Quality Check first.'}), 404
+                payload = {'success': False, 'error': 'Provider stats are not available yet. Run a Quality Check first.'}
+                with _provider_ranking_cache_lock:
+                    _provider_ranking_cache[cache_key] = {'ts': now, 'ttl': 15.0, 'status': 404, 'payload': payload}
+                return jsonify(payload), 404
 
         provider_names = _load_provider_names(config)
         provider_metadata = _load_provider_metadata(config)
 
         window_label = 'all analyzed runs' if window_is_all else ('last run' if window <= 1 else f'last {window} runs')
         ranking = _build_provider_ranking(provider_stats, provider_names, provider_metadata, window_label=window_label)
-        return jsonify({
+        payload = {
             'success': True,
             'window': 'all' if window_is_all else window,
             'job_id': resolved_job_id,
@@ -4163,9 +4304,22 @@ def api_provider_ranking():
                 }
             },
             'providers': ranking
-        })
+        }
+        elapsed = time.time() - start_time
+        logging.info("Provider ranking: window=%s job_id=%s providers=%d (%.2fs)",
+                     ('all' if window_is_all else window), (resolved_job_id or ''), len(ranking or []), elapsed)
+        with _provider_ranking_cache_lock:
+            _provider_ranking_cache[cache_key] = {'ts': now, 'ttl': 60.0, 'status': 200, 'payload': payload}
+        return jsonify(payload)
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        payload = {'success': False, 'error': str(e)}
+        try:
+            with _provider_ranking_cache_lock:
+                # Cache failures briefly to avoid thundering herds on repeated reloads.
+                _provider_ranking_cache[cache_key] = {'ts': time.time(), 'ttl': 5.0, 'status': 500, 'payload': payload}
+        except Exception:
+            pass
+        return jsonify(payload), 500
 
 
 @app.route('/api/results/detailed/<job_id>')

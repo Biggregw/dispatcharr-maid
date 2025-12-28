@@ -1801,7 +1801,8 @@
         document.addEventListener('DOMContentLoaded', function() {
             loadGroups();
             loadJobHistory();
-            loadProviderRanking();
+            // Provider ranking depends on analysis results; load it after job history
+            // to avoid duplicate expensive requests on page load.
             loadSavedPatterns();
             initSavedRegexPresetDropdown();
             loadSavedRegexPresets();
@@ -1844,8 +1845,11 @@
 
         async function loadSavedRegexPresets() {
             try {
-                const resp = await fetch(`/api/regex/presets?ts=${Date.now()}`, { cache: 'no-store' });
-                const data = await resp.json();
+                const data = await fetchJsonWithTimeout(
+                    `/api/regex/presets?ts=${Date.now()}`,
+                    { cache: 'no-store' },
+                    15000
+                );
                 if (!data.success) return;
                 savedRegexPresets = Array.isArray(data.presets) ? data.presets : [];
                 renderSavedRegexPresets();
@@ -2022,8 +2026,11 @@
         async function loadSavedPatterns() {
             try {
                 // Saved presets are stored alongside regex presets.
-                const resp = await fetch(`/api/regex/presets?ts=${Date.now()}`, { cache: 'no-store' });
-                const data = await resp.json();
+                const data = await fetchJsonWithTimeout(
+                    `/api/regex/presets?ts=${Date.now()}`,
+                    { cache: 'no-store' },
+                    15000
+                );
                 if (!data.success) {
                     showSavedPatternStatus(data.error || 'Unable to load saved patterns.', true);
                     savedPatterns = [];
@@ -3813,8 +3820,11 @@
                     windowParam = (isFinite(parsed) && parsed > 0) ? String(parsed) : '1';
                 }
 
-                const resp = await fetch(`/api/provider-ranking?window=${encodeURIComponent(String(windowParam))}&ts=${Date.now()}`, { cache: 'no-store' });
-                const data = await resp.json();
+                const data = await fetchJsonWithTimeout(
+                    `/api/provider-ranking?window=${encodeURIComponent(String(windowParam))}&ts=${Date.now()}`,
+                    { cache: 'no-store' },
+                    15000
+                );
 
                 if (!data || !data.success) {
                     if (loading) loading.classList.add('hidden');
