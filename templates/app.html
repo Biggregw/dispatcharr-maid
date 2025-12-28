@@ -958,6 +958,13 @@
             color: #111827;
         }
 
+        .preview-provider {
+            font-weight: 600;
+            color: #4b5563;
+            margin-left: 8px;
+            white-space: nowrap;
+        }
+
         .preview-meta {
             color: #6b7280;
             font-size: 0.9em;
@@ -2526,7 +2533,7 @@
                 <label class="preview-item">
                     <input type="checkbox" class="refresh-stream-checkbox" value="${stream.id}" checked>
                     <div>
-                        <div class="preview-name">${stream.name}</div>
+                        <div class="preview-name">${escapeHtml(String(stream.name ?? ''))}${(stream.provider_name || stream.m3u_account) ? ` <span class="preview-provider">(${escapeHtml(String(stream.provider_name || stream.m3u_account))})</span>` : ''}</div>
                         <div class="preview-meta">ID: ${stream.id}${stream.resolution ? ` • ${stream.resolution}` : ''}</div>
                     </div>
                 </label>
