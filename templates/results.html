@@ -262,7 +262,7 @@
         let providerMetadata = {};
 
         function escapeHtml(str) {
-            const s = String(str ?? '');
+            const s = String((str === null || str === undefined) ? '' : str);
             return s.replace(/[&<>"']/g, (c) => ({
                 '&': '&amp;',
                 '<': '&lt;',
@@ -283,7 +283,7 @@
         }
 
         function providerLabelHtml(providerId) {
-            if ((providerId ?? '') === '') return '';
+            if (providerId === null || providerId === undefined || providerId === '') return '';
             const pid = String(providerId);
             const label = Object.prototype.hasOwnProperty.call(providerNames, pid)
                 ? providerNames[pid]
@@ -520,11 +520,13 @@
 
                     // Sort: providers with data first, then by success rate (ascending like before), then by name.
                     rows.sort((a, b) => {
-                        const aHasData = (a[1]?.total || 0) > 0;
-                        const bHasData = (b[1]?.total || 0) > 0;
+                        const aStats = a[1];
+                        const bStats = b[1];
+                        const aHasData = (((aStats && aStats.total) || 0) > 0);
+                        const bHasData = (((bStats && bStats.total) || 0) > 0);
                         if (aHasData !== bHasData) return aHasData ? -1 : 1;
-                        const aRate = typeof a[1]?.success_rate === 'number' ? a[1].success_rate : 0;
-                        const bRate = typeof b[1]?.success_rate === 'number' ? b[1].success_rate : 0;
+                        const aRate = (aStats && typeof aStats.success_rate === 'number') ? aStats.success_rate : 0;
+                        const bRate = (bStats && typeof bStats.success_rate === 'number') ? bStats.success_rate : 0;
                         if (aRate !== bRate) return aRate - bRate;
                         const aName = Object.prototype.hasOwnProperty.call(providerNames, a[0]) ? providerNames[a[0]] : `${a[0]}`;
                         const bName = Object.prototype.hasOwnProperty.call(providerNames, b[0]) ? providerNames[b[0]] : `${b[0]}`;
@@ -599,7 +601,8 @@
                 }
 
                 // If Streams is the default active tab, load it immediately.
-                if (document.getElementById('streams-tab')?.classList.contains('active') && !streamsLoaded) {
+                const streamsTabEl = document.getElementById('streams-tab');
+                if (streamsTabEl && streamsTabEl.classList.contains('active') && !streamsLoaded) {
                     loadStreams();
                 }
             });
@@ -653,12 +656,14 @@
                 tbody.innerHTML = rows.map((s) => {
                     const name = escapeHtml(s.stream_name || '(unnamed)');
                     const status = escapeHtml(s.status || '');
-                    const quality = (typeof s.quality_score === 'number') ? s.quality_score.toFixed(1) : (s.quality_score ?? '');
+                    const quality = (typeof s.quality_score === 'number')
+                        ? s.quality_score.toFixed(1)
+                        : ((s.quality_score === null || s.quality_score === undefined) ? '' : s.quality_score);
                     const resolution = escapeHtml(s.resolution || '');
                     const provider = providerLabelHtml(s.provider_id);
-                    const checkboxId = `use-stream-${escapeHtml(String(s.stream_id ?? Math.random()))}`;
+                    const checkboxId = `use-stream-${escapeHtml(String((s.stream_id === null || s.stream_id === undefined) ? Math.random() : s.stream_id))}`;
                     return `
-                        <tr class="stream-row" data-stream-name="${escapeHtml(String(s.stream_name || '')).toLowerCase()}" data-provider-id="${escapeHtml(String(s.provider_id ?? ''))}">
+                        <tr class="stream-row" data-stream-name="${escapeHtml(String(s.stream_name || '')).toLowerCase()}" data-provider-id="${escapeHtml(String((s.provider_id === null || s.provider_id === undefined) ? '' : s.provider_id))}">
                             <td><input type="checkbox" id="${checkboxId}" class="stream-use-cb" checked onchange="updateStreamsCount()" /></td>
                             <td><label for="${checkboxId}" style="cursor:pointer;"><strong>${name}</strong></label></td>
                             <td>${status}</td>
@@ -794,11 +799,15 @@
         }
 
         function getVisiblePlanRows() {
-            const q = (document.getElementById('plan-search')?.value || '').trim().toLowerCase();
+            const planSearchEl = document.getElementById('plan-search');
+            const q = String((planSearchEl && planSearchEl.value) || '').trim().toLowerCase();
             const rows = Array.isArray(planRows) ? planRows : [];
             return rows.filter((r) => {
                 if (!r || typeof r !== 'object') return false;
-                const label = `${r.channel_number ?? ''} ${r.channel_name ?? ''} ${r.channel_id ?? ''}`.toLowerCase();
+                const cn = (r.channel_number === null || r.channel_number === undefined) ? '' : r.channel_number;
+                const nm = (r.channel_name === null || r.channel_name === undefined) ? '' : r.channel_name;
+                const cid = (r.channel_id === null || r.channel_id === undefined) ? '' : r.channel_id;
+                const label = `${cn} ${nm} ${cid}`.toLowerCase();
                 return !q || label.includes(q);
             });
         }
@@ -867,7 +876,8 @@
                 const addedPreview = Array.isArray(r.added_streams_preview) ? r.added_streams_preview : [];
                 const removedPreview = Array.isArray(r.removed_streams_preview) ? r.removed_streams_preview : [];
                 const beforePreview = Array.isArray(r.before_streams_preview) ? r.before_streams_preview : [];
-                const limit = r.stream_preview_limit || (document.getElementById('plan-preview-limit')?.value || '60');
+                const planLimitEl = document.getElementById('plan-preview-limit');
+                const limit = r.stream_preview_limit || String((planLimitEl && planLimitEl.value) || '60');
 
                 return `
                     <div class="plan-card" style="margin-bottom: 12px;">
@@ -920,7 +930,7 @@
 
                         <div class="plan-actions">
                             <button class="btn btn-sm" type="button" onclick="copyAfterIds('${escapeHtml(String(channelId))}')">Copy after_stream_ids</button>
-                            <span class="muted small mono">Apply order: channel #${escapeHtml(String(r.channel_number ?? ''))}, streams in listed order</span>
+                            <span class="muted small mono">Apply order: channel #${escapeHtml(String((r.channel_number === null || r.channel_number === undefined) ? '' : r.channel_number))}, streams in listed order</span>
                         </div>
                     </div>
                 `;
@@ -1059,7 +1069,8 @@
         }
 
         function filterStreamRows() {
-            const q = (document.getElementById('stream-search')?.value || '').trim().toLowerCase();
+            const streamSearchEl = document.getElementById('stream-search');
+            const q = String((streamSearchEl && streamSearchEl.value) || '').trim().toLowerCase();
             document.querySelectorAll('.stream-row').forEach((row) => {
                 const name = row.getAttribute('data-stream-name') || '';
                 row.style.display = (!q || name.includes(q)) ? '' : 'none';
@@ -1081,8 +1092,10 @@
             const include = [];
             const exclude = [];
             document.querySelectorAll('.stream-row').forEach((row) => {
-                const name = row.querySelector('td:nth-child(2)')?.innerText?.trim() || '';
-                const checked = row.querySelector('input[type="checkbox"]')?.checked;
+                const nameEl = row.querySelector('td:nth-child(2)');
+                const name = nameEl && nameEl.innerText ? String(nameEl.innerText).trim() : '';
+                const cb = row.querySelector('input[type="checkbox"]');
+                const checked = cb ? cb.checked : false;
                 if (!name) return;
                 if (checked) include.push(name);
                 else exclude.push(name);
@@ -1130,7 +1143,8 @@
         }
 
         async function copyStreamRegex() {
-            const regexText = document.getElementById('stream-regex-code')?.textContent || '';
+            const codeEl = document.getElementById('stream-regex-code');
+            const regexText = (codeEl && codeEl.textContent) ? codeEl.textContent : '';
             if (!regexText) return;
             try {
                 await navigator.clipboard.writeText(regexText);
