@@ -20,15 +20,20 @@ class DispatcharrAPI:
         self.username = os.getenv('DISPATCHARR_USER')
         self.password = os.getenv('DISPATCHARR_PASS')
         self.token = os.getenv('DISPATCHARR_TOKEN')
-        
-        if not all([self.base_url, self.username, self.password]):
+
+        if not self.base_url:
+            raise ValueError("Missing DISPATCHARR_BASE_URL in environment or .env file.")
+
+        if not self.token and not all([self.username, self.password]):
             raise ValueError(
-                "Missing credentials in .env file. "
-                "Required: DISPATCHARR_BASE_URL, DISPATCHARR_USER, DISPATCHARR_PASS"
+                "Missing credentials. Provide DISPATCHARR_TOKEN or both DISPATCHARR_USER and DISPATCHARR_PASS."
             )
     
     def login(self):
         """Authenticate with Dispatcharr and save token"""
+        if not all([self.username, self.password]):
+            raise ValueError("Username and password are required to obtain a token.")
+
         url = f"{self.base_url}/api/accounts/token/"
         
         try:
