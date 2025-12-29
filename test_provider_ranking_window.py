@@ -1,4 +1,4 @@
-from dispatcharr_web_app import _aggregate_provider_stats
+from dispatcharr_web_app import _aggregate_provider_stats, _build_provider_ranking
 
 
 def test_aggregate_provider_stats_recomputes_score_from_totals():
@@ -25,4 +25,24 @@ def test_aggregate_provider_stats_recomputes_score_from_totals():
     assert agg["1"]["success_rate"] == 60.0
     assert agg["1"]["avg_quality"] == 68.9
     assert agg["1"]["weighted_score"] == 24.8
+
+
+def test_provider_ranking_ignores_providers_without_stats():
+    provider_stats = {
+        "2": {
+            "total": 10,
+            "successful": 9,
+            "failed": 1,
+            "avg_quality": 80.0,
+            "success_rate": 90.0,
+            "weighted_score": 64.8,
+        }
+    }
+    provider_names = {"2": "Real", "999": "Phantom"}
+
+    ranking = _build_provider_ranking(provider_stats, provider_names, provider_metadata={})
+
+    assert len(ranking) == 1
+    assert ranking[0]["provider_id"] == "2"
+    assert ranking[0]["name"] == "Real"
 

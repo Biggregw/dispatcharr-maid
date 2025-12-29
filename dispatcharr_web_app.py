@@ -2643,10 +2643,10 @@ def _build_provider_ranking(provider_stats, provider_names, provider_metadata, w
     provider_names = provider_names if isinstance(provider_names, dict) else {}
     provider_metadata = provider_metadata if isinstance(provider_metadata, dict) else {}
 
-    all_ids = set()
-    all_ids.update(str(k) for k in provider_names.keys())
-    all_ids.update(str(k) for k in provider_stats.keys())
-    all_ids.update(str(k) for k in provider_metadata.keys())
+    # Only rank providers that actually have stats. Provider name/metadata files can
+    # contain stale entries (e.g., removed accounts), which would otherwise create
+    # phantom rows in the ranking table.
+    all_ids = set(str(k) for k in provider_stats.keys())
 
     rows = []
     for provider_id in sorted(all_ids, key=lambda s: (s.casefold(), s)):
