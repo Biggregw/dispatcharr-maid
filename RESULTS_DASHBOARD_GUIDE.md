@@ -24,6 +24,11 @@ Shows totals for the selected run:
 
 At the top-right of the results page there’s a **Run** dropdown. It lists completed jobs from `logs/job_history.json` and lets you switch between runs.
 
+Notes about how history is stored/pruned so it matches the UI behavior:
+
+- The app keeps the **50 most recent jobs** in history.
+- If you enable the optional retention policy (see below), jobs older than the retention window are removed from history **and** their workspaces are deleted from disk.
+
 ### Export CSV
 
 The **📥 Export CSV** button downloads results for the currently selected run:
