@@ -3204,6 +3204,7 @@ def api_refresh_preview():
         api = DispatcharrAPI()
         api.login()
         config = Config('config.yaml')
+        provider_names = _load_provider_names(config)
 
         if stream_name_regex is None:
             filters = config.get('filters') or {}
@@ -3221,7 +3222,8 @@ def api_refresh_preview():
             exclude_4k,
             preview=True,
             stream_name_regex=stream_name_regex,
-            stream_name_regex_override=stream_name_regex_override
+            stream_name_regex_override=stream_name_regex_override,
+            provider_names=provider_names
         )
 
         if 'error' in preview:

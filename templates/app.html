@@ -2309,7 +2309,22 @@
                     <input type="checkbox" class="refresh-stream-checkbox" value="${stream.id}" checked>
                     <div>
                         <div class="preview-name">${stream.name}</div>
-                        <div class="preview-meta">ID: ${stream.id}${stream.resolution ? ` • ${stream.resolution}` : ''}</div>
+                        <div class="preview-meta">
+                            ${(() => {
+                                const metaParts = [];
+                                const hasProviderId = stream.provider_id !== undefined && stream.provider_id !== null && stream.provider_id !== '';
+                                if (stream.provider_name) {
+                                    metaParts.push(`Provider: ${stream.provider_name}`);
+                                } else if (hasProviderId) {
+                                    metaParts.push(`Provider ID: ${stream.provider_id}`);
+                                }
+                                metaParts.push(`ID: ${stream.id}`);
+                                if (stream.resolution) {
+                                    metaParts.push(stream.resolution);
+                                }
+                                return metaParts.join(' • ');
+                            })()}
+                        </div>
                     </div>
                 </label>
             `).join('');
