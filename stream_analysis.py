@@ -1249,7 +1249,7 @@ def reorder_streams(api, config, input_csv=None):
     
     logging.info("Reordering complete!")
 
-def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None):
+def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None):
     """
     Find and add all matching streams from all providers for a specific channel
     
@@ -1467,12 +1467,19 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     preview_streams = []    # capped list returned to UI when preview=True
     filtered_count = 0      # accurate count after all filtering (and allowed_set)
 
+    provider_lookup = provider_names if isinstance(provider_names, dict) else None
+
     if exclude_4k:
         logging.info("Checking stream resolutions to exclude 4K/UHD...")
         excluded_4k = 0
         for stream in all_streams:
             stream_name = stream.get('name', '')
             stream_id = stream.get('id')
+            provider_id = stream.get('m3u_account')
+            provider_name = stream.get('m3u_account_name')
+
+            if provider_name is None and provider_lookup and provider_id is not None:
+                provider_name = provider_lookup.get(str(provider_id))
             stream_url = stream.get('url', '')
 
             if not matches_stream(stream_name):
@@ -1493,6 +1500,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             detailed_stream = {
                 'id': stream_id,
                 'name': stream_name,
+                'provider_id': provider_id,
+                'provider_name': provider_name,
                 # URL is not used by the UI and can be large/sensitive; omit.
                 'resolution': resolution
             }
@@ -1512,6 +1521,11 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         for stream in all_streams:
             stream_name = stream.get('name', '')
             stream_id = stream.get('id')
+            provider_id = stream.get('m3u_account')
+            provider_name = stream.get('m3u_account_name')
+
+            if provider_name is None and provider_lookup and provider_id is not None:
+                provider_name = provider_lookup.get(str(provider_id))
 
             if not matches_stream(stream_name):
                 continue
@@ -1526,6 +1540,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             detailed_stream = {
                 'id': stream_id,
                 'name': stream_name,
+                'provider_id': provider_id,
+                'provider_name': provider_name,
                 # URL is not used by the UI and can be large/sensitive; omit.
                 'resolution': None
             }
