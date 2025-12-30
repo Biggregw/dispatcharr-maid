@@ -156,7 +156,7 @@ If running for a single channel (e.g., "BBC One"), you will see filter options a
 **Filter Options:**
 - **Force Include:** Add strings that must be present (e.g., `york*` to include "BBC One Yorkshire")
 - **Force Exclude:** Add strings to exclude (e.g., `linc*` to exclude "Lincolnshire")
-- **Exclude 4K Streams:** Checkbox to exclude 3840x2160 streams which may struggle on some hardware (enabled by default)
+- **FFmpeg capability test:** Optional checkbox to run a short capability test during analysis; useful for preferring streams your server can actually transcode (including 50 fps sports)
 
 #### 5. Click "Refresh Channel Streams"
 - A box will appear showing matching streams as they're queried

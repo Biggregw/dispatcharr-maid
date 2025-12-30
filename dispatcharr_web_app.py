@@ -1008,7 +1008,7 @@ def _build_job_meta(job_id, job_type, config):
             'include_filter': entry.include_filter,
             'exclude_filter': entry.exclude_filter,
             'exclude_plus_one': entry.exclude_plus_one,
-            'exclude_4k': entry.exclude_4k,
+            'use_capability_test': entry.use_capability_test,
             'streams_per_provider': entry.streams_per_provider,
             'stream_name_regex': entry.stream_name_regex,
             'stream_name_regex_override': entry.stream_name_regex_override,
@@ -1031,7 +1031,7 @@ def _build_job_meta(job_id, job_type, config):
             'include_filter': entry.get('include_filter'),
             'exclude_filter': entry.get('exclude_filter'),
             'exclude_plus_one': entry.get('exclude_plus_one'),
-            'exclude_4k': entry.get('exclude_4k'),
+            'use_capability_test': entry.get('use_capability_test'),
             'streams_per_provider': entry.get('streams_per_provider'),
             'stream_name_regex': entry.get('stream_name_regex'),
             'stream_name_regex_override': entry.get('stream_name_regex_override'),
@@ -1101,7 +1101,7 @@ def _get_job_results(job_id):
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_4k=False, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None):
+    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None, use_capability_test=False):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -1112,8 +1112,8 @@ class Job:
         self.include_filter = include_filter
         self.exclude_filter = exclude_filter
         self.streams_per_provider = streams_per_provider  # Specific channel IDs if selected
-        self.exclude_4k = exclude_4k  # Exclude 4K/UHD streams during refresh
         self.exclude_plus_one = exclude_plus_one
+        self.use_capability_test = use_capability_test
         self.selected_stream_ids = selected_stream_ids
         self.stream_name_regex = stream_name_regex
         self.stream_name_regex_override = stream_name_regex_override
@@ -1160,6 +1160,7 @@ class Job:
             'stream_name_regex_override': self.stream_name_regex_override,
             'selected_stream_ids': self.selected_stream_ids,
             'exclude_plus_one': self.exclude_plus_one,
+            'use_capability_test': self.use_capability_test,
             'status': self.status,
             'progress': self.progress,
             'total': self.total,
@@ -1393,9 +1394,9 @@ def run_job_worker(job, api, config):
         # Update config with selected groups and channels
         config.set('filters', 'channel_group_ids', job.groups)
 
-        # Propagate exclude_4k to the job workspace config so scoring/reorder can honor it.
+        # Propagate capability test preference to the job workspace config so analysis/scoring can honor it.
         # (This is stored per-job workspace and does not affect the base config.yaml.)
-        config.set('filters', 'exclude_4k', bool(getattr(job, 'exclude_4k', False)))
+        config.set('analysis', 'enable_capability_test', bool(getattr(job, 'use_capability_test', False)))
         
         # Add specific channel IDs if selected
         if job.channels:
@@ -1482,7 +1483,6 @@ def run_job_worker(job, api, config):
                         base_search_text=base_search_text,
                         include_filter=include_filter,
                         exclude_filter=exclude_filter,
-                        exclude_4k=bool(job.exclude_4k),
                         allowed_stream_ids=None,
                         preview=False,
                         stream_name_regex=stream_name_regex,
@@ -1926,7 +1926,6 @@ def run_job_worker(job, api, config):
                 job.base_search_text,
                 job.include_filter,
                 effective_exclude_filter,
-                job.exclude_4k,
                 job.selected_stream_ids,
                 stream_name_regex=stream_name_regex,
                 stream_name_regex_override=job.stream_name_regex_override
@@ -3194,7 +3193,6 @@ def api_refresh_preview():
         include_filter = data.get('include_filter')
         exclude_filter = data.get('exclude_filter')
         exclude_plus_one = data.get('exclude_plus_one', False)
-        exclude_4k = data.get('exclude_4k', False)
         stream_name_regex = data.get('stream_name_regex')
         stream_name_regex_override = data.get('stream_name_regex_override')
 
@@ -3219,7 +3217,6 @@ def api_refresh_preview():
             base_search_text,
             include_filter,
             effective_exclude_filter,
-            exclude_4k,
             preview=True,
             stream_name_regex=stream_name_regex,
             stream_name_regex_override=stream_name_regex_override,
@@ -3254,11 +3251,11 @@ def api_start_job():
         include_filter = data.get('include_filter')
         exclude_filter = data.get('exclude_filter')
         streams_per_provider = data.get('streams_per_provider', 1)
-        exclude_4k = data.get('exclude_4k', False)
         exclude_plus_one = data.get('exclude_plus_one', False)
         selected_stream_ids = data.get('selected_stream_ids')
         stream_name_regex = data.get('stream_name_regex')
         stream_name_regex_override = data.get('stream_name_regex_override')
+        use_capability_test = data.get('use_capability_test', False)
         
         if not job_type:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
@@ -3296,8 +3293,6 @@ def api_start_job():
                     exclude_filter = preset.get('exclude_filter')
                 if exclude_plus_one is False and preset.get('exclude_plus_one') is True:
                     exclude_plus_one = True
-                if exclude_4k is False and preset.get('exclude_4k') is True:
-                    exclude_4k = True
 
                 api = DispatcharrAPI()
                 api.login()
@@ -3342,7 +3337,6 @@ def api_start_job():
             include_filter,
             exclude_filter,
             streams_per_provider,
-            exclude_4k,
             exclude_plus_one,
             group_names,
             channel_names,
@@ -3353,7 +3347,8 @@ def api_start_job():
             selection_pattern_id=selection_pattern_id,
             selection_pattern_name=selection_pattern_name,
             regex_preset_id=regex_preset_id,
-            regex_preset_name=regex_preset_name
+            regex_preset_name=regex_preset_name,
+            use_capability_test=bool(use_capability_test)
         )
 
         # Initialize API and config
@@ -4646,7 +4641,6 @@ def api_save_regex():
         "groups": [1,2],            # optional; when provided, becomes a pipeline preset
         "channels": [123,456]|null, # optional; null means all channels in groups
         "streams_per_provider": 2,  # optional
-        "exclude_4k": true          # optional
       }
     """
     try:
@@ -4694,9 +4688,6 @@ def api_save_regex():
         except Exception:
             return jsonify({'success': False, 'error': '"streams_per_provider" must be an integer'}), 400
 
-        exclude_4k = data.get('exclude_4k')
-        exclude_4k_b = bool(exclude_4k) if exclude_4k is not None else None
-
         # Optional: store refresh filter settings alongside the regex.
         base_search_text = data.get('base_search_text')
         include_filter = data.get('include_filter')
@@ -4733,8 +4724,6 @@ def api_save_regex():
             preset['channels'] = channel_ids
         if streams_per_provider_i is not None:
             preset['streams_per_provider'] = streams_per_provider_i
-        if exclude_4k_b is not None:
-            preset['exclude_4k'] = exclude_4k_b
         if base_search_text is not None:
             preset['base_search_text'] = base_search_text
         if include_filter is not None:

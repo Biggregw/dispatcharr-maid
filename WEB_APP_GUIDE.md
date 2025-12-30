@@ -53,7 +53,7 @@ This is intended for **one channel at a time** (because it uses a single base se
    - **Base Search Text** (what the app searches for across providers)
    - **Include Filter / Exclude Filter** (supports `*` wildcards, comma-separated)
    - **Exclude +1 channels**
-   - **Exclude 4K/UHD streams** (enabled by default)
+   - **Use FFmpeg capability test during analysis** (opt-in)
 3. The modal shows a **preview list** of matching streams
 4. Untick any streams you do *not* want, then click **Add Selected Streams**
 5. Optional: click **Save Regex** to keep your selection logic for later
