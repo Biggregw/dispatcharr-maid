@@ -351,10 +351,10 @@
             if (meta.include_filter) refreshLines.push(`<div><strong>Include filter</strong>: ${escapeHtml(String(meta.include_filter))}</div>`);
             if (meta.exclude_filter) refreshLines.push(`<div><strong>Exclude filter</strong>: ${escapeHtml(String(meta.exclude_filter))}</div>`);
             if (meta.exclude_plus_one === true) refreshLines.push(`<div><strong>Exclude +1</strong>: true</div>`);
-            if (meta.exclude_4k === true) refreshLines.push(`<div><strong>Exclude 4K</strong>: true</div>`);
             if (typeof meta.streams_per_provider === 'number') refreshLines.push(`<div><strong>Streams per provider</strong>: ${escapeHtml(String(meta.streams_per_provider))}</div>`);
             if (meta.stream_name_regex) refreshLines.push(`<div><strong>Stream regex (filter)</strong>: <code>${escapeHtml(String(meta.stream_name_regex))}</code></div>`);
             if (meta.stream_name_regex_override) refreshLines.push(`<div><strong>Stream regex (override)</strong>: <code>${escapeHtml(String(meta.stream_name_regex_override))}</code></div>`);
+            if (meta.use_capability_test === true) refreshLines.push(`<div><strong>FFmpeg capability test</strong>: enabled</div>`);
 
             const sections = []
                 .concat(chosen.length ? [`<div style="margin-bottom:10px;">${chosen.join('')}</div>`] : [])

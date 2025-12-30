@@ -1191,7 +1191,7 @@
                     <input type="text" id="streamNameRegexOverride" placeholder="e.g., ^BBC One(?!.*4K).*$"
                            style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
                     <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                        If set, this regex becomes the ONLY match rule (Base Search Text / Include / Exclude / +1 are ignored). The 4K/UHD tick box still applies.
+                        If set, this regex becomes the ONLY match rule (Base Search Text / Include / Exclude / +1 are ignored).
                     </span>
                 </div>
 
@@ -1268,19 +1268,6 @@
                     </span>
                 </div>
                 
-                <div style="margin-top: 15px;">
-                    <label style="display: flex; align-items: center; cursor: pointer;">
-                        <input type="checkbox" id="exclude4K" checked
-                               style="width: 18px; height: 18px; margin-right: 10px; cursor: pointer;">
-                        <span style="color: #4b5563; font-weight: 500;">
-                            Exclude 4K/UHD streams (recommended for FireStick 4K)
-                        </span>
-                    </label>
-                    <span style="display: block; margin-top: 5px; margin-left: 28px; color: #718096; font-size: 0.85em;">
-                        Checks resolution before adding. Excludes 3840x2160 streams that may struggle on FireStick.
-                    </span>
-                </div>
-                
                 <div style="margin-top: 10px; padding: 12px; background: #fef2f2; border-left: 3px solid #ef4444; border-radius: 4px; font-size: 0.9em; color: #991b1b;">
                     <strong>⚠️ Note:</strong> These filters only apply when clicking "Refresh Channel Streams"
                 </div>
@@ -1296,7 +1283,7 @@
                         <span>Refresh Channel Streams</span>
                     </button>
                     <div class="action-help action-help--orange">
-                        Adds matching streams to the selected channels using the filters above (include/exclude, regex, +1 and 4K/UHD options).
+                        Adds matching streams to the selected channels using the filters above (include/exclude, regex, +1 options).
                     </div>
                 </div>
 
@@ -1319,6 +1306,17 @@
                         <div style="margin-top: 6px;"><strong>Preview Plan</strong> makes <strong>no changes</strong>. It generates a reviewable plan in Results, where you can commit it later.</div>
                     </div>
                 </div>
+            </div>
+
+            <div style="margin: 20px 0; padding: 16px; background: #f8fafc; border-radius: 8px; border-left: 4px solid #2563eb;">
+                <label style="display: flex; align-items: center; cursor: pointer; gap: 10px; color: #1f2937; font-weight: 600;">
+                    <input type="checkbox" id="useCapabilityTest"
+                           style="width: 18px; height: 18px; cursor: pointer;">
+                    <span>Use FFmpeg capability test during stream analysis</span>
+                </label>
+                <span style="display: block; margin-top: 6px; margin-left: 28px; color: #4b5563; font-size: 0.9em;">
+                    Uses a short FFmpeg test to score streams based on what this server can actually handle, including 50 fps streams.
+                </span>
             </div>
 
             <div style="margin: 20px 0; padding: 20px; background: #f7fafc; border-radius: 8px; border-left: 4px solid #667eea;">
@@ -1764,12 +1762,10 @@
             const inc = document.getElementById('includeFilter');
             const exc = document.getElementById('excludeFilter');
             const exPlusOne = document.getElementById('excludePlusOne');
-            const ex4k = document.getElementById('exclude4K');
             if (base && typeof preset.base_search_text === 'string') base.value = preset.base_search_text;
             if (inc && typeof preset.include_filter === 'string') inc.value = preset.include_filter;
             if (exc && typeof preset.exclude_filter === 'string') exc.value = preset.exclude_filter;
             if (exPlusOne && typeof preset.exclude_plus_one === 'boolean') exPlusOne.checked = preset.exclude_plus_one;
-            if (ex4k && typeof preset.exclude_4k === 'boolean') ex4k.checked = preset.exclude_4k;
 
             // Backwards compatible: presets without regex_mode behave like an override.
             if (mode === 'filter') {
@@ -1911,11 +1907,8 @@
                     // If preset stored suggested settings, apply them.
                     const preset = data.preset;
                     const spp = preset?.streams_per_provider;
-                    const ex4k = preset?.exclude_4k;
                     const sppInput = document.getElementById('streamsPerProvider');
-                    const ex4kCb = document.getElementById('exclude4K');
                     if (sppInput && typeof spp === 'number' && spp >= 1) sppInput.value = String(spp);
-                    if (ex4kCb && typeof ex4k === 'boolean') ex4kCb.checked = ex4k;
                 } else {
                     if (countEl) countEl.textContent = data.error || 'Unable to resolve';
                 }
@@ -1945,7 +1938,7 @@
                 job_type: 'pattern_refresh_full_cleanup',
                 regex_preset_id: patternId,
                 streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
-                exclude_4k: document.getElementById('exclude4K')?.checked || false
+                use_capability_test: document.getElementById('useCapabilityTest')?.checked || false
             };
 
             try {
@@ -2437,7 +2430,6 @@
                         groups: (Array.isArray(selectedGroups) && selectedGroups.length > 0) ? selectedGroups : undefined,
                         channels: Array.isArray(selectedChannels) ? selectedChannels : null,
                         streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
-                        exclude_4k: document.getElementById('exclude4K')?.checked || false,
                         exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
                         base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                         include_filter: document.getElementById('includeFilter')?.value || null,
@@ -2501,7 +2493,6 @@
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
                     exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
-                    exclude_4k: document.getElementById('exclude4K')?.checked || false,
                     stream_name_regex: regexFilterValue ? regexFilterValue : null,
                     stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
                 };
@@ -2704,7 +2695,7 @@
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
                     exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
-                    exclude_4k: document.getElementById('exclude4K')?.checked || false,
+                    use_capability_test: document.getElementById('useCapabilityTest')?.checked || false,
                     selected_stream_ids: selectedStreamIds,
                     stream_name_regex: regexFilterValue ? regexFilterValue : null,
                     stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null

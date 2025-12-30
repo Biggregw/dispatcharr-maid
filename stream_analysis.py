@@ -148,7 +148,13 @@ class Config:
                 'timeout': 30,
                 'workers': 8,
                 'retries': 1,
-                'retry_delay': 10
+                'retry_delay': 10,
+                'enable_capability_test': False,
+                'capability_test_duration': 5,
+                'capability_test_timeout': 12,
+                'capability_max_width': 1920,
+                'capability_max_height': 1080,
+                'capability_startup_grace': 1.5,
             },
             'scoring': {
                 'fps_bonus_points': 100,
@@ -158,7 +164,13 @@ class Config:
                     '1920x1080': 80,
                     '1280x720': 50,
                     '960x540': 20
-                }
+                },
+                'capability_pass_points': 180,
+                'capability_timeout_penalty': 350,
+                'capability_failure_penalty': 450,
+                'capability_50fps_bonus': 60,
+                'capability_full_run_bonus': 30,
+                'capability_throughput_weight': 0.5,
             },
             'filters': {
                 'channel_group_ids': [],
@@ -387,6 +399,129 @@ def _check_stream_for_critical_errors(url, timeout):
     return errors
 
 
+def _run_capability_test(url, analysis_cfg):
+    """Run a short ffmpeg encode test to gauge server capability."""
+
+    duration = float(analysis_cfg.get('capability_test_duration', 5) or 5)
+    timeout = float(analysis_cfg.get('capability_test_timeout', max(8, duration + 5)))
+    max_width = int(analysis_cfg.get('capability_max_width', 1920) or 1920)
+    max_height = int(analysis_cfg.get('capability_max_height', 1080) or 1080)
+    startup_grace = float(analysis_cfg.get('capability_startup_grace', 1.5) or 1.5)
+    user_agent = analysis_cfg.get('user_agent', 'VLC/3.0.14')
+
+    scale_filter = f"scale='if(gt(iw,{max_width}),{max_width},iw)':'if(gt(ih,{max_height}),{max_height},ih)'"
+
+    command = [
+        'ffmpeg',
+        '-user_agent', user_agent,
+        '-analyzeduration', '1000000',
+        '-probesize', '1000000',
+        '-loglevel', 'error',
+        '-i', url,
+        '-map', '0:v:0',
+        '-map', '0:a?',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-tune', 'zerolatency',
+        '-profile:v', 'high',
+        '-level', '4.1',
+        '-vf', scale_filter,
+        '-crf', '23',
+        '-c:a', 'aac',
+        '-ac', '2',
+        '-b:a', '128k',
+        '-t', str(duration),
+        '-progress', 'pipe:1',
+        '-f', 'mpegts',
+        '-y', '/dev/null'
+    ]
+
+    metrics = {
+        'status': 'not_run',
+        'frames': 0,
+        'fps': 0.0,
+        'elapsed': 0.0,
+        'reason': None,
+        'score': 0.0,
+    }
+
+    start = time.time()
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout
+        )
+        metrics['elapsed'] = time.time() - start
+
+        # Parse ffmpeg -progress key/value lines from stdout
+        progress = {}
+        for line in result.stdout.splitlines():
+            if '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            progress[key.strip()] = value.strip()
+
+        try:
+            metrics['frames'] = int(progress.get('frame') or 0)
+        except ValueError:
+            metrics['frames'] = 0
+        try:
+            metrics['fps'] = float(progress.get('fps') or 0)
+        except ValueError:
+            metrics['fps'] = 0.0
+
+        if result.returncode != 0:
+            metrics['status'] = 'error'
+            metrics['reason'] = result.stderr.strip()[:200] or 'ffmpeg exited non-zero'
+        elif metrics['frames'] <= 0 and metrics['elapsed'] >= startup_grace:
+            metrics['status'] = 'no_frames'
+            metrics['reason'] = 'No frames produced during capability test'
+        else:
+            metrics['status'] = 'ok'
+
+    except subprocess.TimeoutExpired:
+        metrics['elapsed'] = timeout
+        metrics['status'] = 'timeout'
+        metrics['reason'] = f'Capability test exceeded {timeout}s'
+    except Exception as exc:
+        metrics['elapsed'] = time.time() - start
+        metrics['status'] = 'error'
+        metrics['reason'] = f'Capability test failed: {exc}'
+
+    scoring_cfg = analysis_cfg.get('scoring') or {}
+    pass_points = scoring_cfg.get('capability_pass_points', 180)
+    timeout_penalty = scoring_cfg.get('capability_timeout_penalty', 350)
+    failure_penalty = scoring_cfg.get('capability_failure_penalty', 450)
+    fps_bonus = scoring_cfg.get('capability_50fps_bonus', 60)
+    full_run_bonus = scoring_cfg.get('capability_full_run_bonus', 30)
+    throughput_weight = scoring_cfg.get('capability_throughput_weight', 0.5)
+
+    if metrics['status'] == 'ok':
+        metrics['score'] = pass_points
+        if metrics['fps'] >= 50:
+            metrics['score'] += fps_bonus
+        elif metrics['fps'] >= 45:
+            metrics['score'] += fps_bonus / 2
+
+        # Reward making it through the planned window (avoid rewards on early aborts)
+        if metrics['elapsed'] >= duration * 0.9:
+            metrics['score'] += full_run_bonus
+
+        # Throughput bonus based on frames processed per second
+        if metrics['elapsed'] > 0 and metrics['frames'] > 0:
+            throughput = metrics['frames'] / metrics['elapsed']
+            metrics['score'] += min(pass_points * throughput_weight, throughput)
+    elif metrics['status'] == 'timeout':
+        metrics['score'] = -abs(timeout_penalty)
+    else:
+        metrics['score'] = -abs(failure_penalty)
+
+    return metrics
+
+
 def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis=False):
     """Analyze a single stream"""
     url = row.get('stream_url')
@@ -407,6 +542,8 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
     timeout = analysis_cfg.get('timeout', 30)
     retries = analysis_cfg.get('retries', 1)
     retry_delay = analysis_cfg.get('retry_delay', 10)
+    capability_enabled = bool(analysis_cfg.get('enable_capability_test', False))
+    capability_scoring = config.get('scoring') or {}
     
     provider = _get_provider_from_url(url)
     provider_semaphore = _get_provider_semaphore(provider)
@@ -455,7 +592,7 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
             # 3. Check interlacing if stream is OK
             if status == "OK":
                 row['interlaced_status'] = _check_interlaced_status(url, stream_name, idet_frames, timeout)
-            
+
             # 4. Check for critical errors
             critical_errors = _check_stream_for_critical_errors(url, timeout)
             row.update(critical_errors)
@@ -476,7 +613,30 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
         # Respect ffmpeg duration to avoid hammering provider
         if isinstance(elapsed, (int, float)) and elapsed < duration:
             time.sleep(duration - elapsed)
-    
+
+    # Capability test (optional, opt-in)
+    if capability_enabled:
+        capability_metrics = _run_capability_test(
+            url,
+            {**analysis_cfg, 'scoring': capability_scoring}
+        )
+    else:
+        capability_metrics = {
+            'status': 'not_run',
+            'frames': 0,
+            'fps': 0.0,
+            'elapsed': 0.0,
+            'reason': 'Capability test disabled',
+            'score': 0.0,
+        }
+
+    row['capability_status'] = capability_metrics.get('status')
+    row['capability_reason'] = capability_metrics.get('reason')
+    row['capability_frames'] = capability_metrics.get('frames')
+    row['capability_fps'] = capability_metrics.get('fps')
+    row['capability_elapsed'] = capability_metrics.get('elapsed')
+    row['capability_score'] = capability_metrics.get('score')
+
     return row
 
 
@@ -867,7 +1027,9 @@ def analyze_streams(config, input_csv=None,
     final_columns += [
         'timestamp', 'video_codec', 'audio_codec', 'interlaced_status', 'status',
         'bitrate_kbps', 'fps', 'resolution', 'frames_decoded', 'frames_dropped',
-        'err_decode', 'err_discontinuity', 'err_timeout'
+        'err_decode', 'err_discontinuity', 'err_timeout',
+        'capability_status', 'capability_reason', 'capability_frames',
+        'capability_fps', 'capability_elapsed', 'capability_score'
     ]
     
     output_exists = os.path.exists(output_csv)
@@ -1012,8 +1174,6 @@ def score_streams(api, config, input_csv=None,
     
     filters = config.get('filters') or {}
     scoring_cfg = config.get('scoring') or {}
-    exclude_4k = filters.get('exclude_4k', False)
-    
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])
     specific_channel_ids = filters.get('specific_channel_ids')
@@ -1042,12 +1202,17 @@ def score_streams(api, config, input_csv=None,
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
     df['frames_decoded'] = pd.to_numeric(df['frames_decoded'], errors='coerce')
     df['frames_dropped'] = pd.to_numeric(df['frames_dropped'], errors='coerce')
+    if 'capability_score' in df.columns:
+        df['capability_score'] = pd.to_numeric(df['capability_score'], errors='coerce').fillna(0)
+    else:
+        df['capability_score'] = 0
     
     # Group by stream and calculate averages
     summary = df.groupby('stream_id').agg(
         avg_bitrate_kbps=('bitrate_kbps', 'mean'),
         avg_frames_decoded=('frames_decoded', 'mean'),
-        avg_frames_dropped=('frames_dropped', 'mean')
+        avg_frames_dropped=('frames_dropped', 'mean'),
+        capability_score=('capability_score', 'mean')
     ).reset_index()
     
     # Merge with latest metadata
@@ -1058,15 +1223,6 @@ def score_streams(api, config, input_csv=None,
         on='stream_id'
     )
 
-    if exclude_4k:
-        summary['resolution'] = summary['resolution'].astype(str).str.strip()
-        excluded_resolutions = {'3840x2160', '4096x2160'}
-        before_count = len(summary)
-        summary = summary[~summary['resolution'].isin(excluded_resolutions)]
-        excluded_count = before_count - len(summary)
-        if excluded_count:
-            logging.info(f"Excluded {excluded_count} 4K/UHD streams from scoring")
-    
     # Calculate dropped frame percentage
     summary['dropped_frame_percentage'] = (
         summary['avg_frames_dropped'] / summary['avg_frames_decoded'] * 100
@@ -1103,12 +1259,22 @@ def score_streams(api, config, input_csv=None,
     for col in error_columns:
         summary[col] = pd.to_numeric(summary[col], errors='coerce').fillna(0)
     summary['error_penalty'] = summary[error_columns].sum(axis=1) * 25
+
+    if 'capability_status' not in summary.columns:
+        summary['capability_status'] = 'not_run'
+    else:
+        summary['capability_status'] = summary['capability_status'].fillna('not_run')
+    if 'capability_score' not in summary.columns:
+        summary['capability_score'] = 0
+
+    summary['capability_score'] = pd.to_numeric(summary['capability_score'], errors='coerce').fillna(0)
     
     # Calculate final score
     summary['score'] = (
         summary['bitrate_score'] +
         summary['resolution_score'] +
-        summary['fps_bonus'] -
+        summary['fps_bonus'] +
+        summary['capability_score'] -
         summary['dropped_frames_penalty'] -
         summary['error_penalty']
     )
@@ -1128,7 +1294,7 @@ def score_streams(api, config, input_csv=None,
         'avg_bitrate_kbps', 'avg_frames_decoded',
         'avg_frames_dropped', 'dropped_frame_percentage', 'fps', 'resolution',
         'video_codec', 'audio_codec', 'interlaced_status', 'status', 'score',
-        'error_penalty'
+        'error_penalty', 'capability_status', 'capability_score', 'capability_reason'
     ]
     for col in final_columns:
         if col not in df_sorted.columns:
@@ -1198,16 +1364,6 @@ def reorder_streams(api, config, input_csv=None):
     df['channel_number'] = pd.to_numeric(df['channel_number'], errors='coerce')
     df = df[df['channel_number'].between(start_range, end_range)]
 
-    exclude_4k = filters.get('exclude_4k', False)
-    if exclude_4k and 'resolution' in df.columns:
-        df['resolution'] = df['resolution'].astype(str).str.strip()
-        excluded_resolutions = {'3840x2160', '4096x2160'}
-        before_count = len(df)
-        df = df[~df['resolution'].isin(excluded_resolutions)]
-        excluded_count = before_count - len(df)
-        if excluded_count:
-            logging.info(f"Excluded {excluded_count} 4K/UHD streams from reordering")
-    
     if df.empty:
         logging.warning("No streams to reorder")
         return
@@ -1249,7 +1405,7 @@ def reorder_streams(api, config, input_csv=None):
     
     logging.info("Reordering complete!")
 
-def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_4k=False, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None):
+def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None):
     """
     Find and add all matching streams from all providers for a specific channel
     
@@ -1260,43 +1416,14 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         base_search_text: Optional override for the channel name used when matching streams
         include_filter: Optional comma-separated wildcards (e.g., "york*,lond*")
         exclude_filter: Optional comma-separated exclusions (e.g., "lincoln*")
-        exclude_4k: If True, check resolution and exclude 4K/UHD (3840x2160) streams
-    
     Returns:
         dict with stats about streams found/added
     """
     import re
-    import subprocess
-    import json
 
     # Performance: precompile regexes used in matching loops
     _QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
     _TIMESHIFT_RE = re.compile(r'\+\d')
-    
-    def check_stream_resolution(stream_url, timeout=5):
-        """Quick resolution check using ffprobe (1-2 seconds per stream)"""
-        try:
-            cmd = [
-                'ffprobe',
-                '-v', 'quiet',
-                '-print_format', 'json',
-                '-show_streams',
-                '-select_streams', 'v:0',
-                '-timeout', str(timeout * 1000000),  # microseconds
-                stream_url
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-            
-            if result.returncode == 0:
-                data = json.loads(result.stdout)
-                if 'streams' in data and len(data['streams']) > 0:
-                    video = data['streams'][0]
-                    width = video.get('width', 0)
-                    height = video.get('height', 0)
-                    return f"{width}x{height}"
-            return None
-        except Exception:
-            return None
     
     def normalize(text):
         """Remove spaces and lowercase"""
@@ -1469,92 +1596,43 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
 
-    if exclude_4k:
-        logging.info("Checking stream resolutions to exclude 4K/UHD...")
-        excluded_4k = 0
-        for stream in all_streams:
-            stream_name = stream.get('name', '')
-            stream_id = stream.get('id')
-            provider_id = stream.get('m3u_account')
-            provider_name = stream.get('m3u_account_name')
+    for stream in all_streams:
+        stream_name = stream.get('name', '')
+        stream_id = stream.get('id')
+        provider_id = stream.get('m3u_account')
+        provider_name = stream.get('m3u_account_name')
 
-            if provider_name is None and provider_lookup and provider_id is not None:
-                provider_name = provider_lookup.get(str(provider_id))
-            stream_url = stream.get('url', '')
+        if provider_name is None and provider_lookup and provider_id is not None:
+            provider_name = provider_lookup.get(str(provider_id))
 
-            if not matches_stream(stream_name):
-                continue
+        if not matches_stream(stream_name):
+            continue
 
-            total_matching += 1
+        total_matching += 1
 
-            if allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
-                continue
+        if allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
+            continue
 
-            resolution = check_stream_resolution(stream_url)
-            if resolution in ['3840x2160', '4096x2160']:
-                excluded_4k += 1
-                continue
+        filtered_count += 1
 
-            filtered_count += 1
+        detailed_stream = {
+            'id': stream_id,
+            'name': stream_name,
+            'provider_id': provider_id,
+            'provider_name': provider_name,
+            # URL is not used by the UI and can be large/sensitive; omit.
+            'resolution': None
+        }
 
-            detailed_stream = {
-                'id': stream_id,
-                'name': stream_name,
-                'provider_id': provider_id,
-                'provider_name': provider_name,
-                # URL is not used by the UI and can be large/sensitive; omit.
-                'resolution': resolution
-            }
-
-            if preview:
-                if len(preview_streams) < _PREVIEW_STREAM_LIMIT:
-                    preview_streams.append(detailed_stream)
-                else:
-                    preview_truncated = True
+        if preview:
+            if len(preview_streams) < _PREVIEW_STREAM_LIMIT:
+                preview_streams.append(detailed_stream)
             else:
-                filtered_streams.append(detailed_stream)
+                preview_truncated = True
+        else:
+            filtered_streams.append(detailed_stream)
 
-        logging.info(f"Found {total_matching} matching streams before 4K filtering")
-        logging.info(f"Excluded {excluded_4k} 4K/UHD streams")
-
-    else:
-        for stream in all_streams:
-            stream_name = stream.get('name', '')
-            stream_id = stream.get('id')
-            provider_id = stream.get('m3u_account')
-            provider_name = stream.get('m3u_account_name')
-
-            if provider_name is None and provider_lookup and provider_id is not None:
-                provider_name = provider_lookup.get(str(provider_id))
-
-            if not matches_stream(stream_name):
-                continue
-
-            total_matching += 1
-
-            if allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
-                continue
-
-            filtered_count += 1
-
-            detailed_stream = {
-                'id': stream_id,
-                'name': stream_name,
-                'provider_id': provider_id,
-                'provider_name': provider_name,
-                # URL is not used by the UI and can be large/sensitive; omit.
-                'resolution': None
-            }
-
-            if preview:
-                if len(preview_streams) < _PREVIEW_STREAM_LIMIT:
-                    preview_streams.append(detailed_stream)
-                else:
-                    preview_truncated = True
-            else:
-                filtered_streams.append(detailed_stream)
-
-        logging.info(f"Found {total_matching} matching streams")
+    logging.info(f"Found {total_matching} matching streams")
 
     final_stream_ids = [s['id'] for s in filtered_streams] if not preview else []
     
