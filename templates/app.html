@@ -1275,7 +1275,7 @@
                 </div>
                 
                 <div style="margin-top: 10px; padding: 12px; background: #fef2f2; border-left: 3px solid #ef4444; border-radius: 4px; font-size: 0.9em; color: #991b1b;">
-                    <strong>⚠️ Note:</strong> These filters only apply when clicking "Refresh Channel Streams"
+                    <strong>⚠️ Note:</strong> These filters only apply when clicking "Refresh Channel Streams". For multi-channel preview, Regex Override/Filter stay optional—without them the base channel search is used for each selected channel.
                 </div>
             </div>
 
@@ -2219,11 +2219,8 @@
             // Show/hide refresh filters based on selection
             const refreshFiltersDiv = document.getElementById('refreshFilters');
             if (refreshFiltersDiv) {
-                if (selectedChannels && selectedChannels.length === 1) {
-                    refreshFiltersDiv.style.display = 'block';
-                } else {
-                    refreshFiltersDiv.style.display = 'none';
-                }
+                const hasChannelSelection = selectedChannels && selectedChannels.length > 0;
+                refreshFiltersDiv.style.display = hasChannelSelection ? 'block' : 'none';
             }
         }
         
@@ -2705,12 +2702,6 @@
 
             const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
             const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
-
-            if (!regexOverrideValue && !regexFilterValue) {
-                document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-error">Multi-channel preview requires a Regex Override or Regex Filter. Please add one and try again.</div>';
-                document.getElementById('refresh-preview-summary').textContent = '';
-                return;
-            }
 
             try {
                 const payload = {
