@@ -1308,17 +1308,6 @@
                 </div>
             </div>
 
-            <div style="margin: 20px 0; padding: 16px; background: #f8fafc; border-radius: 8px; border-left: 4px solid #2563eb;">
-                <label style="display: flex; align-items: center; cursor: pointer; gap: 10px; color: #1f2937; font-weight: 600;">
-                    <input type="checkbox" id="useCapabilityTest"
-                           style="width: 18px; height: 18px; cursor: pointer;">
-                    <span>Use FFmpeg capability test during stream analysis</span>
-                </label>
-                <span style="display: block; margin-top: 6px; margin-left: 28px; color: #4b5563; font-size: 0.9em;">
-                    Uses a short FFmpeg test to score streams based on what this server can actually handle, including 50 fps streams.
-                </span>
-            </div>
-
             <div style="margin: 20px 0; padding: 20px; background: #f7fafc; border-radius: 8px; border-left: 4px solid #667eea;">
                 <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #2d3748; font-size: 1.1em;">
                     🔄 Streams Per Provider
@@ -1938,7 +1927,6 @@
                 job_type: 'pattern_refresh_full_cleanup',
                 regex_preset_id: patternId,
                 streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
-                use_capability_test: document.getElementById('useCapabilityTest')?.checked || false,
                 exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false
             };
 
@@ -2696,7 +2684,6 @@
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
                     exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
-                    use_capability_test: document.getElementById('useCapabilityTest')?.checked || false,
                     selected_stream_ids: selectedStreamIds,
                     stream_name_regex: regexFilterValue ? regexFilterValue : null,
                     stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
