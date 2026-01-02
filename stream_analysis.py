@@ -178,6 +178,11 @@ class Config:
                 'end_channel': 99999,
                 'stream_last_measured_days': 1,
                 'remove_duplicates': True
+            },
+            'ordering': {
+                'resilience_mode': False,
+                'fallback_depth': 3,
+                'similar_score_delta': 5,
             }
         }
     
@@ -1337,15 +1342,19 @@ def reorder_streams(api, config, input_csv=None):
     logging.info("Reordering streams in Dispatcharr...")
 
     input_csv = input_csv or config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
-    
+
     try:
         df = pd.read_csv(input_csv)
     except FileNotFoundError:
         logging.error(f"Input CSV not found: {input_csv}")
         return
-    
+
     filters = config.get('filters') or {}
-    
+    ordering_cfg = config.get('ordering') or {}
+    resilience_mode = bool(ordering_cfg.get('resilience_mode', False))
+    fallback_depth = int(ordering_cfg.get('fallback_depth', 3) or 3)
+    similar_score_delta = float(ordering_cfg.get('similar_score_delta', 5) or 5)
+
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])
     specific_channel_ids = filters.get('specific_channel_ids')
@@ -1373,12 +1382,124 @@ def reorder_streams(api, config, input_csv=None):
     df.dropna(subset=['stream_id', 'channel_id'], inplace=True)
     df['stream_id'] = df['stream_id'].astype(int)
     df['channel_id'] = df['channel_id'].astype(int)
-    
+
     grouped = df.groupby("channel_id")
-    
+
+    def _provider(row):
+        return row.get('m3u_account_name') or row.get('m3u_account') or 'unknown_provider'
+
+    def _parse_resolution(resolution):
+        try:
+            width_str, height_str = str(resolution).lower().split('x')
+            return int(width_str), int(height_str)
+        except Exception:
+            return None
+
+    def _is_low_fallback(row):
+        parsed = _parse_resolution(row.get('resolution'))
+        if not parsed:
+            return False
+        width, height = parsed
+        return width <= 1280 and height <= 720
+
+    def _normalize_numeric(value):
+        try:
+            return float(value)
+        except Exception:
+            return 0.0
+
+    def apply_resilience_ordering(group_df):
+        records = group_df.to_dict('records')
+        if not records or not resilience_mode:
+            return [r['stream_id'] for r in records]
+
+        top_score = max(_normalize_numeric(r.get('score')) for r in records)
+        tier_threshold = top_score - similar_score_delta
+
+        # Step 1: enforce provider uniqueness in the top tier (scores close to best)
+        provider_seen = set()
+        top_tier = []
+        remainder = []
+        for record in records:
+            score = _normalize_numeric(record.get('score'))
+            provider = _provider(record)
+            if score >= tier_threshold and provider not in provider_seen:
+                top_tier.append(record)
+                provider_seen.add(provider)
+            else:
+                remainder.append(record)
+
+        ordered = top_tier + remainder
+
+        # Step 2: prefer provider diversity when scores are similar (tie-break only)
+        diversified = []
+        used_providers = set()
+        while ordered:
+            candidate = ordered.pop(0)
+            candidate_provider = _provider(candidate)
+            candidate_score = _normalize_numeric(candidate.get('score'))
+
+            if candidate_provider in used_providers:
+                swap_idx = None
+                for idx, option in enumerate(ordered):
+                    option_score = _normalize_numeric(option.get('score'))
+                    if abs(candidate_score - option_score) <= similar_score_delta:
+                        option_provider = _provider(option)
+                        if option_provider not in used_providers:
+                            swap_idx = idx
+                            break
+                if swap_idx is not None:
+                    alternative = ordered.pop(swap_idx)
+                    ordered.insert(0, candidate)
+                    candidate = alternative
+                    candidate_provider = _provider(candidate)
+            diversified.append(candidate)
+            used_providers.add(candidate_provider)
+
+        # Step 3: prefer lower bitrate variants when resolution matches and scores are close
+        for idx, record in enumerate(diversified):
+            current_res = record.get('resolution')
+            current_score = _normalize_numeric(record.get('score'))
+            try:
+                current_bitrate = float(record.get('avg_bitrate_kbps'))
+            except Exception:
+                current_bitrate = None
+
+            if current_bitrate is None:
+                continue
+
+            for alt_idx in range(idx + 1, len(diversified)):
+                alt = diversified[alt_idx]
+                if str(alt.get('resolution')) != str(current_res):
+                    continue
+                alt_score = _normalize_numeric(alt.get('score'))
+                if abs(current_score - alt_score) > similar_score_delta:
+                    continue
+                try:
+                    alt_bitrate = float(alt.get('avg_bitrate_kbps'))
+                except Exception:
+                    continue
+                if alt_bitrate < current_bitrate:
+                    diversified.insert(idx, diversified.pop(alt_idx))
+                    break
+
+        # Step 4: ensure a low-bitrate fallback is available early
+        fallback_index = None
+        for idx, record in enumerate(diversified):
+            if _is_low_fallback(record):
+                fallback_index = idx
+                break
+
+        if fallback_index is not None and fallback_index >= fallback_depth:
+            fallback_record = diversified.pop(fallback_index)
+            insert_at = max(min(fallback_depth - 1, len(diversified)), 0)
+            diversified.insert(insert_at, fallback_record)
+
+        return [r['stream_id'] for r in diversified]
+
     for channel_id, group in grouped:
-        sorted_stream_ids = group["stream_id"].tolist()
-        
+        sorted_stream_ids = apply_resilience_ordering(group)
+
         # Get current streams from API
         current_streams = api.fetch_channel_streams(channel_id)
         if not current_streams:

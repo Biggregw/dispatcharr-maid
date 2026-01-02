@@ -165,6 +165,16 @@ This ordering **aligns perfectly with Dispatcharr's playback behavior**, allowin
 
 The result: **Maximum reliability with optimal quality.**
 
+### Resilience-Aware Ordering (Optional)
+
+Some providers deliver multiple variants that behave identically under load, which can make failover meaningless on devices like Firesticks or IPTV apps proxied through Dispatcharr. When enabled, **resilience-aware ordering** keeps the existing scores intact while adjusting the final order so that:
+
+- Only one stream per provider sits in the top tier of similarly scored entries (no redundant failovers on the same provider)
+- Lower-bitrate variants of the same resolution are tried before their higher-bitrate twins when scores are close
+- A low-bitrate fallback (SD/low-HD) is always available within the first few entries (configurable depth)
+
+Enable it via `ordering.resilience_mode: true` in `config.yaml` (default is off for backward compatibility). Tune how early the fallback appears with `ordering.fallback_depth` (default 3) and adjust the tie-break window with `ordering.similar_score_delta`. The feature is deterministic, explainable, and leaves standard ordering unchanged when disabled.
+
 ### Provider Discovery & Capacity Visibility
 
 Dispatcharr-Maid can auto-discover provider IDs, names, and capacity metadata
