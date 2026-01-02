@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional
 
@@ -178,6 +178,8 @@ def summarize_job_health(job_history: List[Dict], observations: Iterable[Observa
     """
 
     summaries: Dict[str, dict] = {}
+    now = datetime.now(timezone.utc)
+    playback_window = timedelta(hours=24)
 
     def _ensure(job_id: str) -> dict:
         bucket = summaries.get(job_id)
@@ -187,6 +189,7 @@ def summarize_job_health(job_history: List[Dict], observations: Iterable[Observa
                 "fallback_events": 0,
                 "error_events": 0,
                 "last_job_started": None,
+                "playback_sessions_24h": 0,
                 "warnings": [],
             }
             summaries[job_id] = bucket
@@ -206,7 +209,27 @@ def summarize_job_health(job_history: List[Dict], observations: Iterable[Observa
         if not job_id:
             continue
         bucket = _ensure(job_id)
-        bucket["last_playback"] = obs.ts
+        try:
+            parsed_ts = datetime.fromisoformat(obs.ts)
+        except Exception:
+            parsed_ts = None
+
+        existing_last_playback = bucket.get("last_playback")
+        if existing_last_playback is None:
+            bucket["last_playback"] = obs.ts
+        elif parsed_ts:
+            try:
+                if parsed_ts > datetime.fromisoformat(existing_last_playback):
+                    bucket["last_playback"] = obs.ts
+            except Exception:
+                bucket["last_playback"] = obs.ts
+        else:
+            bucket["last_playback"] = bucket.get("last_playback") or obs.ts
+
+        if obs.event in {"started", "observed"} and parsed_ts:
+            if now - parsed_ts <= playback_window:
+                # Passive playback counters are derived for display only and never feed orchestration.
+                bucket["playback_sessions_24h"] += 1
         if obs.event == "fallback_used":
             bucket["fallback_events"] += 1
         if obs.event == "error":

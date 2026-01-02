@@ -1561,6 +1561,7 @@ def _build_job_health_response(job_id: str | None = None, regex_preset_id: str |
             'fallback_events': 0,
             'error_events': 0,
             'last_job_started': None,
+            'playback_sessions_24h': 0,
             'warnings': [],
         }
 
@@ -1586,6 +1587,7 @@ def _build_job_health_response(job_id: str | None = None, regex_preset_id: str |
                 'fallback_events': bucket.get('fallback_events', 0),
                 'error_events': bucket.get('error_events', 0),
                 'last_job_started': bucket.get('last_job_started'),
+                'playback_sessions_24h': bucket.get('playback_sessions_24h', 0),
                 'warnings': bucket.get('warnings') or [],
             }
         )

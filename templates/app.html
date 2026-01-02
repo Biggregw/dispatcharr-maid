@@ -1159,6 +1159,10 @@
                         <span class="summary-value" id="job-health-last-playback">—</span>
                     </div>
                     <div class="summary-row">
+                        <span class="summary-label">Observed sessions (24h):</span>
+                        <span class="summary-value" id="job-health-playback-count">—</span>
+                    </div>
+                    <div class="summary-row">
                         <span class="summary-label">Recent fallback events:</span>
                         <span class="summary-value" id="job-health-fallbacks">0</span>
                     </div>
@@ -1956,6 +1960,7 @@
             if (!panel) return;
 
             const lastPlayback = document.getElementById('job-health-last-playback');
+            const playbackCount = document.getElementById('job-health-playback-count');
             const lastRun = document.getElementById('job-health-last-run');
             const fallbacks = document.getElementById('job-health-fallbacks');
             const errors = document.getElementById('job-health-errors');
@@ -1967,6 +1972,7 @@
             }
 
             if (lastPlayback) lastPlayback.textContent = '—';
+            if (playbackCount) playbackCount.textContent = '—';
             if (lastRun) lastRun.textContent = '—';
             if (fallbacks) fallbacks.textContent = '0';
             if (errors) errors.textContent = '0';
@@ -1983,12 +1989,14 @@
             }
 
             const lastPlayback = document.getElementById('job-health-last-playback');
+            const playbackCount = document.getElementById('job-health-playback-count');
             const lastRun = document.getElementById('job-health-last-run');
             const fallbacks = document.getElementById('job-health-fallbacks');
             const errors = document.getElementById('job-health-errors');
             const warnings = document.getElementById('job-health-warnings');
 
-            if (lastPlayback) lastPlayback.textContent = entry.last_playback || 'Not observed yet';
+            if (lastPlayback) lastPlayback.textContent = entry.last_playback || 'No playback observed yet';
+            if (playbackCount) playbackCount.textContent = (entry.playback_sessions_24h ?? '0');
             if (lastRun) lastRun.textContent = entry.last_job_started || 'Not run yet';
             if (fallbacks) fallbacks.textContent = String(entry.fallback_events || 0);
             if (errors) errors.textContent = String(entry.error_events || 0);
