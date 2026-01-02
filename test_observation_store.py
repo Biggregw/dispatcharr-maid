@@ -2,7 +2,12 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import dispatcharr_web_app
-from observation_store import Observation, ObservationStore, summarize_job_health
+from observation_store import (
+    Observation,
+    ObservationStore,
+    get_observation_count,
+    summarize_job_health,
+)
 
 
 def test_observation_append_is_append_only(tmp_path):
@@ -105,3 +110,9 @@ def test_job_completion_observation_is_recorded(tmp_path, monkeypatch):
     saved = list(store.iter_observations())
     assert saved[-1].event == 'ended'
     assert saved[-1].job_id == 'job-ended'
+
+
+def test_get_observation_count_handles_missing_file(tmp_path):
+    path = tmp_path / "does-not-exist.jsonl"
+
+    assert get_observation_count(path) == 0
