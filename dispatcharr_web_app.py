@@ -296,14 +296,28 @@ def _normalize_text(value):
     return str(value or '').strip()
 
 
-def _regex_preset_identity(groups=None, channels=None, base_search_text=None, regex=None, regex_mode=None):
+def _regex_preset_identity(
+    groups=None,
+    channels=None,
+    base_search_text=None,
+    regex=None,
+    regex_mode=None,
+    include_filter=None,
+    exclude_filter=None,
+    exclude_plus_one=None,
+    analysis_profile=None,
+):
     channels_normalized = None if channels is None else _normalize_id_list(channels)
     return {
         'groups': _normalize_id_list(groups),
         'channels': channels_normalized,
         'primary_match': _normalize_text(base_search_text),
         'advanced_regex': _normalize_text(regex),
-        'regex_only': _normalize_text(regex_mode).lower() == 'override'
+        'regex_only': _normalize_text(regex_mode).lower() == 'override',
+        'include_filter': _normalize_text(include_filter),
+        'exclude_filter': _normalize_text(exclude_filter),
+        'exclude_plus_one': bool(exclude_plus_one) if exclude_plus_one is not None else None,
+        'analysis_profile': _normalize_text(analysis_profile) or 'balanced',
     }
 
 
@@ -317,7 +331,11 @@ def _compute_regex_preset_identity(preset):
             'channels': _normalize_id_list(identity.get('channels')) if identity.get('channels') is not None else None,
             'primary_match': _normalize_text(identity.get('primary_match')),
             'advanced_regex': _normalize_text(identity.get('advanced_regex')),
-            'regex_only': bool(identity.get('regex_only'))
+            'regex_only': bool(identity.get('regex_only')),
+            'include_filter': _normalize_text(identity.get('include_filter')),
+            'exclude_filter': _normalize_text(identity.get('exclude_filter')),
+            'exclude_plus_one': bool(identity.get('exclude_plus_one')) if identity.get('exclude_plus_one') is not None else None,
+            'analysis_profile': _normalize_text(identity.get('analysis_profile')) or 'balanced',
         }
     return _regex_preset_identity(
         groups=preset.get('groups'),
@@ -325,6 +343,10 @@ def _compute_regex_preset_identity(preset):
         base_search_text=preset.get('base_search_text'),
         regex=preset.get('regex'),
         regex_mode=preset.get('regex_mode'),
+        include_filter=preset.get('include_filter'),
+        exclude_filter=preset.get('exclude_filter'),
+        exclude_plus_one=preset.get('exclude_plus_one'),
+        analysis_profile=preset.get('analysis_profile'),
     )
 
 
@@ -397,6 +419,7 @@ def _build_regex_preset_payload(data, *, allow_generated_name=False, allow_regex
     include_filter = data.get('include_filter')
     exclude_filter = data.get('exclude_filter')
     exclude_plus_one = data.get('exclude_plus_one')
+    analysis_profile = data.get('analysis_profile')
 
     if not isinstance(regex, str) or not regex.strip():
         raise ValueError('"regex" must be a non-empty string')
@@ -413,6 +436,8 @@ def _build_regex_preset_payload(data, *, allow_generated_name=False, allow_regex
         raise ValueError('"exclude_filter" must be a string or null')
     if exclude_plus_one is not None and not isinstance(exclude_plus_one, bool):
         raise ValueError('"exclude_plus_one" must be a boolean or null')
+    if analysis_profile is not None and not isinstance(analysis_profile, str):
+        raise ValueError('"analysis_profile" must be a string or null')
 
     name_to_use = name
     if allow_generated_name and (not isinstance(name_to_use, str) or not name_to_use.strip()):
@@ -478,6 +503,8 @@ def _build_regex_preset_payload(data, *, allow_generated_name=False, allow_regex
         preset['exclude_filter'] = exclude_filter
     if exclude_plus_one is not None:
         preset['exclude_plus_one'] = bool(exclude_plus_one)
+    if analysis_profile is not None:
+        preset['analysis_profile'] = analysis_profile.strip() or 'balanced'
 
     preset['identity'] = _regex_preset_identity(
         groups=group_ids,
@@ -485,6 +512,10 @@ def _build_regex_preset_payload(data, *, allow_generated_name=False, allow_regex
         base_search_text=base_search_text,
         regex=regex,
         regex_mode=regex_mode,
+        include_filter=include_filter,
+        exclude_filter=exclude_filter,
+        exclude_plus_one=exclude_plus_one,
+        analysis_profile=analysis_profile,
     )
     return preset
 
@@ -496,8 +527,13 @@ def _maybe_auto_save_job_request(job_request, preview_only=False):
     try:
         regex_override = _normalize_text(job_request.get('stream_name_regex_override'))
         regex_filter = _normalize_text(job_request.get('stream_name_regex'))
+        regex_only_flag = bool(job_request.get('regex_only'))
+        if regex_only_flag and regex_filter and not regex_override:
+            regex_override = regex_filter
+            regex_filter = ''
+
         chosen_regex = regex_override or regex_filter
-        regex_mode = 'override' if regex_override else ('filter' if chosen_regex else None)
+        regex_mode = 'override' if (regex_override or regex_only_flag) else ('filter' if chosen_regex else None)
 
         payload = {
             'name': job_request.get('regex_preset_name') or job_request.get('name'),
@@ -510,6 +546,7 @@ def _maybe_auto_save_job_request(job_request, preview_only=False):
             'include_filter': job_request.get('include_filter'),
             'exclude_filter': job_request.get('exclude_filter'),
             'exclude_plus_one': job_request.get('exclude_plus_one'),
+            'analysis_profile': job_request.get('analysis_profile'),
         }
 
         preset = _build_regex_preset_payload(
@@ -1347,7 +1384,7 @@ def _get_job_results(job_id):
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None):
+    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex=None, stream_name_regex_override=None, regex_only=False, analysis_profile=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -1362,6 +1399,9 @@ class Job:
         self.selected_stream_ids = selected_stream_ids
         self.stream_name_regex = stream_name_regex
         self.stream_name_regex_override = stream_name_regex_override
+        # Orchestration metadata only; engine-facing inputs remain unchanged.
+        self.regex_only = bool(regex_only)
+        self.analysis_profile = analysis_profile or 'balanced'
         self.selection_pattern_id = selection_pattern_id
         self.selection_pattern_name = selection_pattern_name
         self.regex_preset_id = regex_preset_id
@@ -1400,6 +1440,8 @@ class Job:
             'selection_pattern_name': self.selection_pattern_name,
             'regex_preset_id': self.regex_preset_id,
             'regex_preset_name': self.regex_preset_name,
+            'regex_only': self.regex_only,
+            'analysis_profile': self.analysis_profile,
             'base_search_text': self.base_search_text,
             'stream_name_regex': self.stream_name_regex,
             'stream_name_regex_override': self.stream_name_regex_override,
@@ -3495,6 +3537,8 @@ def api_start_job():
         selected_stream_ids = data.get('selected_stream_ids')
         stream_name_regex = data.get('stream_name_regex')
         stream_name_regex_override = data.get('stream_name_regex_override')
+        regex_only = bool(data.get('regex_only'))
+        analysis_profile = data.get('analysis_profile') or 'balanced'
 
         if not job_type:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
@@ -3584,7 +3628,9 @@ def api_start_job():
                 'stream_name_regex': stream_name_regex,
                 'stream_name_regex_override': stream_name_regex_override,
                 'regex_preset_name': regex_preset_name or data.get('regex_preset_name'),
-                'name': data.get('name')
+                'name': data.get('name'),
+                'analysis_profile': analysis_profile,
+                'regex_only': regex_only,
             })
         except Exception:
             logging.debug("Auto-saving job as preset failed", exc_info=True)
@@ -3608,6 +3654,8 @@ def api_start_job():
             selected_stream_ids,
             stream_name_regex,
             stream_name_regex_override,
+            regex_only,
+            analysis_profile,
             selection_pattern_id=selection_pattern_id,
             selection_pattern_name=selection_pattern_name,
             regex_preset_id=regex_preset_id,
