@@ -465,20 +465,6 @@ You can add HTTPS access to the web UI:
 
 Now access via: `https://maid.yourdomain.com`
 
-### Optional: Provider usage (viewing activity) from NPM access logs
-
-If your IPTV client uses the **Xtream connection served by Dispatcharr**, you can
-derive provider-usage stats from Nginx Proxy Manager access logs.
-
-1. **Mount NPM logs into the Maid container** (read-only).
-   - NPM logs live at `/data/logs/` inside the NPM container.
-   - On the host, that corresponds to your NPM data volume/bind mount (varies by install).
-2. Set `usage.access_log_dir` in `config.yaml` (see `config.yaml.example`).
-3. Call the endpoint:
-   - `GET /api/usage/providers?days=7&proxy_host=1`
-
-**Security note:** Xtream URLs often include credentials in the URL; treat access logs as sensitive.
-
 ---
 
 ## 📊 Comparison: Docker vs. Manual
