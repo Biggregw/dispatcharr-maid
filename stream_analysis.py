@@ -1408,7 +1408,7 @@ def reorder_streams(api, config, input_csv=None):
 def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None):
     """
     Find and add all matching streams from all providers for a specific channel
-    
+
     Args:
         api: DispatcharrAPI instance
         config: Config instance
@@ -1416,6 +1416,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         base_search_text: Optional override for the channel name used when matching streams
         include_filter: Optional comma-separated wildcards (e.g., "york*,lond*")
         exclude_filter: Optional comma-separated exclusions (e.g., "lincoln*")
+        allowed_stream_ids: Optional explicit selection from a prior preview. A full scan still
+            happens to enforce channel filters (regex, include/exclude, timeshift parity) and to
+            regenerate counts/preview data after re-applying those rules.
     Returns:
         dict with stats about streams found/added
     """
@@ -1586,6 +1589,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     allowed_set = None
     if allowed_stream_ids is not None:
+        # Even when the caller supplies a hand-picked list, we still iterate all streams so the
+        # selection is revalidated against the current channel filters and the preview counts are
+        # recomputed from the filtered universe.
         allowed_set = {int(sid) for sid in allowed_stream_ids}
 
     # Build filtered streams (used for actual update) and a capped list of
