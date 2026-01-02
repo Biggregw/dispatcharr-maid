@@ -138,40 +138,25 @@ Once streams are added back into the channel, Dispatcharr-Maid performs a **full
 - Stream reliability and responsiveness
 - Connection speed and stability
 
-Streams are then **ranked and reordered** within the channel.
+### Scoring vs Ordering
+
+- **Scoring**: Each stream is evaluated independently using the probe results above. Scores reflect expected quality and reliability.
+- **Ordering**: After scoring, streams are arranged using a resilience-aware policy so that diverse, meaningful options appear early. The ordering policy may keep scores intact while shuffling within tiers for better failover; the highest score is not always the first position.
 
 ### Configurable Stream Depth
 
 Dispatcharr-Maid supports **configurable stream depth per provider**:
 
-- Selecting **1** retains only the highest-ranked stream from each provider
-- Selecting **2** retains the top two streams from each provider
+- Selecting **1** keeps only the strongest stream from each provider
+- Selecting **2** keeps the top two streams from each provider
 - And so on...
-
-### Optimal Stream Ordering
-
-Streams are ordered so the **best stream from each provider appears first**, followed by the second-best stream from each provider, and so on.
-
-**Example with 3 providers and depth = 2:**
-
-```
-Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
-```
-
-This ordering **aligns perfectly with Dispatcharr's playback behavior**, allowing it to:
-
-1. Attempt the highest-quality stream from each provider first
-2. Fall back to the next provider if a stream fails
-3. Try second-tier streams only after all top streams are exhausted
-
-The result: **Maximum reliability with optimal quality.**
 
 ### Resilience-Aware Ordering (Optional)
 
 Some providers deliver multiple variants that behave identically under load, which can make failover meaningless on devices like Firesticks or IPTV apps proxied through Dispatcharr. When enabled, **resilience-aware ordering** keeps the existing scores intact while adjusting the final order so that:
 
-- Streams are grouped into **tiers** instead of round-robining providers: Tier 1 keeps the best HD/FHD per provider (one per provider), Tier 2 keeps clearly different variants (e.g., lower bitrate or different codec), and Tier 3 keeps SD/low-HD survival streams.
-- Provider diversity is enforced **within each tier** (Tier 1 limits one per provider), but tiers themselves are not interleaved—so meaningful variants are tried before a provider's second-best "more of the same" entry.
+- Streams are grouped into **tiers**: Tier 1 keeps the best HD/FHD per provider (one per provider), Tier 2 keeps clearly different variants (e.g., lower bitrate or different codec), and Tier 3 keeps SD/low-HD survival streams.
+- Provider diversity is enforced **within each tier**, but tiers are not forced into a round robin—meaningful variants are tried before a provider's second-best "more of the same" entry.
 - Lower-bitrate variants of the same resolution are tried before higher-bitrate twins when scores are close (tie-break only), and at least one Tier 2 or Tier 3 option appears within the first few results (configurable depth).
 
 Enable it via `ordering.resilience_mode: true` in `config.yaml` (default is off for backward compatibility). Tune how early the fallback appears with `ordering.fallback_depth` (default 3) and adjust the tie-break window with `ordering.similar_score_delta`. The feature is deterministic, explainable, and leaves standard ordering unchanged when disabled.
@@ -185,9 +170,8 @@ in provider_names.json are still supported and take precedence.
 
 Because most providers enforce strict connection limits, **provider diversity**
 is critical: spreading channels across multiple providers reduces the risk of
-hitting per-provider max_streams limits. The existing round-robin ordering
-above is intentionally preserved to keep failover behavior consistent while
-maximizing diversity.
+hitting per-provider max_streams limits. Resilience-aware ordering keeps that
+diversity visible without forcing an interleaved round robin.
 
 ### Provider Usage (Viewing Activity) via Access Logs (Optional)
 

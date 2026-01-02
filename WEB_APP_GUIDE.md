@@ -46,24 +46,27 @@ Click **Next: Run Jobs**.
 
 ### 3) Refresh Channel Streams (enrichment step)
 
-This is intended for **one channel at a time** (because it uses a single base search term and shows you a preview list).
+This is intended for **one channel at a time** (because it uses a single primary match and shows you a preview list).
 
 1. Click **Refresh Channel Streams**
 2. Adjust:
-   - **Base Search Text** (what the app searches for across providers)
+   - **Primary Match** (the exact search text used across providers)
    - **Include Filter / Exclude Filter** (supports `*` wildcards, comma-separated)
    - **Exclude +1 channels**
+   - **Advanced Regex (optional)** + **Use regex as the only match rule** if you want regex-only matching
 3. The modal shows a **preview list** of matching streams
 4. Untick any streams you do *not* want, then click **Add Selected Streams**
-5. Optional: click **Save Regex** to keep your selection logic for later
+5. Optional: click **Save Regex** to keep your selection logic for later (saved jobs are launched from the Run Jobs screen)
 
 Dispatcharr-Maid assumes client-side decode (e.g., Firestick) with proxied playback only; FFmpeg capability testing and transcoding are out of scope.
 
 ### 4) Quality Check (ranking + cleanup)
 
+Pick an **Analysis Profile** to decide how deep the probe should go (Fast / **Balanced** (default) / Deep). Detailed knobs stay tucked under **Advanced analysis settings**, and YAML imports remain supported if you want to override everything.
+
 Set **Streams Per Provider** (e.g. `2`) then choose one:
 
-- **Quality Check (Apply Changes)**: runs analysis + scoring, then updates Dispatcharr immediately (reorder + cleanup based on “Streams Per Provider”).
+- **Quality Check (Apply Changes)**: runs analysis + scoring, then updates Dispatcharr immediately (ordering + cleanup respects your Streams Per Provider limit).
 - **Quality Check (Preview Plan)**: makes **no changes**. It generates a plan you can review and commit later from the Results page.
 
 ---
