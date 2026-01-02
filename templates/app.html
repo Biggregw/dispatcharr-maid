@@ -1277,7 +1277,7 @@
             
             <div class="action-grid">
                 <div class="action-panel">
-                    <button class="action-btn primary" onclick="showRefreshPreview()"
+                    <button class="action-btn primary" onclick="showRefreshPreview(event)"
                             style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
                         <span>🔄</span>
                         <span>Refresh Channel Streams</span>
@@ -2473,9 +2473,27 @@
             }
         }
 
-        async function showRefreshPreview() {
+        async function showRefreshPreview(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+
             if (!selectedChannels || selectedChannels.length !== 1) {
-                alert('Please select exactly 1 channel to refresh.');
+                const channelCount = selectedChannels ? selectedChannels.length : 0;
+                const channelLabel = channelCount > 0
+                    ? `${channelCount} channel${channelCount === 1 ? '' : 's'}`
+                    : 'all channels';
+                const proceed = window.confirm(
+                    `Refresh will start immediately for ${channelLabel} without a preview.\n\n` +
+                    'Per-channel filters (base search text, include/exclude, +1) only apply when refreshing a single channel.'
+                );
+                if (!proceed) return;
+
+                const jobId = await startJob('refresh_optimize', null, event);
+                if (!jobId) {
+                    alert('Failed to start refresh job. Please try again.');
+                }
                 return;
             }
 
