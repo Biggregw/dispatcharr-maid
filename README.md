@@ -170,9 +170,9 @@ The result: **Maximum reliability with optimal quality.**
 
 Some providers deliver multiple variants that behave identically under load, which can make failover meaningless on devices like Firesticks or IPTV apps proxied through Dispatcharr. When enabled, **resilience-aware ordering** keeps the existing scores intact while adjusting the final order so that:
 
-- Only one stream per provider sits in the top tier of similarly scored entries (no redundant failovers on the same provider)
-- Lower-bitrate variants of the same resolution are tried before their higher-bitrate twins when scores are close
-- A low-bitrate fallback (SD/low-HD) is always available within the first few entries (configurable depth)
+- Streams are grouped into **tiers** instead of round-robining providers: Tier 1 keeps the best HD/FHD per provider (one per provider), Tier 2 keeps clearly different variants (e.g., lower bitrate or different codec), and Tier 3 keeps SD/low-HD survival streams.
+- Provider diversity is enforced **within each tier** (Tier 1 limits one per provider), but tiers themselves are not interleaved—so meaningful variants are tried before a provider's second-best "more of the same" entry.
+- Lower-bitrate variants of the same resolution are tried before higher-bitrate twins when scores are close (tie-break only), and at least one Tier 2 or Tier 3 option appears within the first few results (configurable depth).
 
 Enable it via `ordering.resilience_mode: true` in `config.yaml` (default is off for backward compatibility). Tune how early the fallback appears with `ordering.fallback_depth` (default 3) and adjust the tie-break window with `ordering.similar_score_delta`. The feature is deterministic, explainable, and leaves standard ordering unchanged when disabled.
 
