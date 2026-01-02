@@ -1211,17 +1211,17 @@
 
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
-                        Saved Regex Presets
+                        Saved Jobs (Advanced Regex)
                     </label>
                     <div class="regex-preset-dropdown" id="saved-regex-dropdown">
                         <div class="regex-preset-dropdown__control" id="saved-regex-control" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
-                            <span class="regex-preset-dropdown__label" id="saved-regex-label">— Select saved regex —</span>
+                            <span class="regex-preset-dropdown__label" id="saved-regex-label">— Select Saved Job —</span>
                             <span class="regex-preset-dropdown__chev" aria-hidden="true">▾</span>
                         </div>
-                        <div class="regex-preset-dropdown__menu hidden" id="saved-regex-menu" role="listbox" aria-label="Saved regex presets"></div>
+                        <div class="regex-preset-dropdown__menu hidden" id="saved-regex-menu" role="listbox" aria-label="Saved Jobs for Advanced Regex"></div>
                     </div>
                     <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                        Selecting a preset fills Advanced Regex (and whether it is exclusive). Saving presets happens from the preview dialog.
+                        Selecting a Saved Job fills Advanced Regex (and whether it is exclusive). Saving happens from the preview dialog.
                     </span>
                 </div>
 
@@ -1519,7 +1519,7 @@
             </div>
             <div class="modal-actions">
                 <button class="btn btn-back" onclick="closeRefreshPreview()">Cancel</button>
-                <button type="button" class="btn btn-back" id="refresh-save-regex-button" onclick="saveRegexFromPreview(event)">Save Regex</button>
+                <button type="button" class="btn btn-back" id="refresh-save-regex-button" onclick="saveRegexFromPreview(event)">Save Job Definition</button>
                 <button type="button" class="btn btn-next" id="refresh-submit-button" onclick="submitRefreshJob(event)">Add Selected Streams</button>
             </div>
         </div>
@@ -1697,7 +1697,7 @@
 
         function setSavedRegexLabel(text) {
             const label = document.getElementById('saved-regex-label');
-            if (label) label.textContent = text || '— Select saved regex —';
+            if (label) label.textContent = text || '— Select Saved Job —';
         }
 
         function openSavedRegexMenu() {
@@ -1736,16 +1736,16 @@
                 : null;
             if (!selectedPreset) {
                 selectedRegexPresetId = '';
-                setSavedRegexLabel('— Select saved regex —');
+                setSavedRegexLabel('— Select Saved Job —');
             } else {
-                setSavedRegexLabel(selectedPreset.name || 'Saved regex');
+                setSavedRegexLabel(selectedPreset.name || 'Saved Job');
             }
 
             if (!Array.isArray(savedRegexPresets) || savedRegexPresets.length === 0) {
                 const empty = document.createElement('div');
                 empty.className = 'regex-preset-item';
                 empty.style.cursor = 'default';
-                empty.innerHTML = `<div class="regex-preset-item__text"><div class="regex-preset-item__name" style="font-weight:600; color:#718096;">No saved presets yet</div><div class="regex-preset-item__meta">Run a stream preview and click “Save Regex”.</div></div>`;
+                empty.innerHTML = `<div class="regex-preset-item__text"><div class="regex-preset-item__name" style="font-weight:600; color:#718096;">No Saved Jobs yet</div><div class="regex-preset-item__meta">Run a stream preview and click “Save Job Definition”.</div></div>`;
                 menu.appendChild(empty);
                 return;
             }
@@ -1780,7 +1780,7 @@
                 delBtn.type = 'button';
                 delBtn.className = 'regex-preset-item__delete';
                 delBtn.title = `Delete “${name}”`;
-                delBtn.setAttribute('aria-label', `Delete preset ${name}`);
+                delBtn.setAttribute('aria-label', `Delete Saved Job ${name}`);
                 delBtn.innerHTML = `
                     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <path d="M9 3h6m-8 4h10m-9 0 1 14h6l1-14M10 7v12m4-12v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1835,13 +1835,13 @@
         }
 
         async function deleteRegexPreset(presetId, presetName) {
-            const label = presetName ? `“${presetName}”` : 'this preset';
+            const label = presetName ? `“${presetName}”` : 'this Saved Job';
             if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
 
             try {
                 const resp = await fetch(`/api/regex/presets/${encodeURIComponent(String(presetId))}`, { method: 'DELETE' });
                 const data = await resp.json();
-                if (!data.success) throw new Error(data.error || 'Failed to delete preset.');
+                if (!data.success) throw new Error(data.error || 'Failed to delete Saved Job.');
 
                 // If we deleted the selected preset, clear selection label.
                 if (String(selectedRegexPresetId) === String(presetId)) {
@@ -1853,7 +1853,7 @@
                 await loadSavedRegexPresets();
                 await loadSavedPatterns();
             } catch (e) {
-                alert(`Unable to delete preset: ${e.message}`);
+                alert(`Unable to delete Saved Job: ${e.message}`);
             }
         }
 
@@ -2429,7 +2429,7 @@
                 defaultName = '';
             }
 
-            const name = (prompt('Name this regex preset:', defaultName) || '').trim();
+            const name = (prompt('Name this Saved Job:', defaultName) || '').trim();
             if (!name) return;
 
             syncRegexInputsFromAdvanced();
@@ -2447,7 +2447,7 @@
             }
 
             if (!include.length) {
-                alert('Please leave at least one stream checked before saving a regex.');
+                alert('Please leave at least one stream checked before saving a Job Definition.');
                 return;
             }
 
@@ -2478,7 +2478,7 @@
                     regex = String(genData.regex).trim();
                 }
 
-                // Also persist current group/channel selection so the preset can be used as a saved job.
+                // Also persist current group/channel selection so the Saved Job can be re-run later.
                 const saveResp = await fetch('/api/regex/save', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -2497,7 +2497,7 @@
                 });
                 const saveData = await saveResp.json();
                 if (!saveData.success) {
-                    throw new Error(saveData.error || 'Failed to save regex preset.');
+                    throw new Error(saveData.error || 'Failed to save Saved Job.');
                 }
 
                 // Fill the appropriate input immediately.
@@ -2514,15 +2514,15 @@
                 // Refresh dropdowns.
                 await loadSavedRegexPresets();
                 await loadSavedPatterns();
-                // Best-effort select the newly saved preset.
+                // Best-effort select the newly saved job.
                 const presetId = saveData.preset?.id;
                 if (presetId) {
                     selectedRegexPresetId = String(presetId);
                     const preset = savedRegexPresets.find(p => String(p?.id) === String(presetId));
-                    setSavedRegexLabel(preset?.name || 'Saved regex');
+                    setSavedRegexLabel(preset?.name || 'Saved Job');
                 }
 
-                alert(saveData.replaced ? 'Saved regex preset (overwrote existing preset with same name).' : 'Saved regex preset.');
+                alert(saveData.replaced ? 'Saved Job definition (overwrote existing Saved Job with the same name).' : 'Saved Job definition saved.');
             } catch (e) {
                 alert(`Unable to save regex: ${e.message}`);
             } finally {
