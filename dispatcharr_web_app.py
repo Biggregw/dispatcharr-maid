@@ -43,6 +43,7 @@ from observation_store import (
     Observation,
     ObservationStore,
     attach_jobs_to_observations,
+    get_observation_count,
     summarize_job_health,
 )
 from provider_usage import (
@@ -5233,7 +5234,12 @@ def api_list_regex_presets():
             presets = _load_stream_name_regex_presets()
         presets = [p for p in presets if isinstance(p, dict)]
         presets.sort(key=lambda p: (p.get('created_at') or ''), reverse=True)
-        resp = jsonify({'success': True, 'presets': presets})
+        observation_count = get_observation_count(observation_store.path)
+        resp = jsonify({
+            'success': True,
+            'presets': presets,
+            'observation_count': observation_count,
+        })
         # Avoid stale caches (mobile browsers / proxies).
         resp.headers['Cache-Control'] = 'no-store, max-age=0'
         resp.headers['Pragma'] = 'no-cache'

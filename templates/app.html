@@ -1122,6 +1122,7 @@
                     <div>
                         <div style="font-weight: 700; color: #111827;">Saved Jobs</div>
                         <div style="color: #4b5563; font-size: 0.95em;">Jobs are saved automatically when you run them. Re-run or manage the latest version here.</div>
+                        <div id="observation-count-label" style="color: #374151; font-size: 0.95em; margin-top: 4px;">Observations: enabled (0)</div>
                     </div>
                 </div>
 
@@ -1903,17 +1904,27 @@
                     showSavedPatternStatus(data.error || 'Unable to load saved patterns.', true);
                     savedPatterns = [];
                     renderSavedPatterns();
+                    setObservationCountLabel(data.observation_count);
                     return;
                 }
                 const presets = Array.isArray(data.presets) ? data.presets : [];
                 // Only show saved jobs that can drive the workflow (must have groups saved).
                 savedPatterns = presets.filter(p => Array.isArray(p?.groups) && p.groups.length > 0);
+                setObservationCountLabel(data.observation_count);
                 renderSavedPatterns();
             } catch (e) {
                 showSavedPatternStatus(`Unable to load saved patterns: ${e.message}`, true);
                 savedPatterns = [];
+                setObservationCountLabel();
                 renderSavedPatterns();
             }
+        }
+
+        function setObservationCountLabel(count) {
+            const el = document.getElementById('observation-count-label');
+            if (!el) return;
+            const safeCount = Number.isFinite(Number(count)) ? Number(count) : 0;
+            el.textContent = `Observations: enabled (${safeCount})`;
         }
 
         function renderSavedPatterns() {

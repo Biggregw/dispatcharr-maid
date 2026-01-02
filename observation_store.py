@@ -150,6 +150,24 @@ class ObservationStore:
         return _iter()
 
 
+def get_observation_count(path: Path | str = Path("logs/playback_observations.jsonl")) -> int:
+    """Return the number of stored observations (best-effort).
+
+    Phase 3.3 visibility only: this helper is read-only and tolerates missing
+    storage by returning zero when unavailable.
+    """
+
+    try:
+        obs_path = Path(path)
+        if not obs_path.exists():
+            return 0
+        with obs_path.open("r", encoding="utf-8", errors="replace") as handle:
+            return sum(1 for _ in handle)
+    except Exception:
+        logging.debug("Failed to count observations", exc_info=True)
+        return 0
+
+
 def match_observation_to_job(observation: Observation, job_history: List[Dict]) -> Optional[str]:
     """Best-effort association: match explicit channel membership to saved jobs."""
 
