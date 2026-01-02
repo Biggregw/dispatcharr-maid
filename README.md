@@ -142,21 +142,29 @@ Once streams are added back into the channel, Dispatcharr-Maid performs a **full
 ### Scoring vs Ordering
 
 - **Scoring (independent stream evaluation)**: Each stream is probed and scored based on quality and reliability. Scores stand alone and do not depend on provider position.
-- **Ordering (resilience-aware tiers)**: After scoring, streams are grouped into tiers and ordered to keep diverse, meaningful options visible early. The highest score is not always first; ordering respects tiers and provider limits rather than round robin.
+- **Ordering (resilience-aware tiers)**: After scoring, streams are arranged into resilience-aware tiers. Ordering surfaces diverse, meaningful failover options without provider interleaving or round robin.
 
 ### Streams per Provider limit
 
-Set how many streams to keep per provider (1, 2, 3, etc.). This is a **limit**, not an ordering strategy—provider diversity is enforced by the ordering policy, not by round robin.
+Set how many streams to keep per provider (1, 2, 3, etc.). This is a **limit**, not an ordering strategy. Provider diversity comes from tiered ordering; a provider is not treated as a failure domain, and there is no provider-level rotation.
 
 ### Resilience-Aware Ordering
 
-When enabled, ordering keeps scores intact while arranging streams into **tiers** so failover hits genuinely different options sooner:
+Ordering preserves scores but applies a tier model that matches current UI terminology (Primary Match, Saved Job) and keeps distinct options visible:
 
-- Tier 1 keeps the best HD/FHD per provider (one per provider)
-- Tier 2 keeps clearly different variants (e.g., lower bitrate or different codec)
-- Tier 3 keeps SD/low-HD survival streams
+1. **Tier 1: Primary streams per provider** – the top-scoring Primary Match-quality stream from each provider (one per provider) is surfaced first.
+2. **Tier 2: Meaningful variants** – additional streams that differ in codec, bitrate, or resolution and provide real coverage differences.
+3. **Tier 3: Low-bitrate fallbacks** – survival-grade SD/low-HD streams positioned for last-resort continuity.
+4. **Overflow** – any remaining streams ordered by score after the tiers above.
 
-Provider diversity is enforced within each tier without round robin. Lower-bitrate twins edge ahead only as tie-breaks, and you can tune how early fallbacks appear with `ordering.fallback_depth` (default 3) and `ordering.similar_score_delta`.
+Within each tier, high scores are honored while keeping variety ahead of near-duplicate options. Stream depth does not control interleaving: tiers do. This tiering keeps provider diversity visible for failover without assuming a provider equals a failure domain.
+
+**Example:**
+
+- Provider X: 1080p H.264 Primary Match (score 92), 576p low-bitrate (score 55)
+- Provider Y: 1080p H.265 Primary Match (score 89), 720p alternate codec (score 73)
+
+Ordering yields Tier 1: X 1080p, Y 1080p; Tier 2: Y 720p alternate; Tier 3: X 576p fallback; overflow is empty. The **Streams per Provider** limit caps how many entries from each provider reach the tiers but does not change the tier-first ordering.
 
 ### Provider Discovery & Capacity Visibility
 
@@ -168,7 +176,7 @@ in provider_names.json are still supported and take precedence.
 Because most providers enforce strict connection limits, **provider diversity**
 is critical: spreading channels across multiple providers reduces the risk of
 hitting per-provider max_streams limits. Resilience-aware ordering keeps that
-diversity visible without forcing an interleaved round robin.
+diversity visible through tiering instead of provider rotations.
 
 ### Provider Usage (Viewing Activity) via Access Logs (Optional)
 
