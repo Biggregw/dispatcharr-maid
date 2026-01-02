@@ -1938,7 +1938,8 @@
                 job_type: 'pattern_refresh_full_cleanup',
                 regex_preset_id: patternId,
                 streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
-                use_capability_test: document.getElementById('useCapabilityTest')?.checked || false
+                use_capability_test: document.getElementById('useCapabilityTest')?.checked || false,
+                exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false
             };
 
             try {
