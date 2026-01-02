@@ -1189,88 +1189,115 @@
                     🔍 Channel Refresh Filters (for "Refresh Channel Streams" only)
                 </label>
 
-                <div style="margin-bottom: 15px;">
-                    <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
-                        Advanced Regex (optional)
-                    </label>
-                    <input type="text" id="advancedRegexInput" placeholder="e.g., york.*(hd|fhd)$"
-                           style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
-                    <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                        Use a single regex to refine matches. By default it layers on top of Primary Match / Include / Exclude / +1.
-                    </span>
-                    <label style="display: flex; align-items: center; gap: 10px; margin-top: 10px; cursor: pointer; color: #4b5563; font-weight: 500;">
-                        <input type="checkbox" id="regexOnlyMode" style="width: 18px; height: 18px; cursor: pointer;">
-                        Use regex as the only match rule
-                    </label>
-                    <span style="display: block; margin-top: 5px; margin-left: 28px; color: #718096; font-size: 0.85em;">
-                        When checked, Primary Match / Include / Exclude / +1 are ignored.
-                    </span>
-                    <input type="hidden" id="streamNameRegexOverride">
-                    <input type="hidden" id="streamNameRegex">
-                </div>
-
-                <div style="margin-bottom: 15px;">
-                    <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
-                        Saved Jobs (Advanced Regex)
-                    </label>
-                    <div class="regex-preset-dropdown" id="saved-regex-dropdown">
-                        <div class="regex-preset-dropdown__control" id="saved-regex-control" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
-                            <span class="regex-preset-dropdown__label" id="saved-regex-label">— Select Saved Job —</span>
-                            <span class="regex-preset-dropdown__chev" aria-hidden="true">▾</span>
-                        </div>
-                        <div class="regex-preset-dropdown__menu hidden" id="saved-regex-menu" role="listbox" aria-label="Saved Jobs for Advanced Regex"></div>
-                    </div>
-                    <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                        Selecting a Saved Job fills Advanced Regex (and whether it is exclusive). Saving happens from the preview dialog.
-                    </span>
-                </div>
-
-                <div style="margin-bottom: 15px;">
-                    <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 5px; color: #1f2937; font-weight: 700;">
                         Primary Match
                     </label>
                     <input type="text" id="baseSearchText" placeholder="Exact search text used to find matching streams"
                            style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
-                    <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                        This is the exact channel search text currently used internally. Edit to override before refreshing.
+                    <span style="display: block; margin-top: 5px; color: #4b5563; font-size: 0.9em;">
+                        Start here. This is the main match used for channel discovery.
                     </span>
                 </div>
 
-                <div style="margin-bottom: 15px;">
-                    <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
-                        Include Filter (optional)
-                    </label>
-                    <input type="text" id="includeFilter" placeholder="e.g., york*,lond*,scot*"
-                           style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
-                    <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                        Use * as wildcard. Leave blank to include all matching streams.
-                    </span>
-                </div>
-                
-                <div>
-                    <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
-                        Exclude Filter (optional)
-                    </label>
-                    <input type="text" id="excludeFilter" placeholder="e.g. linc*,york*,scot*"
-                           style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
-                    <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                        Streams matching these patterns will be excluded.
-                    </span>
-                </div>
-
-                <div style="margin-top: 10px;">
-                    <label style="display: flex; align-items: center; cursor: pointer;">
+                <div style="margin-bottom: 12px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fbfdff;">
+                    <label style="display: flex; align-items: center; cursor: pointer; gap: 10px;">
                         <input type="checkbox" id="excludePlusOne"
-                               style="width: 18px; height: 18px; margin-right: 10px; cursor: pointer;">
-                        <span style="color: #4b5563; font-weight: 500;">
-                            Exclude +1 channels
-                        </span>
+                               style="width: 18px; height: 18px; cursor: pointer;">
+                        <span style="color: #1f2937; font-weight: 600;">Exclude +1 channels</span>
                     </label>
-                    <span style="display: block; margin-top: 5px; margin-left: 28px; color: #718096; font-size: 0.85em;">
-                        Excludes channels with +1 time-shifted variants.
+                    <span style="display: block; margin-top: 6px; color: #4b5563; font-size: 0.9em;">
+                        Hide time-shifted variants when you want the primary feed only.
                     </span>
                 </div>
-                
+
+                <details id="refine-matches" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
+                    <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
+                        <span style="font-weight: 700; color: #1f2937;">Refine Matches (optional)</span>
+                        <span style="color: #4b5563; font-size: 0.9em;">Use only if you need to narrow results.</span>
+                    </summary>
+                    <div style="padding: 12px 14px; border-top: 1px solid #e5e7eb; display: flex; flex-direction: column; gap: 12px;">
+                        <div>
+                            <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
+                                Include Filter (optional)
+                            </label>
+                            <input type="text" id="includeFilter" placeholder="e.g., york*,lond*,scot*"
+                                   style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
+                            <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
+                                Use * as wildcard. Leave blank to include all matching streams.
+                            </span>
+                        </div>
+
+                        <div>
+                            <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
+                                Exclude Filter (optional)
+                            </label>
+                            <input type="text" id="excludeFilter" placeholder="e.g. linc*,york*,scot*"
+                                   style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
+                            <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
+                                Streams matching these patterns will be excluded.
+                            </span>
+                        </div>
+
+                        <div style="padding: 10px 12px; border: 1px dashed #cbd5e1; border-radius: 6px; background: #fff;">
+                            <label style="display: flex; align-items: center; cursor: pointer; gap: 10px;">
+                                <input type="checkbox" id="excludePlusOneRefine"
+                                       style="width: 18px; height: 18px; cursor: pointer;">
+                                <span style="color: #4b5563; font-weight: 600;">Exclude +1 channels</span>
+                            </label>
+                            <span style="display: block; margin-top: 5px; margin-left: 28px; color: #718096; font-size: 0.85em;">
+                                Same as above. Adjust here while fine-tuning filters.
+                            </span>
+                        </div>
+                    </div>
+                </details>
+
+                <details id="advanced-matching" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff7ed;">
+                    <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
+                        <span style="font-weight: 700; color: #7c2d12;">Advanced Matching (Regex)</span>
+                        <span style="color: #9a3412; font-size: 0.9em;">Bypasses simple matching. Use only if you are comfortable with regex.</span>
+                    </summary>
+                    <div style="padding: 12px 14px; border-top: 1px solid #fed7aa; display: flex; flex-direction: column; gap: 12px;">
+                        <div>
+                            <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
+                                Advanced Regex
+                            </label>
+                            <input type="text" id="advancedRegexInput" placeholder="e.g., york.*(hd|fhd)$"
+                                   style="width: 100%; padding: 10px; border: 2px solid #f97316; border-radius: 6px; font-size: 1em; background: #fff;">
+                            <span style="display: block; margin-top: 5px; color: #9a3412; font-size: 0.9em;">
+                                Use regex only when simple matching cannot express what you need.
+                            </span>
+                            <div id="regex-only-container" style="margin-top: 10px; display: none;">
+                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: #4b5563; font-weight: 500;">
+                                    <input type="checkbox" id="regexOnlyMode" style="width: 18px; height: 18px; cursor: pointer;">
+                                    Use regex as the only match rule
+                                </label>
+                                <span style="display: block; margin-top: 5px; margin-left: 28px; color: #718096; font-size: 0.85em;">
+                                    When checked, Primary Match / Include / Exclude / +1 are ignored.
+                                </span>
+                            </div>
+                            <input type="hidden" id="streamNameRegexOverride">
+                            <input type="hidden" id="streamNameRegex">
+                        </div>
+
+                        <div>
+                            <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
+                                Saved Regex Presets
+                            </label>
+                            <div class="regex-preset-dropdown" id="saved-regex-dropdown">
+                                <div class="regex-preset-dropdown__control" id="saved-regex-control" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
+                                    <span class="regex-preset-dropdown__label" id="saved-regex-label">— Select Saved Job —</span>
+                                    <span class="regex-preset-dropdown__chev" aria-hidden="true">▾</span>
+                                </div>
+                                <div class="regex-preset-dropdown__menu hidden" id="saved-regex-menu" role="listbox" aria-label="Saved Jobs for Advanced Regex"></div>
+                            </div>
+                            <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
+                                Selecting a Saved Job fills Advanced Regex (and whether it is exclusive). Saving happens from the preview dialog.
+                            </span>
+                        </div>
+                    </div>
+                </details>
+
                 <div style="margin-top: 10px; padding: 12px; background: #fef2f2; border-left: 3px solid #ef4444; border-radius: 4px; font-size: 0.9em; color: #991b1b;">
                     <strong>⚠️ Note:</strong> These filters only apply when clicking "Refresh Channel Streams"
                 </div>
@@ -1606,6 +1633,7 @@
 
             if (overrideInput) overrideInput.value = useOnly ? value : '';
             if (filterInput) filterInput.value = useOnly ? '' : value;
+            updateRegexOnlyVisibility();
         }
 
         function syncAdvancedFieldFromInputs() {
@@ -1625,6 +1653,32 @@
                 advanced.value = filterValue;
                 regexOnly.checked = false;
             }
+
+            updateRegexOnlyVisibility();
+        }
+
+        function updateRegexOnlyVisibility() {
+            const advanced = document.getElementById('advancedRegexInput');
+            const container = document.getElementById('regex-only-container');
+            if (!advanced || !container) return;
+
+            const hasValue = (advanced.value || '').trim().length > 0;
+            container.style.display = hasValue ? 'block' : 'none';
+        }
+
+        function syncExcludePlusOneCheckboxes() {
+            const primary = document.getElementById('excludePlusOne');
+            const refine = document.getElementById('excludePlusOneRefine');
+            if (!primary || !refine) return;
+
+            const align = (source, target) => {
+                target.checked = source.checked;
+            };
+
+            primary.addEventListener('change', () => align(primary, refine));
+            refine.addEventListener('change', () => align(refine, primary));
+
+            align(primary, refine);
         }
 
         // Initialize
@@ -1646,6 +1700,7 @@
                 regexOnlyCheckbox.addEventListener('change', syncRegexInputsFromAdvanced);
             }
             syncAdvancedFieldFromInputs();
+            syncExcludePlusOneCheckboxes();
 
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
@@ -1817,10 +1872,12 @@
             const inc = document.getElementById('includeFilter');
             const exc = document.getElementById('excludeFilter');
             const exPlusOne = document.getElementById('excludePlusOne');
+            const exPlusOneRefine = document.getElementById('excludePlusOneRefine');
             if (base && typeof preset.base_search_text === 'string') base.value = preset.base_search_text;
             if (inc && typeof preset.include_filter === 'string') inc.value = preset.include_filter;
             if (exc && typeof preset.exclude_filter === 'string') exc.value = preset.exclude_filter;
             if (exPlusOne && typeof preset.exclude_plus_one === 'boolean') exPlusOne.checked = preset.exclude_plus_one;
+            if (exPlusOne && exPlusOneRefine) exPlusOneRefine.checked = exPlusOne.checked;
 
             // Backwards compatible: presets without regex_mode behave like an override.
             if (mode === 'filter') {
