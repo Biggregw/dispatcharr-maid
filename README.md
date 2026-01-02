@@ -54,6 +54,8 @@ Ordering is always determined after scoring and resilience grouping.
 
 Jobs define what to run and how to run it.
 Saved Jobs can be viewed, executed, and deleted from the Run Jobs screen.
+Each run updates a Saved Job in place using its identity (groups/channels, Primary Match, include/exclude/+1, analysis profile, and regex mode).
+Starting a run always refreshes the matching Saved Job instead of creating ad-hoc entries.
 
 ## Notes on Analysis
 
