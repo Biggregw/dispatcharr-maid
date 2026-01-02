@@ -71,10 +71,12 @@ def test_job_health_surfaces_last_playback_without_side_effects(tmp_path, monkey
     now = datetime.now(timezone.utc)
     recent_ts = (now - timedelta(hours=1)).isoformat()
     older_ts = (now - timedelta(days=2)).isoformat()
+    end_ts = (now - timedelta(minutes=10)).isoformat()
 
     store.append(Observation.from_dict({'ts': older_ts, 'event': 'started', 'job_id': 'job-1'}))
     store.append(Observation.from_dict({'ts': recent_ts, 'event': 'observed', 'job_id': 'job-1'}))
     store.append(Observation.from_dict({'ts': older_ts, 'event': 'fallback_used', 'job_id': 'job-1'}))
+    store.append(Observation.from_dict({'ts': end_ts, 'event': 'ended', 'job_id': 'job-1'}))
 
     # Use local fixtures so the lookup stays read-only and detached from engine flows.
     monkeypatch.setattr(dispatcharr_web_app, "observation_store", store)
@@ -87,4 +89,19 @@ def test_job_health_surfaces_last_playback_without_side_effects(tmp_path, monkey
 
     assert jobs_payload[0]['last_playback'] == recent_ts
     assert jobs_payload[0]['playback_sessions_24h'] == 1
+    assert jobs_payload[0]['last_job_ended'] == end_ts
+    assert jobs_payload[0]['last_run_status'] == 'Last run completed'
     append_spy.assert_not_called()
+
+
+def test_job_completion_observation_is_recorded(tmp_path, monkeypatch):
+    store = ObservationStore(tmp_path / "obs.jsonl")
+    monkeypatch.setattr(dispatcharr_web_app, "observation_store", store)
+
+    job = dispatcharr_web_app.Job('job-ended', 'full', [1])
+
+    assert dispatcharr_web_app._record_job_completion_observation(job) is True
+
+    saved = list(store.iter_observations())
+    assert saved[-1].event == 'ended'
+    assert saved[-1].job_id == 'job-ended'

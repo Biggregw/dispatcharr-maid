@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from queue import Queue
 
@@ -1540,6 +1540,27 @@ def _record_observation_payload(payload) -> tuple[bool, dict]:
     return success, _serialize_observation(attached)
 
 
+def _record_job_completion_observation(job) -> bool:
+    """Record a passive job completion observation without blocking execution."""
+
+    try:
+        observation = Observation(
+            ts=datetime.now(timezone.utc).isoformat(),
+            event="ended",
+            job_id=str(getattr(job, "job_id", None)) if getattr(job, "job_id", None) else None,
+            source="job_runner",
+        )
+    except Exception:
+        logging.debug("Failed to build job completion observation", exc_info=True)
+        return False
+
+    try:
+        return bool(observation_store.append(observation))
+    except Exception:
+        logging.debug("Failed to record job completion observation", exc_info=True)
+        return False
+
+
 def _load_observation_snapshot(limit: int = 500):
     history = get_job_history()
     observations = list(
@@ -1561,6 +1582,8 @@ def _build_job_health_response(job_id: str | None = None, regex_preset_id: str |
             'fallback_events': 0,
             'error_events': 0,
             'last_job_started': None,
+            'last_job_ended': None,
+            'last_run_status': 'Unknown',
             'playback_sessions_24h': 0,
             'warnings': [],
         }
@@ -1587,6 +1610,8 @@ def _build_job_health_response(job_id: str | None = None, regex_preset_id: str |
                 'fallback_events': bucket.get('fallback_events', 0),
                 'error_events': bucket.get('error_events', 0),
                 'last_job_started': bucket.get('last_job_started'),
+                'last_job_ended': bucket.get('last_job_ended'),
+                'last_run_status': bucket.get('last_run_status'),
                 'playback_sessions_24h': bucket.get('playback_sessions_24h', 0),
                 'warnings': bucket.get('warnings') or [],
             }
@@ -2389,6 +2414,10 @@ def run_job_worker(job, api, config):
             logging.info(f"TASK_END: {task_name}")
         # Save to history
         save_job_to_history(job)
+        try:
+            _record_job_completion_observation(job)
+        except Exception:
+            logging.debug("Unable to record job completion observation", exc_info=True)
 
 
 def cleanup_streams_by_provider(

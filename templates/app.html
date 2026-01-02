@@ -1175,6 +1175,14 @@
                         <span class="summary-value" id="job-health-last-run">—</span>
                     </div>
                     <div class="summary-row">
+                        <span class="summary-label">Last job ended:</span>
+                        <span class="summary-value" id="job-health-last-ended">—</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Run status:</span>
+                        <span class="summary-value" id="job-health-run-status">—</span>
+                    </div>
+                    <div class="summary-row">
                         <span class="summary-label">Passive indicators:</span>
                         <span class="summary-value" id="job-health-warnings">None observed</span>
                     </div>
@@ -1962,8 +1970,10 @@
             const lastPlayback = document.getElementById('job-health-last-playback');
             const playbackCount = document.getElementById('job-health-playback-count');
             const lastRun = document.getElementById('job-health-last-run');
+            const lastEnded = document.getElementById('job-health-last-ended');
             const fallbacks = document.getElementById('job-health-fallbacks');
             const errors = document.getElementById('job-health-errors');
+            const runStatus = document.getElementById('job-health-run-status');
             const warnings = document.getElementById('job-health-warnings');
 
             if (message === 'hide') {
@@ -1974,8 +1984,10 @@
             if (lastPlayback) lastPlayback.textContent = '—';
             if (playbackCount) playbackCount.textContent = '—';
             if (lastRun) lastRun.textContent = '—';
+            if (lastEnded) lastEnded.textContent = '—';
             if (fallbacks) fallbacks.textContent = '0';
             if (errors) errors.textContent = '0';
+            if (runStatus) runStatus.textContent = '—';
             if (warnings) warnings.textContent = message || 'No observations recorded yet.';
             panel.classList.remove('hidden');
         }
@@ -1991,15 +2003,19 @@
             const lastPlayback = document.getElementById('job-health-last-playback');
             const playbackCount = document.getElementById('job-health-playback-count');
             const lastRun = document.getElementById('job-health-last-run');
+            const lastEnded = document.getElementById('job-health-last-ended');
             const fallbacks = document.getElementById('job-health-fallbacks');
             const errors = document.getElementById('job-health-errors');
+            const runStatus = document.getElementById('job-health-run-status');
             const warnings = document.getElementById('job-health-warnings');
 
             if (lastPlayback) lastPlayback.textContent = entry.last_playback || 'No playback observed yet';
             if (playbackCount) playbackCount.textContent = (entry.playback_sessions_24h ?? '0');
             if (lastRun) lastRun.textContent = entry.last_job_started || 'Not run yet';
+            if (lastEnded) lastEnded.textContent = entry.last_job_ended || 'Not observed yet';
             if (fallbacks) fallbacks.textContent = String(entry.fallback_events || 0);
             if (errors) errors.textContent = String(entry.error_events || 0);
+            if (runStatus) runStatus.textContent = entry.last_run_status || 'Unknown';
             if (warnings) {
                 const warningText = Array.isArray(entry.warnings) && entry.warnings.length > 0
                     ? entry.warnings.join(' • ')
