@@ -27,14 +27,16 @@ from flask_cors import CORS
 
 from api_utils import DispatcharrAPI
 from provider_data import refresh_provider_data
-from stream_analysis import (
-    refresh_channel_streams,
+# Engine boundary: web app orchestration calls the deterministic engine surface
+# via the dedicated package to keep control-flow concerns separate.
+from engine import (
     Config,
-    fetch_streams,
     analyze_streams,
+    fetch_streams,
+    reorder_streams,
     score_streams,
-    reorder_streams
 )
+from stream_analysis import refresh_channel_streams
 from job_workspace import create_job_workspace
 from provider_usage import (
     aggregate_provider_usage,

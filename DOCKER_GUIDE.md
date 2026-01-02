@@ -447,7 +447,7 @@ Use cron to trigger analysis:
 crontab -e
 
 # Add this line (run daily at 2am):
-0 2 * * * docker exec dispatcharr-maid-web python3 -c "from stream_analysis import Config, fetch_streams, analyze_streams, score_streams, reorder_streams; from api_utils import DispatcharrAPI; api = DispatcharrAPI(); api.login(); config = Config(); fetch_streams(api, config); analyze_streams(config); score_streams(api, config); reorder_streams(api, config)" >> /var/log/dispatcharr-maid-cron.log 2>&1
+0 2 * * * docker exec dispatcharr-maid-web python3 -c "from engine import Config, fetch_streams, analyze_streams, score_streams, reorder_streams; from api_utils import DispatcharrAPI; api = DispatcharrAPI(); api.login(); config = Config(); fetch_streams(api, config); analyze_streams(config); score_streams(api, config); reorder_streams(api, config)" >> /var/log/dispatcharr-maid-cron.log 2>&1
 ```
 
 ---
