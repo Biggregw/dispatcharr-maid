@@ -149,12 +149,6 @@ class Config:
                 'workers': 8,
                 'retries': 1,
                 'retry_delay': 10,
-                'enable_capability_test': False,
-                'capability_test_duration': 5,
-                'capability_test_timeout': 12,
-                'capability_max_width': 1920,
-                'capability_max_height': 1080,
-                'capability_startup_grace': 1.5,
             },
             'scoring': {
                 'fps_bonus_points': 100,
@@ -164,13 +158,7 @@ class Config:
                     '1920x1080': 80,
                     '1280x720': 50,
                     '960x540': 20
-                },
-                'capability_pass_points': 180,
-                'capability_timeout_penalty': 350,
-                'capability_failure_penalty': 450,
-                'capability_50fps_bonus': 60,
-                'capability_full_run_bonus': 30,
-                'capability_throughput_weight': 0.5,
+                }
             },
             'filters': {
                 'channel_group_ids': [],
@@ -404,129 +392,6 @@ def _check_stream_for_critical_errors(url, timeout):
     return errors
 
 
-def _run_capability_test(url, analysis_cfg):
-    """Run a short ffmpeg encode test to gauge server capability."""
-
-    duration = float(analysis_cfg.get('capability_test_duration', 5) or 5)
-    timeout = float(analysis_cfg.get('capability_test_timeout', max(8, duration + 5)))
-    max_width = int(analysis_cfg.get('capability_max_width', 1920) or 1920)
-    max_height = int(analysis_cfg.get('capability_max_height', 1080) or 1080)
-    startup_grace = float(analysis_cfg.get('capability_startup_grace', 1.5) or 1.5)
-    user_agent = analysis_cfg.get('user_agent', 'VLC/3.0.14')
-
-    scale_filter = f"scale='if(gt(iw,{max_width}),{max_width},iw)':'if(gt(ih,{max_height}),{max_height},ih)'"
-
-    command = [
-        'ffmpeg',
-        '-user_agent', user_agent,
-        '-analyzeduration', '1000000',
-        '-probesize', '1000000',
-        '-loglevel', 'error',
-        '-i', url,
-        '-map', '0:v:0',
-        '-map', '0:a?',
-        '-c:v', 'libx264',
-        '-preset', 'veryfast',
-        '-tune', 'zerolatency',
-        '-profile:v', 'high',
-        '-level', '4.1',
-        '-vf', scale_filter,
-        '-crf', '23',
-        '-c:a', 'aac',
-        '-ac', '2',
-        '-b:a', '128k',
-        '-t', str(duration),
-        '-progress', 'pipe:1',
-        '-f', 'mpegts',
-        '-y', '/dev/null'
-    ]
-
-    metrics = {
-        'status': 'not_run',
-        'frames': 0,
-        'fps': 0.0,
-        'elapsed': 0.0,
-        'reason': None,
-        'score': 0.0,
-    }
-
-    start = time.time()
-    try:
-        result = subprocess.run(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout
-        )
-        metrics['elapsed'] = time.time() - start
-
-        # Parse ffmpeg -progress key/value lines from stdout
-        progress = {}
-        for line in result.stdout.splitlines():
-            if '=' not in line:
-                continue
-            key, value = line.split('=', 1)
-            progress[key.strip()] = value.strip()
-
-        try:
-            metrics['frames'] = int(progress.get('frame') or 0)
-        except ValueError:
-            metrics['frames'] = 0
-        try:
-            metrics['fps'] = float(progress.get('fps') or 0)
-        except ValueError:
-            metrics['fps'] = 0.0
-
-        if result.returncode != 0:
-            metrics['status'] = 'error'
-            metrics['reason'] = result.stderr.strip()[:200] or 'ffmpeg exited non-zero'
-        elif metrics['frames'] <= 0 and metrics['elapsed'] >= startup_grace:
-            metrics['status'] = 'no_frames'
-            metrics['reason'] = 'No frames produced during capability test'
-        else:
-            metrics['status'] = 'ok'
-
-    except subprocess.TimeoutExpired:
-        metrics['elapsed'] = timeout
-        metrics['status'] = 'timeout'
-        metrics['reason'] = f'Capability test exceeded {timeout}s'
-    except Exception as exc:
-        metrics['elapsed'] = time.time() - start
-        metrics['status'] = 'error'
-        metrics['reason'] = f'Capability test failed: {exc}'
-
-    scoring_cfg = analysis_cfg.get('scoring') or {}
-    pass_points = scoring_cfg.get('capability_pass_points', 180)
-    timeout_penalty = scoring_cfg.get('capability_timeout_penalty', 350)
-    failure_penalty = scoring_cfg.get('capability_failure_penalty', 450)
-    fps_bonus = scoring_cfg.get('capability_50fps_bonus', 60)
-    full_run_bonus = scoring_cfg.get('capability_full_run_bonus', 30)
-    throughput_weight = scoring_cfg.get('capability_throughput_weight', 0.5)
-
-    if metrics['status'] == 'ok':
-        metrics['score'] = pass_points
-        if metrics['fps'] >= 50:
-            metrics['score'] += fps_bonus
-        elif metrics['fps'] >= 45:
-            metrics['score'] += fps_bonus / 2
-
-        # Reward making it through the planned window (avoid rewards on early aborts)
-        if metrics['elapsed'] >= duration * 0.9:
-            metrics['score'] += full_run_bonus
-
-        # Throughput bonus based on frames processed per second
-        if metrics['elapsed'] > 0 and metrics['frames'] > 0:
-            throughput = metrics['frames'] / metrics['elapsed']
-            metrics['score'] += min(pass_points * throughput_weight, throughput)
-    elif metrics['status'] == 'timeout':
-        metrics['score'] = -abs(timeout_penalty)
-    else:
-        metrics['score'] = -abs(failure_penalty)
-
-    return metrics
-
-
 def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis=False):
     """Analyze a single stream"""
     url = row.get('stream_url')
@@ -547,8 +412,6 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
     timeout = analysis_cfg.get('timeout', 30)
     retries = analysis_cfg.get('retries', 1)
     retry_delay = analysis_cfg.get('retry_delay', 10)
-    capability_enabled = bool(analysis_cfg.get('enable_capability_test', False))
-    capability_scoring = config.get('scoring') or {}
     
     provider = _get_provider_from_url(url)
     provider_semaphore = _get_provider_semaphore(provider)
@@ -618,29 +481,6 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
         # Respect ffmpeg duration to avoid hammering provider
         if isinstance(elapsed, (int, float)) and elapsed < duration:
             time.sleep(duration - elapsed)
-
-    # Capability test (optional, opt-in)
-    if capability_enabled:
-        capability_metrics = _run_capability_test(
-            url,
-            {**analysis_cfg, 'scoring': capability_scoring}
-        )
-    else:
-        capability_metrics = {
-            'status': 'not_run',
-            'frames': 0,
-            'fps': 0.0,
-            'elapsed': 0.0,
-            'reason': 'Capability test disabled',
-            'score': 0.0,
-        }
-
-    row['capability_status'] = capability_metrics.get('status')
-    row['capability_reason'] = capability_metrics.get('reason')
-    row['capability_frames'] = capability_metrics.get('frames')
-    row['capability_fps'] = capability_metrics.get('fps')
-    row['capability_elapsed'] = capability_metrics.get('elapsed')
-    row['capability_score'] = capability_metrics.get('score')
 
     return row
 
@@ -1032,9 +872,7 @@ def analyze_streams(config, input_csv=None,
     final_columns += [
         'timestamp', 'video_codec', 'audio_codec', 'interlaced_status', 'status',
         'bitrate_kbps', 'fps', 'resolution', 'frames_decoded', 'frames_dropped',
-        'err_decode', 'err_discontinuity', 'err_timeout',
-        'capability_status', 'capability_reason', 'capability_frames',
-        'capability_fps', 'capability_elapsed', 'capability_score'
+        'err_decode', 'err_discontinuity', 'err_timeout'
     ]
     
     output_exists = os.path.exists(output_csv)
@@ -1207,17 +1045,11 @@ def score_streams(api, config, input_csv=None,
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
     df['frames_decoded'] = pd.to_numeric(df['frames_decoded'], errors='coerce')
     df['frames_dropped'] = pd.to_numeric(df['frames_dropped'], errors='coerce')
-    if 'capability_score' in df.columns:
-        df['capability_score'] = pd.to_numeric(df['capability_score'], errors='coerce').fillna(0)
-    else:
-        df['capability_score'] = 0
-    
     # Group by stream and calculate averages
     summary = df.groupby('stream_id').agg(
         avg_bitrate_kbps=('bitrate_kbps', 'mean'),
         avg_frames_decoded=('frames_decoded', 'mean'),
-        avg_frames_dropped=('frames_dropped', 'mean'),
-        capability_score=('capability_score', 'mean')
+        avg_frames_dropped=('frames_dropped', 'mean')
     ).reset_index()
     
     # Merge with latest metadata
@@ -1265,21 +1097,11 @@ def score_streams(api, config, input_csv=None,
         summary[col] = pd.to_numeric(summary[col], errors='coerce').fillna(0)
     summary['error_penalty'] = summary[error_columns].sum(axis=1) * 25
 
-    if 'capability_status' not in summary.columns:
-        summary['capability_status'] = 'not_run'
-    else:
-        summary['capability_status'] = summary['capability_status'].fillna('not_run')
-    if 'capability_score' not in summary.columns:
-        summary['capability_score'] = 0
-
-    summary['capability_score'] = pd.to_numeric(summary['capability_score'], errors='coerce').fillna(0)
-    
     # Calculate final score
     summary['score'] = (
         summary['bitrate_score'] +
         summary['resolution_score'] +
-        summary['fps_bonus'] +
-        summary['capability_score'] -
+        summary['fps_bonus'] -
         summary['dropped_frames_penalty'] -
         summary['error_penalty']
     )
@@ -1299,7 +1121,7 @@ def score_streams(api, config, input_csv=None,
         'avg_bitrate_kbps', 'avg_frames_decoded',
         'avg_frames_dropped', 'dropped_frame_percentage', 'fps', 'resolution',
         'video_codec', 'audio_codec', 'interlaced_status', 'status', 'score',
-        'error_penalty', 'capability_status', 'capability_score', 'capability_reason'
+        'error_penalty'
     ]
     for col in final_columns:
         if col not in df_sorted.columns:

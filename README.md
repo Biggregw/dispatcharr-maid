@@ -26,6 +26,7 @@ The authors assume no liability for misuse of this software.
 - 🔍 **Smart stream enrichment** - Automatically finds matching streams across all your providers
 - 📊 **Quality analysis** - Full ffmpeg probe scoring based on reliability and technical quality
 - 🎯 **Intelligent ranking** - Optimal stream ordering aligned with Dispatcharr's failover behavior
+- 📡 **Client-side decode assumption** - Streams are proxied without transcoding; FFmpeg capability testing was removed for Firestick-style setups
 - ⚙️ **Configurable stream depth** - Control how many streams per provider to keep (1, 2, 3, etc.)
 - 📱 **Device compatibility filters** - Optimize for FireStick/Fire TV (excludes 4K streams that cause buffering)
 - 🌍 **Regional variant selection** - Include/exclude specific regional variants with wildcard filters

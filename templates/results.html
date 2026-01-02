@@ -354,7 +354,6 @@
             if (typeof meta.streams_per_provider === 'number') refreshLines.push(`<div><strong>Streams per provider</strong>: ${escapeHtml(String(meta.streams_per_provider))}</div>`);
             if (meta.stream_name_regex) refreshLines.push(`<div><strong>Stream regex (filter)</strong>: <code>${escapeHtml(String(meta.stream_name_regex))}</code></div>`);
             if (meta.stream_name_regex_override) refreshLines.push(`<div><strong>Stream regex (override)</strong>: <code>${escapeHtml(String(meta.stream_name_regex_override))}</code></div>`);
-            if (meta.use_capability_test === true) refreshLines.push(`<div><strong>FFmpeg capability test</strong>: enabled</div>`);
 
             const sections = []
                 .concat(chosen.length ? [`<div style="margin-bottom:10px;">${chosen.join('')}</div>`] : [])
