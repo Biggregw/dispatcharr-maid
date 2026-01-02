@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import dispatcharr_web_app
@@ -64,3 +64,27 @@ def test_job_health_summary_uses_observations():
     assert bucket['error_events'] == 1
     assert any('Fallback' in w for w in bucket['warnings'])
     assert any('Error' in w for w in bucket['warnings'])
+
+
+def test_job_health_surfaces_last_playback_without_side_effects(tmp_path, monkeypatch):
+    store = ObservationStore(tmp_path / "obs.jsonl")
+    now = datetime.now(timezone.utc)
+    recent_ts = (now - timedelta(hours=1)).isoformat()
+    older_ts = (now - timedelta(days=2)).isoformat()
+
+    store.append(Observation.from_dict({'ts': older_ts, 'event': 'started', 'job_id': 'job-1'}))
+    store.append(Observation.from_dict({'ts': recent_ts, 'event': 'observed', 'job_id': 'job-1'}))
+    store.append(Observation.from_dict({'ts': older_ts, 'event': 'fallback_used', 'job_id': 'job-1'}))
+
+    # Use local fixtures so the lookup stays read-only and detached from engine flows.
+    monkeypatch.setattr(dispatcharr_web_app, "observation_store", store)
+    monkeypatch.setattr(dispatcharr_web_app, "get_job_history", lambda: [{'job_id': 'job-1'}])
+
+    append_spy = mock.Mock()
+    monkeypatch.setattr(store, "append", append_spy)
+
+    jobs_payload, _unassigned = dispatcharr_web_app._build_job_health_response()
+
+    assert jobs_payload[0]['last_playback'] == recent_ts
+    assert jobs_payload[0]['playback_sessions_24h'] == 1
+    append_spy.assert_not_called()
