@@ -11,7 +11,7 @@ import sys
 
 from api_utils import DispatcharrAPI
 from provider_data import refresh_provider_data
-from stream_analysis import Config
+from engine import Config
 
 
 def _build_parser():

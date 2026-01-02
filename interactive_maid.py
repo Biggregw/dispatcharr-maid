@@ -15,12 +15,14 @@ import pandas as pd
 
 from api_utils import DispatcharrAPI
 from job_workspace import create_job_workspace
-from stream_analysis import (
+# Engine boundary: interactive UI imports deterministic optimisation steps only
+# through the engine package to avoid mixing lifecycle concerns with scoring.
+from engine import (
     Config,
-    fetch_streams,
     analyze_streams,
+    fetch_streams,
+    reorder_streams,
     score_streams,
-    reorder_streams
 )
 
 
