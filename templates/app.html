@@ -2712,6 +2712,15 @@
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
+            if (!regexOverrideValue && !regexFilterValue) {
+                document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-error">Multi-channel preview requires a Regex Override or Regex Filter. Please add one and try again.</div>';
+                document.getElementById('refresh-preview-summary').textContent = '';
+                return;
+            }
+
+            try {
+                const payload = {
+                    channel_ids: selectedChannels,
                     exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
                     stream_name_regex: regexFilterValue ? regexFilterValue : null,
                     stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null

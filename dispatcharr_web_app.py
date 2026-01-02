@@ -3265,6 +3265,7 @@ def api_refresh_preview_batch():
             filters = config.get('filters') or {}
             if isinstance(filters, dict):
                 stream_name_regex = filters.get('refresh_stream_name_regex')
+        effective_exclude_filter = _build_exclude_filter(None, exclude_plus_one)
 
         # Fetch channel metadata once to annotate previews with names/numbers.
         channels = api.fetch_channels()
@@ -3291,6 +3292,8 @@ def api_refresh_preview_batch():
                 cid,
                 base_search_text=base_search_text,
                 include_filter=include_filter,
+                base_search_text=None,
+                include_filter=None,
                 exclude_filter=effective_exclude_filter,
                 preview=True,
                 stream_name_regex=stream_name_regex,
