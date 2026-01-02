@@ -147,16 +147,16 @@ All channels that exist in the selected groups will now be displayed.
 - **Recommended:** Select a single channel at a time
 
 #### 4. Click "Run Jobs"
-If running for a single channel (e.g., "BBC One"), you will see filter options at the top of the screen.
+If running for a single channel (e.g., "BBC One"), you will see the matching chain at the top of the screen.
 
-**Search Configuration:**
-- The base search field contains your channel name but can be modified (e.g., change "BBC One" to "BBC 1")
-- This search term will be used to find matching streams from all your providers
+**Selection & Matching:**
+- **Primary Match**: the exact search sent to providers (editable)
+- **Include / Exclude filters**: `*` wildcards supported
+- **Exclude +1 channels**
+- **Advanced Regex (optional)** with a **regex-only** toggle if you want regex to be the only rule
+- **No server-side capability testing:** Dispatcharr-Maid assumes client-side decode (e.g., Firestick) and proxied playback without transcoding; FFmpeg capability checks were removed.
 
-**Filter Options:**
-- **Force Include:** Add strings that must be present (e.g., `york*` to include "BBC One Yorkshire")
-- **Force Exclude:** Add strings to exclude (e.g., `linc*` to exclude "Lincolnshire")
-- **No server-side capability testing:** Dispatcharr-Maid now assumes client-side decode (e.g., Firestick) and proxied playback without transcoding; FFmpeg capability checks were removed.
+Providers are not treated as failure domains; diversity comes from the tiered ordering policy rather than round robin.
 
 #### 5. Click "Refresh Channel Streams"
 - A box will appear showing matching streams as they're queried
@@ -172,14 +172,13 @@ Leave the streams you want selected and click **"Add Selected Streams"**
 - Adjust the "Streams per Provider" setting to specify how many streams from each provider should remain in your channel (default: 2)
 
 #### 7. Click "Quality Check (Apply Changes)" (Optional but Recommended)
-This performs a full probe of each stream and scores them, then **reorders and cleans up** your channel based on your “Streams per Provider” setting.
+This performs a full probe of each stream and scores them, then **orders and cleans up** your channel using the resilience-aware policy and your **Streams per Provider limit**.
 
 Tip: If you want to review what will change first, use **"Quality Check (Preview Plan)"** and commit the plan from the Results page later.
 
-Your channel will be cleansed and ranked to allow Dispatcharr to work with your best stream first and move to fallbacks in this sequence:
+Choose an **Analysis Profile** (Fast / Balanced / Deep) before running quality checks; advanced YAML parameters remain available for power users.
 
-**Example with 3 providers and value = 2:**
-- Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
+Ordering is **tier-based and resilience-aware** (no round robin). Provider diversity is enforced inside each tier, and the Streams per Provider value is a cap, not a rotation rule.
 
 The web dashboard updates every 2 seconds with:
 - Live progress bar
@@ -194,16 +193,10 @@ The web dashboard updates every 2 seconds with:
 You have now:
 1. Added all streams from all providers to your selected channel, filtered by your search criteria
 2. Tested each stream for quality and speed
-3. Kept only the optimal streams in the optimal order based on your "streams per provider" setting
+3. Kept only the optimal streams in resilience-aware order based on your **Streams per Provider** limit
 
 **The result:**
-- Provider A #1, Provider B #1, Provider C #1, Provider A #2, Provider B #2, Provider C #2
-
-**How it works in practice:**
-- When streaming, Dispatcharr starts with Provider A #1 (your best stream)
-- If this fails, it falls back to Provider B #1 (next best provider)
-- After exhausting all top streams from each provider, it moves to the second-best streams
-- This approach quickly optimizes your setup for maximum reliability
+- Tiered ordering that surfaces meaningful provider diversity early without enforcing round robin; within each tier, diverse options appear before duplicate variants from the same provider.
 
 ---
 
@@ -254,6 +247,8 @@ docker-compose restart
 
 ### Update
 
+Use the provided automation if available (e.g., `./update-maid.sh`) to pull updates, rebuild, and restart with preserved data. If you prefer manual steps:
+
 ```bash
 # Pull latest code
 cd ~/dispatcharr-maid
@@ -262,10 +257,10 @@ unzip -o Dispatcharr_Maid.zip
 mv dispatcharr-maid-main/* .
 rm -rf dispatcharr-maid-main Dispatcharr_Maid.zip
 
-# Rebuild containers
+# Rebuild containers (required when dependencies or assets change)
 docker-compose build
 
-# Restart with new version
+# Restart with new version (fast restart without rebuild skips code changes)
 docker-compose up -d
 ```
 

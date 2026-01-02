@@ -2,7 +2,7 @@
 
 A lightweight, self-hosted web interface for Dispatcharr stream management and optimization.
 
-Transform your IPTV setup with intelligent stream enrichment, quality analysis, and automatic ranking—all through a clean web UI that requires no command-line experience.
+Transform your IPTV setup with intelligent stream enrichment, quality analysis, and resilience-aware ordering—all through a clean web UI that requires no command-line experience.
 
 ---
 
@@ -21,13 +21,14 @@ The authors assume no liability for misuse of this software.
 
 ## ✨ Features
 
-- 🌐 **Web-based interface** - No SSH required, manage everything from your browser
+- 🌐 **Web-based interface** - No SSH required; manage everything from your browser
 - 🔌 **Seamless Dispatcharr integration** - Connects to your existing setup on the same network
-- 🔍 **Smart stream enrichment** - Automatically finds matching streams across all your providers
+- 🧭 **Job-centric workflow** - Define, save, and re-run **Job Definitions**; review every **Job Run** from history
+- 🔍 **Smart stream enrichment** - Primary Match → Include/Exclude → optional Advanced Regex (with regex-only mode)
 - 📊 **Quality analysis** - Full ffmpeg probe scoring based on reliability and technical quality
-- 🎯 **Intelligent ranking** - Optimal stream ordering aligned with Dispatcharr's failover behavior
+- 🎯 **Resilience-aware ordering** - Tier-based ordering that favors diverse, meaningful options for failover (no round robin)
 - 📡 **Client-side decode assumption** - Streams are proxied without transcoding; FFmpeg capability testing was removed for Firestick-style setups
-- ⚙️ **Configurable stream depth** - Control how many streams per provider to keep (1, 2, 3, etc.)
+- ⚙️ **Streams per Provider limit** - Set a cap per provider (1, 2, 3, etc.) without implying provider round robin
 - 📱 **Device compatibility filters** - Optimize for FireStick/Fire TV (excludes 4K streams that cause buffering)
 - 🌍 **Regional variant selection** - Include/exclude specific regional variants with wildcard filters
 - ✅ **Manual review step** - Checkbox selection before applying any changes
@@ -43,11 +44,11 @@ The authors assume no liability for misuse of this software.
 
 1. **📂 Select Groups** → Choose which channel groups to work with
 2. **📺 Select Channels** → Pick specific channels (e.g., BBC One, ESPN)
-3. **🔍 Search & Filter** → Find matching streams across all providers with customizable filters
-4. **✅ Review & Add** → Preview results and select streams to add via checkboxes
-5. **⚡ Analyze & Optimize** → Full ffmpeg quality probe, scoring, and ranking
+3. **🔍 Define your Job** → Use **Primary Match** → **Include/Exclude** → optional **Advanced Regex** (or regex-only) to pick streams
+4. **✅ Review & Add** → Preview matches and select streams to add via checkboxes
+5. **⚡ Analyze & Optimize** → Choose an **Analysis Profile** (Fast / Balanced / Deep), run a Job, then apply resilience-aware ordering
 
-**The result:** Your channels contain the optimal streams in the optimal order for Dispatcharr's failover behavior.
+**The result:** Each **Job Run** keeps the strongest options per provider while ordering them for resilient failover.
 
 ---
 
@@ -140,26 +141,22 @@ Once streams are added back into the channel, Dispatcharr-Maid performs a **full
 
 ### Scoring vs Ordering
 
-- **Scoring**: Each stream is evaluated independently using the probe results above. Scores reflect expected quality and reliability.
-- **Ordering**: After scoring, streams are arranged using a resilience-aware policy so that diverse, meaningful options appear early. The ordering policy may keep scores intact while shuffling within tiers for better failover; the highest score is not always the first position.
+- **Scoring (independent stream evaluation)**: Each stream is probed and scored based on quality and reliability. Scores stand alone and do not depend on provider position.
+- **Ordering (resilience-aware tiers)**: After scoring, streams are grouped into tiers and ordered to keep diverse, meaningful options visible early. The highest score is not always first; ordering respects tiers and provider limits rather than round robin.
 
-### Configurable Stream Depth
+### Streams per Provider limit
 
-Dispatcharr-Maid supports **configurable stream depth per provider**:
+Set how many streams to keep per provider (1, 2, 3, etc.). This is a **limit**, not an ordering strategy—provider diversity is enforced by the ordering policy, not by round robin.
 
-- Selecting **1** keeps only the strongest stream from each provider
-- Selecting **2** keeps the top two streams from each provider
-- And so on...
+### Resilience-Aware Ordering
 
-### Resilience-Aware Ordering (Optional)
+When enabled, ordering keeps scores intact while arranging streams into **tiers** so failover hits genuinely different options sooner:
 
-Some providers deliver multiple variants that behave identically under load, which can make failover meaningless on devices like Firesticks or IPTV apps proxied through Dispatcharr. When enabled, **resilience-aware ordering** keeps the existing scores intact while adjusting the final order so that:
+- Tier 1 keeps the best HD/FHD per provider (one per provider)
+- Tier 2 keeps clearly different variants (e.g., lower bitrate or different codec)
+- Tier 3 keeps SD/low-HD survival streams
 
-- Streams are grouped into **tiers**: Tier 1 keeps the best HD/FHD per provider (one per provider), Tier 2 keeps clearly different variants (e.g., lower bitrate or different codec), and Tier 3 keeps SD/low-HD survival streams.
-- Provider diversity is enforced **within each tier**, but tiers are not forced into a round robin—meaningful variants are tried before a provider's second-best "more of the same" entry.
-- Lower-bitrate variants of the same resolution are tried before higher-bitrate twins when scores are close (tie-break only), and at least one Tier 2 or Tier 3 option appears within the first few results (configurable depth).
-
-Enable it via `ordering.resilience_mode: true` in `config.yaml` (default is off for backward compatibility). Tune how early the fallback appears with `ordering.fallback_depth` (default 3) and adjust the tie-break window with `ordering.similar_score_delta`. The feature is deterministic, explainable, and leaves standard ordering unchanged when disabled.
+Provider diversity is enforced within each tier without round robin. Lower-bitrate twins edge ahead only as tie-breaks, and you can tune how early fallbacks appear with `ordering.fallback_depth` (default 3) and `ordering.similar_score_delta`.
 
 ### Provider Discovery & Capacity Visibility
 

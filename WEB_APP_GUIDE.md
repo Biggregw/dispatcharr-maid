@@ -44,27 +44,24 @@ Open:
 
 Click **Next: Run Jobs**.
 
-### 3) Refresh Channel Streams (enrichment step)
+### 3) Run Jobs (enrichment + analysis)
 
-This is intended for **one channel at a time** (because it uses a single primary match and shows you a preview list).
+This step is where you define and run Jobs. The matching model is always:
 
-1. Click **Refresh Channel Streams**
-2. Adjust:
-   - **Primary Match** (the exact search text used across providers)
-   - **Include Filter / Exclude Filter** (supports `*` wildcards, comma-separated)
-   - **Exclude +1 channels**
-   - **Advanced Regex (optional)** + **Use regex as the only match rule** if you want regex-only matching
-3. The modal shows a **preview list** of matching streams
-4. Untick any streams you do *not* want, then click **Add Selected Streams**
-5. Optional: click **Save Regex** to keep your selection logic for later (saved jobs are launched from the Run Jobs screen)
+**Primary Match → Include / Exclude → optional Advanced Regex (with a regex-only toggle)**
+
+- **Refresh Channel Streams** is intended for **one channel at a time** so you can inspect the preview list.
+- Click **Refresh Channel Streams**, adjust the matching chain above, and preview the results.
+- Untick any streams you do *not* want, then click **Add Selected Streams**.
+- Click **Save Job Definition** from the preview to create a **Saved Job** that can be managed from the Run Jobs screen (view, re-run, rename via re-saving, or delete).
 
 Dispatcharr-Maid assumes client-side decode (e.g., Firestick) with proxied playback only; FFmpeg capability testing and transcoding are out of scope.
 
 ### 4) Quality Check (ranking + cleanup)
 
-Pick an **Analysis Profile** to decide how deep the probe should go (Fast / **Balanced** (default) / Deep). Detailed knobs stay tucked under **Advanced analysis settings**, and YAML imports remain supported if you want to override everything.
+Pick an **Analysis Profile** (Fast / **Balanced** (default) / Deep) to decide how deep the probe should go. Raw analysis parameters stay under **Advanced analysis settings**, and YAML imports remain supported if you want to override everything.
 
-Set **Streams Per Provider** (e.g. `2`) then choose one:
+Set **Streams Per Provider** (e.g. `2`) as a **limit per provider**, then choose one:
 
 - **Quality Check (Apply Changes)**: runs analysis + scoring, then updates Dispatcharr immediately (ordering + cleanup respects your Streams Per Provider limit).
 - **Quality Check (Preview Plan)**: makes **no changes**. It generates a plan you can review and commit later from the Results page.

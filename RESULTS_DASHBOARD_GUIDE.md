@@ -22,7 +22,7 @@ Shows totals for the selected run:
 
 ### Run picker (history)
 
-At the top-right of the results page there’s a **Run** dropdown. It lists completed jobs from `logs/job_history.json` and lets you switch between runs.
+At the top-right of the results page there’s a **Run** dropdown. It lists completed **Job Runs** from `logs/job_history.json` and lets you switch between runs.
 
 Notes about how history is stored/pruned so it matches the UI behavior:
 
@@ -58,7 +58,7 @@ A frequency list of error strings captured during analysis (timeouts, bad URLs, 
 
 ### Streams
 
-Loads stream rows for the run and includes a helper to **generate a minimal regex**:
+Loads stream rows for the run and includes a helper to **generate a minimal regex** for future Primary Match/Advanced Regex use:
 
 - Tick streams you want to match
 - Untick streams you want excluded
