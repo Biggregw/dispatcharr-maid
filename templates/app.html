@@ -798,6 +798,12 @@
             border-bottom: none;
         }
 
+        .preview-channel {
+            color: #4a5568;
+            font-weight: 700;
+            font-size: 0.95em;
+        }
+
         .preview-name {
             font-weight: 600;
             color: #111827;
@@ -1280,7 +1286,7 @@
             
             <div class="action-grid">
                 <div class="action-panel">
-                    <button class="action-btn primary" onclick="showRefreshPreview()"
+                    <button class="action-btn primary" onclick="showRefreshPreview(event)"
                             style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
                         <span>🔄</span>
                         <span>Refresh Channel Streams</span>
@@ -1519,6 +1525,7 @@
             </div>
             <div class="modal-actions">
                 <button class="btn btn-back" onclick="closeRefreshPreview()">Cancel</button>
+                <button type="button" class="btn btn-back hidden" id="refresh-save-selection-button" onclick="saveChannelSelectionPresetFromPreview(event)">Save Selection</button>
                 <button type="button" class="btn btn-back" id="refresh-save-regex-button" onclick="saveRegexFromPreview(event)">Save Regex</button>
                 <button type="button" class="btn btn-next" id="refresh-submit-button" onclick="submitRefreshJob(event)">Add Selected Streams</button>
             </div>
@@ -1537,6 +1544,8 @@
         let refreshPreviewStreams = [];
         let refreshPreviewMeta = null;
         let refreshJobId = null;
+        let refreshPreviewMode = 'single';
+        let refreshPreviewChannels = [];
         let lastTerminalJobId = null;
         const terminalStatuses = ['completed', 'failed', 'cancelled'];
 
@@ -2321,44 +2330,70 @@
         }
 
         // Refresh preview helpers
+        function setRefreshPreviewMode(mode = 'single') {
+            refreshPreviewMode = mode === 'multi' ? 'multi' : 'single';
+            const saveRegexBtn = document.getElementById('refresh-save-regex-button');
+            const saveSelectionBtn = document.getElementById('refresh-save-selection-button');
+
+            if (saveRegexBtn) {
+                if (refreshPreviewMode === 'multi') saveRegexBtn.classList.add('hidden');
+                else saveRegexBtn.classList.remove('hidden');
+            }
+
+            if (saveSelectionBtn) {
+                if (refreshPreviewMode === 'multi') saveSelectionBtn.classList.remove('hidden');
+                else saveSelectionBtn.classList.add('hidden');
+            }
+        }
+
         function closeRefreshPreview() {
             document.getElementById('refresh-preview-modal').classList.add('hidden');
             refreshPreviewStreams = [];
             refreshPreviewMeta = null;
             refreshJobId = null;
+            refreshPreviewChannels = [];
+            setRefreshPreviewMode('single');
             resetRefreshProgress();
         }
 
-        function renderRefreshPreview(preview) {
-            refreshPreviewStreams = preview.streams || [];
-            refreshPreviewMeta = preview;
+        function renderRefreshPreview(preview, options = {}) {
+            refreshPreviewStreams = Array.isArray(preview?.streams) ? preview.streams : [];
+            refreshPreviewMeta = preview || {};
 
             const list = document.getElementById('refresh-preview-list');
             const description = document.getElementById('refresh-preview-description');
             const summary = document.getElementById('refresh-preview-summary');
 
-            const baseSearchText = preview.base_search_text ? `Base search text: "${preview.base_search_text}". ` : '';
-            description.textContent = (preview.channel_name
-                ? `Streams found for ${preview.channel_name}. Uncheck any you don't want to add.`
-                : 'Streams found for the selected channel.') + ` ${baseSearchText}`;
-            summary.textContent = `${preview.new_count} stream(s) ready to add from ${preview.total_matching} matches.`;
+            const baseSearchText = preview?.base_search_text ? `Base search text: "${preview.base_search_text}". ` : '';
+            const descriptionText = options.description || (
+                (preview?.channel_name
+                    ? `Streams found for ${preview.channel_name}. Uncheck any you don't want to add.`
+                    : 'Streams found for the selected channel.') + ` ${baseSearchText}`
+            );
 
-            if (preview.preview_truncated) {
-                const limit = preview.preview_limit || refreshPreviewStreams.length;
+            description.textContent = descriptionText;
+
+            const summaryText = options.summary || `${preview?.new_count ?? refreshPreviewStreams.length} stream(s) ready to add${preview?.total_matching ? ` from ${preview.total_matching} matches.` : ''}`;
+            summary.textContent = summaryText;
+
+            if (options.truncated || preview?.preview_truncated) {
+                const limit = preview?.preview_limit || refreshPreviewStreams.length;
                 const shown = Math.min(limit, refreshPreviewStreams.length);
                 description.textContent += ` Showing first ${shown} result(s) — refine your regex/filters to narrow matches.`;
             }
 
             if (!refreshPreviewStreams.length) {
-                list.innerHTML = '<div class="alert alert-warning">No streams matched your filters. Proceeding will clear current streams for this channel.</div>';
+                list.innerHTML = `${options.alertsHtml || ''}<div class="alert alert-warning">No streams matched your filters. Proceeding will clear current streams for this channel.</div>`;
                 return;
             }
 
-            list.innerHTML = refreshPreviewStreams.map(stream => `
+            const alerts = options.alertsHtml || '';
+            list.innerHTML = alerts + refreshPreviewStreams.map(stream => `
                 <label class="preview-item">
                     <input type="checkbox" class="refresh-stream-checkbox" value="${stream.id}" checked>
                     <div>
                         <div class="preview-name">${stream.name}</div>
+                        ${stream.channel_name ? `<div class="preview-channel">📺 ${stream.channel_name}${stream.channel_number ? ` (${stream.channel_number})` : ''}</div>` : ''}
                         <div class="preview-meta">
                             ${(() => {
                                 const metaParts = [];
@@ -2378,6 +2413,55 @@
                     </div>
                 </label>
             `).join('');
+        }
+
+        function renderMultiRefreshPreview(previews, totals = {}) {
+            setRefreshPreviewMode('multi');
+            const ids = Array.from(new Set((previews || []).map(p => p?.channel_id).filter(id => id !== undefined && id !== null)));
+            refreshPreviewChannels = ids;
+
+            const combined = [];
+            let truncated = false;
+            const errors = [];
+
+            for (const preview of previews || []) {
+                if (preview?.error) {
+                    const label = preview.channel_name || `Channel ${preview.channel_id}`;
+                    errors.push(`${label}: ${preview.error}`);
+                    continue;
+                }
+
+                if (preview?.preview_truncated) truncated = true;
+                const streams = Array.isArray(preview?.streams) ? preview.streams : [];
+                for (const stream of streams) {
+                    combined.push(stream);
+                }
+            }
+
+            combined.sort((a, b) => {
+                const parsedA = (a?.channel_number !== undefined && a?.channel_number !== null && a?.channel_number !== '') ? Number(a.channel_number) : null;
+                const parsedB = (b?.channel_number !== undefined && b?.channel_number !== null && b?.channel_number !== '') ? Number(b.channel_number) : null;
+                const numA = Number.isFinite(parsedA) ? parsedA : null;
+                const numB = Number.isFinite(parsedB) ? parsedB : null;
+                if (numA !== null && numB !== null && numA !== numB) return numA - numB;
+                const nameA = (a?.channel_name || '').toLowerCase();
+                const nameB = (b?.channel_name || '').toLowerCase();
+                if (nameA && nameB && nameA !== nameB) return nameA.localeCompare(nameB);
+                return (a?.name || '').toLowerCase().localeCompare((b?.name || '').toLowerCase());
+            });
+
+            let alertsHtml = '';
+            if (errors.length) {
+                alertsHtml += `<div class="alert alert-error">Some channels could not be previewed:<br>${errors.map(e => `• ${e}`).join('<br>')}</div>`;
+            }
+
+            const description = `Streams found for ${ids.length} channel${ids.length === 1 ? '' : 's'}. Uncheck any you don't want to add. Sorted by channel.`;
+            const summary = `${combined.length} stream(s) ready to add${totals.total_matching ? ` from ${totals.total_matching} matches.` : ''}`;
+
+            renderRefreshPreview(
+                { streams: combined, preview_truncated: truncated, preview_limit: totals.preview_limit, preview_channels: ids },
+                { description, summary, truncated, alertsHtml }
+            );
         }
 
         async function saveRegexFromPreview(event) {
@@ -2533,9 +2617,101 @@
             }
         }
 
-        async function showRefreshPreview() {
-            if (!selectedChannels || selectedChannels.length !== 1) {
-                alert('Please select exactly 1 channel to refresh.');
+        async function saveChannelSelectionPresetFromPreview(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+
+            if (!Array.isArray(refreshPreviewChannels) || refreshPreviewChannels.length === 0) {
+                alert('Preview at least one channel before saving a selection preset.');
+                return;
+            }
+
+            if (!Array.isArray(selectedGroups) || selectedGroups.length === 0) {
+                alert('Please select at least one group before saving a selection preset.');
+                return;
+            }
+
+            const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
+            const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
+            const regex = regexOverrideValue || regexFilterValue;
+            const regexMode = regexOverrideValue ? 'override' : 'filter';
+
+            if (!regex) {
+                alert('Add a Regex Override or Regex Filter before saving this selection.');
+                return;
+            }
+
+            const defaultName = `Selection (${refreshPreviewChannels.length} channel${refreshPreviewChannels.length === 1 ? '' : 's'})`;
+            const name = (prompt('Name this preset for Quality Check:', defaultName) || '').trim();
+            if (!name) return;
+
+            const saveBtn = document.getElementById('refresh-save-selection-button');
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = 'Saving...';
+            }
+
+            try {
+                const saveResp = await fetch('/api/regex/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name,
+                        regex,
+                        regex_mode: regexMode,
+                        groups: selectedGroups,
+                        channels: refreshPreviewChannels,
+                        streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
+                        exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
+                        base_search_text: document.getElementById('baseSearchText')?.value ?? null,
+                        include_filter: document.getElementById('includeFilter')?.value || null,
+                        exclude_filter: document.getElementById('excludeFilter')?.value || null
+                    })
+                });
+                const saveData = await saveResp.json();
+                if (!saveData.success) {
+                    throw new Error(saveData.error || 'Failed to save selection preset.');
+                }
+
+                await loadSavedRegexPresets();
+                await loadSavedPatterns();
+                alert(saveData.replaced
+                    ? 'Saved preset (overwrote an existing preset with the same name). You can load it from Step 1 for Quality Check.'
+                    : 'Saved preset. You can load it from Step 1 for Quality Check.');
+            } catch (e) {
+                alert(`Unable to save selection: ${e.message}`);
+            } finally {
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = 'Save Selection';
+                }
+            }
+        }
+
+        async function showRefreshPreview(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+
+            if (!selectedChannels || selectedChannels.length === 0) {
+                const proceed = window.confirm(
+                    'Refresh will start immediately for all selected groups without a preview.\n\n' +
+                    'Per-channel filters (base search text, include/exclude, +1) only apply when refreshing a single channel.'
+                );
+                if (!proceed) return;
+
+                const jobId = await startJob('refresh_optimize', null, event);
+                if (!jobId) {
+                    alert('Failed to start refresh job. Please try again.');
+                }
+                return;
+            }
+
+            if (selectedChannels.length > 1) {
+                await showMultiChannelRefreshPreview();
                 return;
             }
 
@@ -2546,6 +2722,7 @@
             resetRefreshProgress();
             document.getElementById('refresh-preview-summary').textContent = 'Looking up matching streams...';
             document.getElementById('refresh-preview-description').textContent = '';
+            setRefreshPreviewMode('single');
 
             try {
                 const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
@@ -2570,6 +2747,57 @@
 
                 if (data.success) {
                     renderRefreshPreview(data.preview);
+                } else {
+                    document.getElementById('refresh-preview-list').innerHTML = `<div class="alert alert-error">${data.error || 'Unable to preview streams.'}</div>`;
+                    document.getElementById('refresh-preview-summary').textContent = '';
+                }
+            } catch (error) {
+                document.getElementById('refresh-preview-list').innerHTML = `<div class="alert alert-error">Failed to preview streams: ${error.message}</div>`;
+                document.getElementById('refresh-preview-summary').textContent = '';
+            }
+        }
+
+        async function showMultiChannelRefreshPreview() {
+            document.getElementById('refresh-preview-modal').classList.remove('hidden');
+            document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-info preview-loading"><span class="loading-ellipsis">Searching for matching streams</span></div>';
+            resetRefreshProgress();
+            document.getElementById('refresh-preview-summary').textContent = 'Looking up matching streams...';
+            document.getElementById('refresh-preview-description').textContent = '';
+            setRefreshPreviewMode('multi');
+
+            const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
+            const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
+
+            try {
+                const payload = {
+                    channel_ids: selectedChannels,
+                    base_search_text: document.getElementById('baseSearchText')?.value ?? null,
+                    include_filter: document.getElementById('includeFilter')?.value || null,
+                    exclude_filter: document.getElementById('excludeFilter')?.value || null,
+            if (!regexOverrideValue && !regexFilterValue) {
+                document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-error">Multi-channel preview requires a Regex Override or Regex Filter. Please add one and try again.</div>';
+                document.getElementById('refresh-preview-summary').textContent = '';
+                return;
+            }
+
+            try {
+                const payload = {
+                    channel_ids: selectedChannels,
+                    exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
+                    stream_name_regex: regexFilterValue ? regexFilterValue : null,
+                    stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
+                };
+
+                const response = await fetch('/api/refresh-preview/batch', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    renderMultiRefreshPreview(data.previews || [], { total_matching: data.total_matching, total_new: data.total_new });
                 } else {
                     document.getElementById('refresh-preview-list').innerHTML = `<div class="alert alert-error">${data.error || 'Unable to preview streams.'}</div>`;
                     document.getElementById('refresh-preview-summary').textContent = '';

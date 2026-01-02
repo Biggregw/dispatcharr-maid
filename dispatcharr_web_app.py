@@ -3223,6 +3223,124 @@ def api_refresh_preview():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/refresh-preview/batch', methods=['POST'])
+def api_refresh_preview_batch():
+    """Preview matching streams for multiple channels before refreshing."""
+    try:
+        data = request.get_json() or {}
+        channel_ids = data.get('channel_ids') or data.get('channels')
+        base_search_text = data.get('base_search_text')
+        include_filter = data.get('include_filter')
+        exclude_filter = data.get('exclude_filter')
+        exclude_plus_one = data.get('exclude_plus_one', False)
+        stream_name_regex = data.get('stream_name_regex')
+        stream_name_regex_override = data.get('stream_name_regex_override')
+
+        if not channel_ids or not isinstance(channel_ids, list):
+            return jsonify({'success': False, 'error': 'channel_ids must be a non-empty list'}), 400
+
+        # Normalize channel ids up front to fail fast on bad input.
+        normalized_ids = []
+        for cid in channel_ids:
+            try:
+                normalized_ids.append(int(cid))
+            except Exception:
+                return jsonify({'success': False, 'error': f'Invalid channel id: {cid}'}), 400
+
+        api = DispatcharrAPI()
+        api.login()
+        config = Config('config.yaml')
+        provider_names = _load_provider_names(config)
+        effective_exclude_filter = _build_exclude_filter(exclude_filter, exclude_plus_one)
+
+        if stream_name_regex is None:
+            filters = config.get('filters') or {}
+            if isinstance(filters, dict):
+                stream_name_regex = filters.get('refresh_stream_name_regex')
+        effective_exclude_filter = _build_exclude_filter(None, exclude_plus_one)
+
+        # Fetch channel metadata once to annotate previews with names/numbers.
+        channels = api.fetch_channels()
+        by_id = {}
+        for ch in channels:
+            try:
+                cid = int(ch.get('id'))
+            except Exception:
+                continue
+            by_id[cid] = ch
+
+        previews = []
+        total_new = 0
+        total_matching = 0
+
+        for cid in normalized_ids:
+            channel_info = by_id.get(cid, {})
+            channel_name = channel_info.get('name')
+            channel_number = channel_info.get('channel_number')
+
+            preview = refresh_channel_streams(
+                api,
+                config,
+                cid,
+                base_search_text=base_search_text,
+                include_filter=include_filter,
+                base_search_text=None,
+                include_filter=None,
+                exclude_filter=effective_exclude_filter,
+                preview=True,
+                stream_name_regex=stream_name_regex,
+                stream_name_regex_override=stream_name_regex_override,
+                provider_names=provider_names,
+            )
+
+            # Keep the front end informed of per-channel errors without failing the batch.
+            if isinstance(preview, dict) and 'error' in preview:
+                previews.append(
+                    {
+                        'channel_id': cid,
+                        'channel_name': channel_name,
+                        'channel_number': channel_number,
+                        'error': preview.get('error'),
+                    }
+                )
+                continue
+
+            streams = preview.get('streams') or []
+            # Annotate streams with channel metadata to allow channel-aware sorting in the UI.
+            for stream in streams:
+                if isinstance(stream, dict):
+                    stream['channel_id'] = cid
+                    stream['channel_name'] = channel_name
+                    stream['channel_number'] = channel_number
+
+            previews.append(
+                {
+                    'channel_id': cid,
+                    'channel_name': channel_name,
+                    'channel_number': channel_number,
+                    'preview_truncated': preview.get('preview_truncated', False),
+                    'preview_limit': preview.get('preview_limit'),
+                    'streams': streams,
+                    'new_count': preview.get('new_count', 0),
+                    'total_matching': preview.get('total_matching', 0),
+                }
+            )
+
+            total_new += preview.get('new_count', 0) or 0
+            total_matching += preview.get('total_matching', 0) or 0
+
+        return jsonify(
+            {
+                'success': True,
+                'previews': previews,
+                'total_new': total_new,
+                'total_matching': total_matching,
+            }
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/start-job', methods=['POST'])
 def api_start_job():
     """Start a new job"""
