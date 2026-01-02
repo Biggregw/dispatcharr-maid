@@ -1188,6 +1188,29 @@
                         <span class="summary-value" id="saved-pattern-preview-count">—</span>
                     </div>
                 </div>
+
+                <div id="job-health-panel" class="selection-summary hidden" style="margin-top: 10px;">
+                    <div class="summary-row">
+                        <span class="summary-label">Last playback observed:</span>
+                        <span class="summary-value" id="job-health-last-playback">—</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Recent fallback events:</span>
+                        <span class="summary-value" id="job-health-fallbacks">0</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Recent errors observed:</span>
+                        <span class="summary-value" id="job-health-errors">0</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Last job started:</span>
+                        <span class="summary-value" id="job-health-last-run">—</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Passive indicators:</span>
+                        <span class="summary-value" id="job-health-warnings">None observed</span>
+                    </div>
+                </div>
             </div>
 
             <div id="refreshFilters" style="display: none; margin: 20px 0; padding: 20px; background: #fff5f0; border-radius: 8px; border-left: 4px solid #f97316;">
@@ -2020,6 +2043,78 @@
             el.classList.add('alert-info');
         }
 
+        function resetJobHealthPanel(message) {
+            const panel = document.getElementById('job-health-panel');
+            if (!panel) return;
+
+            const lastPlayback = document.getElementById('job-health-last-playback');
+            const lastRun = document.getElementById('job-health-last-run');
+            const fallbacks = document.getElementById('job-health-fallbacks');
+            const errors = document.getElementById('job-health-errors');
+            const warnings = document.getElementById('job-health-warnings');
+
+            if (message === 'hide') {
+                panel.classList.add('hidden');
+                return;
+            }
+
+            if (lastPlayback) lastPlayback.textContent = '—';
+            if (lastRun) lastRun.textContent = '—';
+            if (fallbacks) fallbacks.textContent = '0';
+            if (errors) errors.textContent = '0';
+            if (warnings) warnings.textContent = message || 'No observations recorded yet.';
+            panel.classList.remove('hidden');
+        }
+
+        function renderJobHealthPanel(entry) {
+            const panel = document.getElementById('job-health-panel');
+            if (!panel) return;
+            if (!entry) {
+                resetJobHealthPanel('No observations recorded yet.');
+                return;
+            }
+
+            const lastPlayback = document.getElementById('job-health-last-playback');
+            const lastRun = document.getElementById('job-health-last-run');
+            const fallbacks = document.getElementById('job-health-fallbacks');
+            const errors = document.getElementById('job-health-errors');
+            const warnings = document.getElementById('job-health-warnings');
+
+            if (lastPlayback) lastPlayback.textContent = entry.last_playback || 'Not observed yet';
+            if (lastRun) lastRun.textContent = entry.last_job_started || 'Not run yet';
+            if (fallbacks) fallbacks.textContent = String(entry.fallback_events || 0);
+            if (errors) errors.textContent = String(entry.error_events || 0);
+            if (warnings) {
+                const warningText = Array.isArray(entry.warnings) && entry.warnings.length > 0
+                    ? entry.warnings.join(' • ')
+                    : 'No passive indicators to report.';
+                warnings.textContent = warningText;
+            }
+
+            panel.classList.remove('hidden');
+        }
+
+        async function loadJobHealthForPreset(presetId) {
+            if (!presetId) {
+                resetJobHealthPanel('hide');
+                return;
+            }
+
+            resetJobHealthPanel('Loading observations…');
+            try {
+                const resp = await fetch(`/api/job-health?regex_preset_id=${encodeURIComponent(presetId)}`);
+                const data = await resp.json();
+                if (!data.success) {
+                    resetJobHealthPanel(data.error || 'Unable to load observations.');
+                    return;
+                }
+                const entries = Array.isArray(data.jobs) ? data.jobs : [];
+                renderJobHealthPanel(entries[0]);
+            } catch (e) {
+                resetJobHealthPanel(`Unable to load observations: ${e.message}`);
+            }
+        }
+
         async function onSavedPatternSelected() {
             const select = document.getElementById('saved-pattern-select');
             const runBtn = document.getElementById('btn-run-saved-pipeline');
@@ -2033,6 +2128,7 @@
                 if (runBtn) runBtn.disabled = true;
                 if (delBtn) delBtn.disabled = true;
                 if (preview) preview.classList.add('hidden');
+                resetJobHealthPanel('hide');
                 return;
             }
             if (runBtn) runBtn.disabled = false;
@@ -2042,6 +2138,7 @@
             if (nameEl) nameEl.textContent = pattern?.name || 'Saved job';
             if (countEl) countEl.textContent = 'Resolving...';
             if (preview) preview.classList.remove('hidden');
+            loadJobHealthForPreset(patternId);
 
             try {
                 const resp = await fetch('/api/regex/presets/resolve', {
