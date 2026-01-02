@@ -189,6 +189,8 @@ def summarize_job_health(job_history: List[Dict], observations: Iterable[Observa
                 "fallback_events": 0,
                 "error_events": 0,
                 "last_job_started": None,
+                "last_job_ended": None,
+                "last_run_status": "Unknown",
                 "playback_sessions_24h": 0,
                 "warnings": [],
             }
@@ -214,22 +216,35 @@ def summarize_job_health(job_history: List[Dict], observations: Iterable[Observa
         except Exception:
             parsed_ts = None
 
-        existing_last_playback = bucket.get("last_playback")
-        if existing_last_playback is None:
-            bucket["last_playback"] = obs.ts
-        elif parsed_ts:
-            try:
-                if parsed_ts > datetime.fromisoformat(existing_last_playback):
-                    bucket["last_playback"] = obs.ts
-            except Exception:
+        if obs.event != "ended":
+            existing_last_playback = bucket.get("last_playback")
+            if existing_last_playback is None:
                 bucket["last_playback"] = obs.ts
-        else:
-            bucket["last_playback"] = bucket.get("last_playback") or obs.ts
+            elif parsed_ts:
+                try:
+                    if parsed_ts > datetime.fromisoformat(existing_last_playback):
+                        bucket["last_playback"] = obs.ts
+                except Exception:
+                    bucket["last_playback"] = obs.ts
+            else:
+                bucket["last_playback"] = bucket.get("last_playback") or obs.ts
 
         if obs.event in {"started", "observed"} and parsed_ts:
             if now - parsed_ts <= playback_window:
                 # Passive playback counters are derived for display only and never feed orchestration.
                 bucket["playback_sessions_24h"] += 1
+        if obs.event == "ended":
+            existing_last_ended = bucket.get("last_job_ended")
+            if existing_last_ended is None:
+                bucket["last_job_ended"] = obs.ts
+            elif parsed_ts:
+                try:
+                    if parsed_ts > datetime.fromisoformat(existing_last_ended):
+                        bucket["last_job_ended"] = obs.ts
+                except Exception:
+                    bucket["last_job_ended"] = obs.ts
+            else:
+                bucket["last_job_ended"] = bucket.get("last_job_ended") or obs.ts
         if obs.event == "fallback_used":
             bucket["fallback_events"] += 1
         if obs.event == "error":
@@ -252,6 +267,21 @@ def summarize_job_health(job_history: List[Dict], observations: Iterable[Observa
             except Exception:
                 # If timestamps are malformed, skip timing warnings silently.
                 pass
+        # Derive a simple, non-blocking status for display only.
+        last_started = bucket.get("last_job_started")
+        last_ended = bucket.get("last_job_ended")
+        status = "Unknown"
+        try:
+            if last_ended and (not last_started or datetime.fromisoformat(last_ended) >= datetime.fromisoformat(last_started)):
+                status = "Last run completed"
+            elif last_started and not last_ended:
+                status = "Last run in progress"
+        except Exception:
+            if last_ended:
+                status = "Last run completed"
+            elif last_started:
+                status = "Last run in progress"
+        bucket["last_run_status"] = status
         bucket["warnings"] = warnings
 
     return summaries

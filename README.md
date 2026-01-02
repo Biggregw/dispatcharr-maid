@@ -57,7 +57,8 @@ Saved Jobs can be viewed, executed, and deleted from the Run Jobs screen.
 Each run updates a Saved Job in place using its identity (groups/channels, Primary Match, include/exclude/+1, analysis profile, and regex mode).
 Starting a run always refreshes the matching Saved Job instead of creating ad-hoc entries.
 
-Playback observations are recorded passively for visibility only and never trigger automated actions.
+Playback observations (Phase 3) are informational only: they are recorded passively for visibility and do not alter ordering,
+scoring, scheduling, or job execution behaviour.
 
 ## Notes on Analysis
 
