@@ -1,298 +1,62 @@
-# Dispatcharr-Maid 🧹
+# Dispatcharr-Maid
 
-A lightweight, self-hosted web interface for Dispatcharr stream management and optimization.
+Dispatcharr-Maid is a companion tool for Dispatcharr that enriches, analyses, and reorders channel streams to improve real-world playback reliability, particularly for IPTV and proxy-based clients.
 
-Transform your IPTV setup with intelligent stream enrichment, quality analysis, and resilience-aware ordering—all through a clean web UI that requires no command-line experience.
+## Key Capabilities
 
----
+- Enriches channels by discovering matching streams across multiple providers
+- Scores streams independently based on quality, stability, and compatibility
+- Applies resilience-aware ordering to ensure meaningful failover
+- Limits per-provider dominance without assuming provider reliability
+- Supports device-aware filtering and low-bitrate fallback promotion
+- Jobs can be saved, re-run, and managed via the Run Jobs screen
 
-## ⚖️ Legal Disclaimer
+## How It Works
 
-**Dispatcharr-Maid is a general-purpose management and analysis tool.**
+1. **Primary Match**
+   Select channels using a simple, readable match string.
 
-- It does **not** provide IPTV content, streams, playlists, or access to media of any kind
-- It does **not** endorse, promote, or encourage the use of illegal or unauthorized streams
+2. **Optional Refinement**
+   Narrow results using include/exclude rules or Advanced Regex when required.
 
-**Users are solely responsible** for ensuring that any content or services they connect to are used in compliance with applicable laws and licensing requirements in their country.
+3. **Stream Enrichment**
+   Matching streams are gathered across configured providers.
 
-The authors assume no liability for misuse of this software.
+4. **Scoring**
+   Each stream is evaluated independently based on resolution, bitrate, codec, and optional analysis.
 
----
+5. **Resilience-Aware Ordering**
+   Streams are ordered using tiers designed to improve real-world failover:
+   - Tier 1: One best primary stream per provider
+   - Tier 2: Meaningfully different variants (codec, bitrate, or resolution changes)
+   - Tier 3: Low-bitrate fallback streams
+   - Remaining streams are kept as overflow
 
-## ✨ Features
+6. **Limits, Not Assumptions**
+   Provider limits cap how many streams are retained, but do not define ordering.
+   Providers are not treated as failure domains.
 
-- 🌐 **Web-based interface** - No SSH required; manage everything from your browser
-- 🔌 **Seamless Dispatcharr integration** - Connects to your existing setup on the same network
-- 🧭 **Job-centric workflow** - Define, save, and re-run **Job Definitions**; review every **Job Run** from history
-- 🔍 **Smart stream enrichment** - Primary Match → Include/Exclude → optional Advanced Regex (with regex-only mode)
-- 📊 **Quality analysis** - Full ffmpeg probe scoring based on reliability and technical quality
-- 🎯 **Resilience-aware ordering** - Tier-based ordering that favors diverse, meaningful options for failover (no round robin)
-- 📡 **Client-side decode assumption** - Streams are proxied without transcoding; FFmpeg capability testing was removed for Firestick-style setups
-- ⚙️ **Streams per Provider limit** - Set a cap per provider (1, 2, 3, etc.) without implying provider round robin
-- 📱 **Device compatibility filters** - Optimize for FireStick/Fire TV (excludes 4K streams that cause buffering)
-- 🌍 **Regional variant selection** - Include/exclude specific regional variants with wildcard filters
-- ✅ **Manual review step** - Checkbox selection before applying any changes
-- 💾 **Data persistence** - CSV files, logs, and configuration automatically preserved
-- 🔄 **Auto-restart** - Survives server reboots with Docker's built-in restart policies
-- 🐳 **Docker-based** - Clean, isolated environment with easy deployment
+## Stream Depth and Provider Limits
 
----
+The “Streams per Provider” setting limits how many streams are kept from each provider.
+It does not imply round-robin ordering.
 
-## 🎯 How It Works
+Ordering is always determined after scoring and resilience grouping.
 
-**Five simple steps to optimized streams:**
+## Matching and Advanced Regex
 
-1. **📂 Select Groups** → Choose which channel groups to work with
-2. **📺 Select Channels** → Pick specific channels (e.g., BBC One, ESPN)
-3. **🔍 Define your Job** → Use **Primary Match** → **Include/Exclude** → optional **Advanced Regex** (or regex-only) to pick streams
-4. **✅ Review & Add** → Preview matches and select streams to add via checkboxes
-5. **⚡ Analyze & Optimize** → Choose an **Analysis Profile** (Fast / Balanced / Deep), run a Job, then apply resilience-aware ordering
+- **Primary Match** is the default and recommended approach
+- Include/exclude rules refine results
+- **Advanced Matching (Regex)** bypasses simple matching and should only be used by experienced users
+- Regex-only mode disables Primary Match entirely
 
-**The result:** Each **Job Run** keeps the strongest options per provider while ordering them for resilient failover.
+## Jobs and Run Jobs
 
----
+Jobs define what to run and how to run it.
+Saved Jobs can be viewed, executed, and deleted from the Run Jobs screen.
 
-## 📋 Prerequisites
+## Notes on Analysis
 
-Before you begin, make sure you have:
-
-- ✅ **Docker and docker-compose** installed on your server
-- ✅ **Dispatcharr** running on the same Docker network
-- ✅ **Dispatcharr credentials** (username and password)
-
-**Important (Docker networking):** This project’s `docker-compose.yml` joins an **existing external network** called `dispatcharr_default`. That network must already exist (typically created automatically by the Dispatcharr docker-compose project). If your Dispatcharr network has a different name, update `docker-compose.yml` accordingly (see [Docker Deployment Guide](DOCKER_GUIDE.md)).
-
----
-
-## 🚀 Quick Start
-
-Get up and running in minutes:
-
-```bash
-# 1. Download the latest release
-wget https://github.com/Biggregw/dispatcharr-maid/archive/refs/heads/main.zip
-unzip main.zip && cd dispatcharr-maid-main
-
-# 2. Create your local config files (these stay private)
-cp .env.example .env
-cp config.yaml.example config.yaml
-
-# Optional (nice provider names in Results/UI)
-cp provider_names.json.example provider_names.json
-
-# 3. Configure your credentials + settings
-nano .env         # Set DISPATCHARR_BASE_URL / USER / PASS
-nano config.yaml  # Set filters.channel_group_ids (or use the Web UI to save regex selection)
-
-# 4. Start the container
-docker-compose up -d
-
-# 5. Access the web interface
-# Open http://YOUR-SERVER-IP:5000 in your browser
-```
-
-**🎉 That's it!** You should see the Dispatcharr Maid dashboard.
-
-📖 **Need detailed setup instructions?** See the **[Docker Deployment Guide](DOCKER_GUIDE.md)** for comprehensive installation, configuration, and troubleshooting.
-
----
-
-## 📸 Screenshots
-
-> **Coming soon:** Web interface screenshots showing the dashboard, stream selection, and results views.
-
-<!-- Placeholder for future screenshots
-![Dashboard](docs/screenshots/dashboard.png)
-*Clean, intuitive web interface - no command line needed*
-
-![Stream Selection](docs/screenshots/stream-selection.png)
-*Visual stream selection with checkbox controls and real-time filtering*
--->
-
----
-
-## 🔧 Stream Selection, Enrichment, and Ranking
-
-### How Dispatcharr-Maid Works
-
-**Dispatcharr-Maid works from your existing Dispatcharr channel configuration.**
-
-For a given channel, it reads the current list of provider streams already associated with that channel and applies logic derived from the original channel name rather than relying on provider-specific naming alone.
-
-Dispatcharr-Maid then **searches across all configured providers** in Dispatcharr to identify additional matching streams for the same channel. This enrichment step uses only streams that already exist within Dispatcharr and does not source content externally.
-
-### Filtering and Selection
-
-During stream selection and enrichment, you can apply rules such as:
-
-- **Regional variants** - Include or exclude specific regions (e.g., "BBC One Yorkshire")
-- **Device compatibility** - Filter for FireStick/Fire TV (excludes 4K streams that may buffer)
-- **Custom filters** - Include/exclude patterns using wildcards (e.g., `york*`, `linc*`)
-
-Before any changes are applied, a **manual review step** allows individual streams to be included or excluded using checkboxes—you have complete control.
-
-### Quality Analysis and Ranking
-
-Once streams are added back into the channel, Dispatcharr-Maid performs a **full ffmpeg probe** and analyzes streams based on factors such as:
-
-- Technical quality (bitrate, codec, resolution)
-- Stream reliability and responsiveness
-- Connection speed and stability
-
-### Scoring vs Ordering
-
-- **Scoring (independent stream evaluation)**: Each stream is probed and scored based on quality and reliability. Scores stand alone and do not depend on provider position.
-- **Ordering (resilience-aware tiers)**: After scoring, streams are arranged into resilience-aware tiers. Ordering surfaces diverse, meaningful failover options without provider interleaving or round robin.
-
-### Streams per Provider limit
-
-Set how many streams to keep per provider (1, 2, 3, etc.). This is a **limit**, not an ordering strategy. Provider diversity comes from tiered ordering; a provider is not treated as a failure domain, and there is no provider-level rotation.
-
-### Resilience-Aware Ordering
-
-Ordering preserves scores but applies a tier model that matches current UI terminology (Primary Match, Saved Job) and keeps distinct options visible:
-
-1. **Tier 1: Primary streams per provider** – the top-scoring Primary Match-quality stream from each provider (one per provider) is surfaced first.
-2. **Tier 2: Meaningful variants** – additional streams that differ in codec, bitrate, or resolution and provide real coverage differences.
-3. **Tier 3: Low-bitrate fallbacks** – survival-grade SD/low-HD streams positioned for last-resort continuity.
-4. **Overflow** – any remaining streams ordered by score after the tiers above.
-
-Within each tier, high scores are honored while keeping variety ahead of near-duplicate options. Stream depth does not control interleaving: tiers do. This tiering keeps provider diversity visible for failover without assuming a provider equals a failure domain.
-
-**Example:**
-
-- Provider X: 1080p H.264 Primary Match (score 92), 576p low-bitrate (score 55)
-- Provider Y: 1080p H.265 Primary Match (score 89), 720p alternate codec (score 73)
-
-Ordering yields Tier 1: X 1080p, Y 1080p; Tier 2: Y 720p alternate; Tier 3: X 576p fallback; overflow is empty. The **Streams per Provider** limit caps how many entries from each provider reach the tiers but does not change the tier-first ordering.
-
-### Provider Discovery & Capacity Visibility
-
-Dispatcharr-Maid can auto-discover provider IDs, names, and capacity metadata
-directly from Dispatcharr (via `manage.py` or an authenticated API call). This
-means you no longer need to maintain provider_map.json manually—manual overrides
-in provider_names.json are still supported and take precedence.
-
-Because most providers enforce strict connection limits, **provider diversity**
-is critical: spreading channels across multiple providers reduces the risk of
-hitting per-provider max_streams limits. Resilience-aware ordering keeps that
-diversity visible through tiering instead of provider rotations.
-
-### Provider Usage (Viewing Activity) via Access Logs (Optional)
-
-If your IPTV client uses the **Xtream/M3U connection served by Dispatcharr**, you can
-estimate real-world provider usage by parsing your reverse-proxy access logs
-(for example, **Nginx Proxy Manager** logs containing playback requests like
-`/live/<user>/<pass>/<stream_id>.ts`).
-
-Dispatcharr-Maid exposes an API endpoint:
-
-- `GET /api/usage/providers?days=7&proxy_host=1`
-
-Configure `config.yaml` under `usage:` and mount your proxy logs into the Maid
-container (see `config.yaml.example`).
-
----
-
-## 📚 Documentation
-
-Complete guides for every aspect of Dispatcharr Maid:
-
-| Guide | Description |
-|-------|-------------|
-| **[Docker Deployment Guide](DOCKER_GUIDE.md)** | Complete installation, configuration, networking, and advanced setup |
-| **[Web App Guide](WEB_APP_GUIDE.md)** | Step-by-step instructions for using the web interface |
-| **[Web Monitor Guide](WEB_MONITOR_GUIDE.md)** | Legacy/optional read-only monitor (most users should use the main web UI) |
-| **[Results Dashboard Guide](RESULTS_DASHBOARD_GUIDE.md)** | Understanding and analyzing your results |
-
----
-
-## 🔍 Troubleshooting
-
-Running into issues? Here are some quick tips:
-
-**Container won't start:**
-```bash
-docker-compose logs dispatcharr-maid-web
-```
-
-**Can't connect to Dispatcharr:**
-```bash
-# Make sure you're using the container name, not localhost
-# In .env: DISPATCHARR_BASE_URL=http://dispatcharr:9191
-docker exec dispatcharr-maid-web ping dispatcharr
-```
-
-**Web interface not accessible:**
-```bash
-# Check if the web container is running
-docker-compose ps dispatcharr-maid-web
-
-# Check if port 5000 is available
-sudo netstat -tlnp | grep 5000
-```
-
-📖 **For detailed troubleshooting**, see the **[Docker Guide troubleshooting section](DOCKER_GUIDE.md#-troubleshooting)**.
-
-**Still stuck?** Open an issue on GitHub with:
-- Your setup details (OS, Docker version, Dispatcharr version)
-- Relevant log output
-- Steps to reproduce the issue
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Whether you're:
-
-- 🐛 Reporting bugs
-- 💡 Suggesting features
-- 📝 Improving documentation
-- 🔧 Submitting code improvements
-
-Please feel free to open an issue or submit a pull request.
-
-### How to Contribute
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## 📄 License
-
-This project is available for personal, non-commercial use. Please review the repository license file for full details.
-
----
-
-## 🙏 Acknowledgments
-
-Built to complement the excellent work of the **[Dispatcharr](https://github.com/Dispatcharr/Dispatcharr)** project.
-
-Special thanks to the open-source community for the tools and libraries that make this possible:
-- Flask for the web framework
-- FFmpeg for stream analysis
-- Docker for containerization
-- And many more...
-
----
-
-## ☕ Buy Me a Coffee
-
-If Dispatcharr-Maid saves you time or helps keep things running smoothly, you can support development with a coffee.
-
-https://buymeacoffee.com/biggregw
-
----
-
-## 🌟 Star This Project
-
-If you find Dispatcharr-Maid useful, please consider giving it a ⭐ on GitHub! It helps others discover the project.
-
----
-
-## 🐼 Made with ❤️ for the Dispatcharr community 🐼
-
+Stream analysis may include optional ffmpeg probing when enabled.
+Analysis is used for scoring, not playback.
+Proxy-based clients (e.g. Firestick) handle decoding client-side.
