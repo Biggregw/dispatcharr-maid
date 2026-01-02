@@ -279,6 +279,252 @@ def _get_regex_preset_by_id(preset_id):
     return None
 
 
+def _normalize_id_list(values):
+    normalized = []
+    if isinstance(values, (list, tuple, set)):
+        for v in values:
+            try:
+                normalized.append(int(v))
+            except Exception:
+                continue
+    return tuple(sorted(set(normalized)))
+
+
+def _normalize_text(value):
+    return str(value or '').strip()
+
+
+def _regex_preset_identity(groups=None, channels=None, base_search_text=None, regex=None, regex_mode=None):
+    channels_normalized = None if channels is None else _normalize_id_list(channels)
+    return {
+        'groups': _normalize_id_list(groups),
+        'channels': channels_normalized,
+        'primary_match': _normalize_text(base_search_text),
+        'advanced_regex': _normalize_text(regex),
+        'regex_only': _normalize_text(regex_mode).lower() == 'override'
+    }
+
+
+def _compute_regex_preset_identity(preset):
+    if not isinstance(preset, dict):
+        return None
+    identity = preset.get('identity')
+    if isinstance(identity, dict):
+        return {
+            'groups': _normalize_id_list(identity.get('groups')),
+            'channels': _normalize_id_list(identity.get('channels')) if identity.get('channels') is not None else None,
+            'primary_match': _normalize_text(identity.get('primary_match')),
+            'advanced_regex': _normalize_text(identity.get('advanced_regex')),
+            'regex_only': bool(identity.get('regex_only'))
+        }
+    return _regex_preset_identity(
+        groups=preset.get('groups'),
+        channels=preset.get('channels'),
+        base_search_text=preset.get('base_search_text'),
+        regex=preset.get('regex'),
+        regex_mode=preset.get('regex_mode'),
+    )
+
+
+def _generate_regex_preset_name(base_search_text, regex, regex_mode):
+    primary = _normalize_text(base_search_text)
+    advanced = _normalize_text(regex)
+    regex_only = _normalize_text(regex_mode).lower() == 'override'
+
+    descriptor = 'Regex (only)' if regex_only else 'Regex'
+
+    if primary and advanced:
+        return f"{primary} – {descriptor}"
+    if primary:
+        return f"{primary} – Primary Match"
+    if advanced:
+        return f"{advanced} – {descriptor}"
+    return 'Saved Job'
+
+
+def _replace_or_insert_preset(presets, preset, preserve_existing_name=False):
+    identity = _compute_regex_preset_identity(preset)
+    preset['identity'] = identity
+    now_iso = datetime.now().isoformat()
+    preset['updated_at'] = now_iso
+
+    replaced = False
+    for idx, existing in enumerate(presets):
+        existing_identity = _compute_regex_preset_identity(existing)
+        if existing_identity and existing_identity == identity:
+            preset['id'] = str(existing.get('id') or preset.get('id') or str(uuid.uuid4()))
+            preset['created_at'] = existing.get('created_at') or preset.get('created_at') or now_iso
+            if preserve_existing_name and existing.get('name'):
+                preset['name'] = existing.get('name')
+            presets[idx] = preset
+            replaced = True
+            break
+
+    if not replaced:
+        for idx, existing in enumerate(presets):
+            if isinstance(existing, dict) and str(existing.get('name', '')).strip().casefold() == str(preset.get('name', '')).strip().casefold():
+                preset['id'] = str(existing.get('id') or preset.get('id') or str(uuid.uuid4()))
+                preset['created_at'] = existing.get('created_at') or preset.get('created_at') or now_iso
+                presets[idx] = preset
+                replaced = True
+                break
+
+    if not replaced:
+        preset['id'] = preset.get('id') or str(uuid.uuid4())
+        preset['created_at'] = preset.get('created_at') or now_iso
+        presets.insert(0, preset)
+
+    return replaced
+
+
+def _build_regex_preset_payload(data, *, allow_generated_name=False, allow_regex_fallback=False):
+    name = data.get('name')
+    regex = data.get('regex')
+    if allow_regex_fallback and (not isinstance(regex, str) or not regex.strip()):
+        primary = _normalize_text(data.get('base_search_text'))
+        if primary:
+            regex = re.escape(primary)
+            if not data.get('regex_mode'):
+                data['regex_mode'] = 'filter'
+
+    regex_mode = (data.get('regex_mode') or '').strip().lower() or None
+    if regex_mode is not None and regex_mode not in ('override', 'filter'):
+        raise ValueError('"regex_mode" must be "override" or "filter" when provided')
+
+    base_search_text = data.get('base_search_text')
+    include_filter = data.get('include_filter')
+    exclude_filter = data.get('exclude_filter')
+    exclude_plus_one = data.get('exclude_plus_one')
+
+    if not isinstance(regex, str) or not regex.strip():
+        raise ValueError('"regex" must be a non-empty string')
+    try:
+        re.compile(regex)
+    except re.error as exc:
+        raise ValueError(f'Invalid regex: {exc}')
+
+    if base_search_text is not None and not isinstance(base_search_text, str):
+        raise ValueError('"base_search_text" must be a string or null')
+    if include_filter is not None and not isinstance(include_filter, str):
+        raise ValueError('"include_filter" must be a string or null')
+    if exclude_filter is not None and not isinstance(exclude_filter, str):
+        raise ValueError('"exclude_filter" must be a string or null')
+    if exclude_plus_one is not None and not isinstance(exclude_plus_one, bool):
+        raise ValueError('"exclude_plus_one" must be a boolean or null')
+
+    name_to_use = name
+    if allow_generated_name and (not isinstance(name_to_use, str) or not name_to_use.strip()):
+        name_to_use = _generate_regex_preset_name(base_search_text, regex, regex_mode)
+
+    if not isinstance(name_to_use, str) or not name_to_use.strip():
+        raise ValueError('"name" must be a non-empty string')
+
+    groups = data.get('groups')
+    group_ids = None
+    if groups is not None:
+        if not isinstance(groups, list) or not groups:
+            raise ValueError('"groups" must be a non-empty list when provided')
+        tmp = []
+        for g in groups:
+            try:
+                tmp.append(int(g))
+            except Exception:
+                raise ValueError(f'Invalid group id: {g}')
+        group_ids = tmp
+
+    channels = data.get('channels')
+    channel_ids = None
+    if channels is not None:
+        if not isinstance(channels, list):
+            raise ValueError('"channels" must be a list or null')
+        tmp = []
+        for c in channels:
+            try:
+                tmp.append(int(c))
+            except Exception:
+                raise ValueError(f'Invalid channel id: {c}')
+        channel_ids = tmp
+
+    streams_per_provider = data.get('streams_per_provider')
+    try:
+        streams_per_provider_i = int(streams_per_provider) if streams_per_provider is not None else None
+    except Exception:
+        raise ValueError('"streams_per_provider" must be an integer')
+
+    now_iso = datetime.now().isoformat()
+    normalized_name = name_to_use.strip()
+    preset = {
+        'id': data.get('id') or str(uuid.uuid4()),
+        'name': normalized_name,
+        'regex': regex.strip(),
+        'created_at': now_iso,
+        'updated_at': now_iso
+    }
+    if regex_mode:
+        preset['regex_mode'] = regex_mode
+    if group_ids is not None:
+        preset['groups'] = group_ids
+    if channels is not None:
+        preset['channels'] = channel_ids
+    if streams_per_provider_i is not None:
+        preset['streams_per_provider'] = streams_per_provider_i
+    if base_search_text is not None:
+        preset['base_search_text'] = base_search_text
+    if include_filter is not None:
+        preset['include_filter'] = include_filter
+    if exclude_filter is not None:
+        preset['exclude_filter'] = exclude_filter
+    if exclude_plus_one is not None:
+        preset['exclude_plus_one'] = bool(exclude_plus_one)
+
+    preset['identity'] = _regex_preset_identity(
+        groups=group_ids,
+        channels=channel_ids,
+        base_search_text=base_search_text,
+        regex=regex,
+        regex_mode=regex_mode,
+    )
+    return preset
+
+
+def _maybe_auto_save_job_request(job_request, preview_only=False):
+    if preview_only:
+        return False
+
+    try:
+        regex_override = _normalize_text(job_request.get('stream_name_regex_override'))
+        regex_filter = _normalize_text(job_request.get('stream_name_regex'))
+        chosen_regex = regex_override or regex_filter
+        regex_mode = 'override' if regex_override else ('filter' if chosen_regex else None)
+
+        payload = {
+            'name': job_request.get('regex_preset_name') or job_request.get('name'),
+            'regex': chosen_regex,
+            'regex_mode': regex_mode,
+            'groups': job_request.get('groups') or [],
+            'channels': job_request.get('channels'),
+            'streams_per_provider': job_request.get('streams_per_provider'),
+            'base_search_text': job_request.get('base_search_text'),
+            'include_filter': job_request.get('include_filter'),
+            'exclude_filter': job_request.get('exclude_filter'),
+            'exclude_plus_one': job_request.get('exclude_plus_one'),
+        }
+
+        preset = _build_regex_preset_payload(
+            payload,
+            allow_generated_name=True,
+            allow_regex_fallback=True
+        )
+    except ValueError:
+        return False
+
+    with _regex_presets_lock:
+        presets = _load_stream_name_regex_presets()
+        _replace_or_insert_preset(presets, preset, preserve_existing_name=True)
+        _save_stream_name_regex_presets(presets[:200])
+    return True
+
+
 def _load_channel_selection_patterns():
     path = _channel_selection_patterns_path()
     if not path.exists():
@@ -3247,7 +3493,7 @@ def api_start_job():
         selected_stream_ids = data.get('selected_stream_ids')
         stream_name_regex = data.get('stream_name_regex')
         stream_name_regex_override = data.get('stream_name_regex_override')
-        
+
         if not job_type:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
 
@@ -3315,7 +3561,32 @@ def api_start_job():
 
         if not groups:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
-        
+
+        if stream_name_regex is None:
+            try:
+                filters = Config('config.yaml').get('filters') or {}
+                if isinstance(filters, dict):
+                    stream_name_regex = filters.get('refresh_stream_name_regex')
+            except Exception:
+                stream_name_regex = None
+
+        try:
+            _maybe_auto_save_job_request({
+                'groups': groups,
+                'channels': channels,
+                'streams_per_provider': streams_per_provider,
+                'base_search_text': base_search_text,
+                'include_filter': include_filter,
+                'exclude_filter': exclude_filter,
+                'exclude_plus_one': exclude_plus_one,
+                'stream_name_regex': stream_name_regex,
+                'stream_name_regex_override': stream_name_regex_override,
+                'regex_preset_name': regex_preset_name or data.get('regex_preset_name'),
+                'name': data.get('name')
+            })
+        except Exception:
+            logging.debug("Auto-saving job as preset failed", exc_info=True)
+
         # Create job
         job_id = str(uuid.uuid4())
         workspace, config_path = create_job_workspace(job_id)
@@ -4635,108 +4906,19 @@ def api_save_regex():
     """
     try:
         data = request.get_json() or {}
-        name = data.get('name')
-        regex = data.get('regex')
-        if not isinstance(regex, str) or not regex.strip():
-            return jsonify({'success': False, 'error': '"regex" must be a non-empty string'}), 400
-        if not isinstance(name, str) or not name.strip():
-            return jsonify({'success': False, 'error': '"name" must be a non-empty string'}), 400
+        preserve_existing_name = bool(data.get('preserve_existing_name'))
         try:
-            re.compile(regex)
-        except re.error as exc:
-            return jsonify({'success': False, 'error': f'Invalid regex: {exc}'}), 400
-
-        groups = data.get('groups')
-        group_ids = None
-        if groups is not None:
-            if not isinstance(groups, list) or not groups:
-                return jsonify({'success': False, 'error': '"groups" must be a non-empty list when provided'}), 400
-            tmp = []
-            for g in groups:
-                try:
-                    tmp.append(int(g))
-                except Exception:
-                    return jsonify({'success': False, 'error': f'Invalid group id: {g}'}), 400
-            group_ids = tmp
-
-        channels = data.get('channels')
-        channel_ids = None
-        if channels is not None:
-            if not isinstance(channels, list):
-                return jsonify({'success': False, 'error': '"channels" must be a list or null'}), 400
-            tmp = []
-            for c in channels:
-                try:
-                    tmp.append(int(c))
-                except Exception:
-                    return jsonify({'success': False, 'error': f'Invalid channel id: {c}'}), 400
-            channel_ids = tmp
-
-        streams_per_provider = data.get('streams_per_provider')
-        try:
-            streams_per_provider_i = int(streams_per_provider) if streams_per_provider is not None else None
-        except Exception:
-            return jsonify({'success': False, 'error': '"streams_per_provider" must be an integer'}), 400
-
-        # Optional: store refresh filter settings alongside the regex.
-        base_search_text = data.get('base_search_text')
-        include_filter = data.get('include_filter')
-        exclude_filter = data.get('exclude_filter')
-        exclude_plus_one = data.get('exclude_plus_one')
-        regex_mode = (data.get('regex_mode') or '').strip().lower() or None
-        if base_search_text is not None and not isinstance(base_search_text, str):
-            return jsonify({'success': False, 'error': '"base_search_text" must be a string or null'}), 400
-        if include_filter is not None and not isinstance(include_filter, str):
-            return jsonify({'success': False, 'error': '"include_filter" must be a string or null'}), 400
-        if exclude_filter is not None and not isinstance(exclude_filter, str):
-            return jsonify({'success': False, 'error': '"exclude_filter" must be a string or null'}), 400
-        if exclude_plus_one is not None and not isinstance(exclude_plus_one, bool):
-            return jsonify({'success': False, 'error': '"exclude_plus_one" must be a boolean or null'}), 400
-        if regex_mode is not None and regex_mode not in ('override', 'filter'):
-            return jsonify({'success': False, 'error': '"regex_mode" must be "override" or "filter" when provided'}), 400
-
-        now_iso = datetime.now().isoformat()
-        normalized_name = name.strip()
-        preset = {
-            # id/created_at may be overridden if this is a name-based overwrite
-            'id': str(uuid.uuid4()),
-            'name': normalized_name,
-            'regex': regex.strip(),
-            'created_at': now_iso,
-            'updated_at': now_iso
-        }
-        if regex_mode:
-            preset['regex_mode'] = regex_mode
-        if group_ids is not None:
-            preset['groups'] = group_ids
-        if channels is not None:
-            # Distinguish between omitted vs explicitly provided (empty list = no channels matched).
-            preset['channels'] = channel_ids
-        if streams_per_provider_i is not None:
-            preset['streams_per_provider'] = streams_per_provider_i
-        if base_search_text is not None:
-            preset['base_search_text'] = base_search_text
-        if include_filter is not None:
-            preset['include_filter'] = include_filter
-        if exclude_filter is not None:
-            preset['exclude_filter'] = exclude_filter
-        if exclude_plus_one is not None:
-            preset['exclude_plus_one'] = bool(exclude_plus_one)
+            preset = _build_regex_preset_payload(data)
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400
 
         with _regex_presets_lock:
             presets = _load_stream_name_regex_presets()
-            # De-dupe by name (case-insensitive) by replacing the existing entry.
-            replaced = False
-            for i, p in enumerate(presets):
-                if isinstance(p, dict) and str(p.get('name', '')).strip().casefold() == preset['name'].casefold():
-                    # Overwrite-in-place: keep stable id/created_at so any stored references keep working.
-                    preset['id'] = str(p.get('id') or preset['id'])
-                    preset['created_at'] = p.get('created_at') or preset['created_at']
-                    presets[i] = preset
-                    replaced = True
-                    break
-            if not replaced:
-                presets.insert(0, preset)
+            replaced = _replace_or_insert_preset(
+                presets,
+                preset,
+                preserve_existing_name=preserve_existing_name
+            )
             _save_stream_name_regex_presets(presets[:200])
 
         return jsonify({'success': True, 'saved': True, 'replaced': replaced, 'preset': preset})

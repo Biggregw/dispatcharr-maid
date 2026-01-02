@@ -1151,7 +1151,7 @@
                 <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
                     <div>
                         <div style="font-weight: 700; color: #111827;">Saved Jobs</div>
-                        <div style="color: #4b5563; font-size: 0.95em;">Re-run or manage saved jobs created from stream previews.</div>
+                        <div style="color: #4b5563; font-size: 0.95em;">Jobs are saved automatically when you run them. Re-run or manage the latest version here.</div>
                     </div>
                 </div>
 
@@ -1292,7 +1292,7 @@
                                 <div class="regex-preset-dropdown__menu hidden" id="saved-regex-menu" role="listbox" aria-label="Saved Jobs for Advanced Regex"></div>
                             </div>
                             <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                                Selecting a Saved Job fills Advanced Regex (and whether it is exclusive). Saving happens from the preview dialog.
+                                Selecting a Saved Job fills Advanced Regex (and whether it is exclusive). Jobs are saved automatically when you run them.
                             </span>
                         </div>
                     </div>
@@ -1800,7 +1800,7 @@
                 const empty = document.createElement('div');
                 empty.className = 'regex-preset-item';
                 empty.style.cursor = 'default';
-                empty.innerHTML = `<div class="regex-preset-item__text"><div class="regex-preset-item__name" style="font-weight:600; color:#718096;">No Saved Jobs yet</div><div class="regex-preset-item__meta">Run a stream preview and click “Save Job Definition”.</div></div>`;
+                empty.innerHTML = `<div class="regex-preset-item__text"><div class="regex-preset-item__name" style="font-weight:600; color:#718096;">No Saved Jobs yet</div><div class="regex-preset-item__meta">Run a job to auto-save it, or save from a preview to capture tweaks.</div></div>`;
                 menu.appendChild(empty);
                 return;
             }
@@ -1945,14 +1945,14 @@
             const current = select.value;
 
             if (!Array.isArray(savedPatterns) || savedPatterns.length === 0) {
-                select.innerHTML = '<option value="">— Select saved job —</option><option value="" disabled>(No saved jobs yet — save one from the “Save Regex” button in the preview)</option>';
+            select.innerHTML = '<option value="">— Select saved job —</option><option value="" disabled>(No saved jobs yet — run a job to auto-save it)</option>';
                 select.value = '';
                 select.onchange = () => onSavedPatternSelected();
                 onSavedPatternSelected();
                 // If there was no explicit error shown, show a helpful hint.
                 const status = document.getElementById('saved-pattern-status');
                 if (status && status.classList.contains('hidden')) {
-                    showSavedPatternStatus('No saved jobs yet. Run a stream preview, click “Save Regex”, and it will appear here.', false);
+                    showSavedPatternStatus('No saved jobs yet. Run a job to auto-save it (or save from the preview dialog if you prefer).', false);
                 }
                 return;
             }
