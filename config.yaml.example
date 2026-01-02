@@ -26,6 +26,10 @@ scoring:
     1920x1080: 40
     3840x2160: 5
     960x540: 10
+ordering:
+  resilience_mode: false
+  fallback_depth: 3
+  similar_score_delta: 5
 dispatcharr:
   m3u_accounts_endpoint: /api/channels/m3u-accounts/
   manage_py_path: ""  # Optional: path to Dispatcharr manage.py for direct DB access
