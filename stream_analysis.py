@@ -1235,87 +1235,105 @@ def reorder_streams(api, config, input_csv=None):
         if not records or not resilience_mode:
             return [r['stream_id'] for r in records]
 
-        top_score = max(_normalize_numeric(r.get('score')) for r in records)
-        tier_threshold = top_score - similar_score_delta
-
-        # Step 1: enforce provider uniqueness in the top tier (scores close to best)
-        provider_seen = set()
-        top_tier = []
-        remainder = []
-        for record in records:
-            score = _normalize_numeric(record.get('score'))
-            provider = _provider(record)
-            if score >= tier_threshold and provider not in provider_seen:
-                top_tier.append(record)
-                provider_seen.add(provider)
-            else:
-                remainder.append(record)
-
-        ordered = top_tier + remainder
-
-        # Step 2: prefer provider diversity when scores are similar (tie-break only)
-        diversified = []
-        used_providers = set()
-        while ordered:
-            candidate = ordered.pop(0)
-            candidate_provider = _provider(candidate)
-            candidate_score = _normalize_numeric(candidate.get('score'))
-
-            if candidate_provider in used_providers:
-                swap_idx = None
-                for idx, option in enumerate(ordered):
-                    option_score = _normalize_numeric(option.get('score'))
-                    if abs(candidate_score - option_score) <= similar_score_delta:
-                        option_provider = _provider(option)
-                        if option_provider not in used_providers:
-                            swap_idx = idx
-                            break
-                if swap_idx is not None:
-                    alternative = ordered.pop(swap_idx)
-                    ordered.insert(0, candidate)
-                    candidate = alternative
-                    candidate_provider = _provider(candidate)
-            diversified.append(candidate)
-            used_providers.add(candidate_provider)
-
-        # Step 3: prefer lower bitrate variants when resolution matches and scores are close
-        for idx, record in enumerate(diversified):
-            current_res = record.get('resolution')
-            current_score = _normalize_numeric(record.get('score'))
+        def _bitrate(record):
             try:
-                current_bitrate = float(record.get('avg_bitrate_kbps'))
+                return float(record.get('avg_bitrate_kbps'))
             except Exception:
-                current_bitrate = None
+                return None
 
-            if current_bitrate is None:
+        def _prefer_lower_bitrate(ordered_records):
+            ordered_records = list(ordered_records)
+            for idx, record in enumerate(ordered_records):
+                current_res = record.get('resolution')
+                current_score = _normalize_numeric(record.get('score'))
+                current_bitrate = _bitrate(record)
+                if current_bitrate is None:
+                    continue
+
+                for alt_idx in range(idx + 1, len(ordered_records)):
+                    alt = ordered_records[alt_idx]
+                    if str(alt.get('resolution')) != str(current_res):
+                        continue
+                    alt_score = _normalize_numeric(alt.get('score'))
+                    if abs(current_score - alt_score) > similar_score_delta:
+                        continue
+                    alt_bitrate = _bitrate(alt)
+                    if alt_bitrate is None:
+                        continue
+                    if alt_bitrate < current_bitrate:
+                        ordered_records.insert(idx, ordered_records.pop(alt_idx))
+                        break
+            return ordered_records
+
+        scored_records = sorted(records, key=lambda r: _normalize_numeric(r.get('score')), reverse=True)
+
+        provider_best = {}
+        tier1 = []
+        tier2_candidates = []
+        tier3_candidates = []
+        tier3_providers = set()
+
+        for record in scored_records:
+            provider = _provider(record)
+            if _is_low_fallback(record):
+                if provider not in tier3_providers:
+                    tier3_candidates.append(record)
+                    tier3_providers.add(provider)
                 continue
 
-            for alt_idx in range(idx + 1, len(diversified)):
-                alt = diversified[alt_idx]
-                if str(alt.get('resolution')) != str(current_res):
-                    continue
-                alt_score = _normalize_numeric(alt.get('score'))
-                if abs(current_score - alt_score) > similar_score_delta:
-                    continue
-                try:
-                    alt_bitrate = float(alt.get('avg_bitrate_kbps'))
-                except Exception:
-                    continue
-                if alt_bitrate < current_bitrate:
-                    diversified.insert(idx, diversified.pop(alt_idx))
+            if provider not in provider_best:
+                provider_best[provider] = record
+                tier1.append(record)
+            else:
+                tier2_candidates.append(record)
+
+        tier2 = []
+        tier2_providers = set()
+        overflow = []
+        for record in tier2_candidates:
+            provider = _provider(record)
+            best = provider_best.get(provider)
+            if not best:
+                continue
+
+            resolution_differs = str(record.get('resolution')) != str(best.get('resolution'))
+            codec_differs = str(record.get('video_codec')) != str(best.get('video_codec'))
+
+            best_bitrate = _bitrate(best)
+            current_bitrate = _bitrate(record)
+            bitrate_lower = (
+                best_bitrate is not None and current_bitrate is not None and current_bitrate < best_bitrate
+            )
+            if (resolution_differs or codec_differs or bitrate_lower) and provider not in tier2_providers:
+                tier2.append(record)
+                tier2_providers.add(provider)
+            else:
+                overflow.append(record)
+
+        tier3 = list(tier3_candidates)
+
+        def _order_tier(tier_records):
+            ordered = sorted(tier_records, key=lambda r: _normalize_numeric(r.get('score')), reverse=True)
+            return _prefer_lower_bitrate(ordered)
+
+        ordered_tier1 = _order_tier(tier1)
+        ordered_tier2 = _order_tier(tier2)
+        ordered_tier3 = _order_tier(tier3)
+        ordered_overflow = _order_tier(overflow)
+
+        diversified = ordered_tier1 + ordered_tier2 + ordered_tier3 + ordered_overflow
+
+        # Ensure at least one Tier 2 or Tier 3 entry appears early
+        early_window = diversified[:fallback_depth]
+        has_variant_early = any(record in ordered_tier2 + ordered_tier3 for record in early_window)
+        if not has_variant_early:
+            for idx, record in enumerate(diversified):
+                if record in ordered_tier2 + ordered_tier3:
+                    if idx >= fallback_depth:
+                        variant_record = diversified.pop(idx)
+                        insert_at = max(min(fallback_depth - 1, len(diversified)), 0)
+                        diversified.insert(insert_at, variant_record)
                     break
-
-        # Step 4: ensure a low-bitrate fallback is available early
-        fallback_index = None
-        for idx, record in enumerate(diversified):
-            if _is_low_fallback(record):
-                fallback_index = idx
-                break
-
-        if fallback_index is not None and fallback_index >= fallback_depth:
-            fallback_record = diversified.pop(fallback_index)
-            insert_at = max(min(fallback_depth - 1, len(diversified)), 0)
-            diversified.insert(insert_at, fallback_record)
 
         return [r['stream_id'] for r in diversified]
 
