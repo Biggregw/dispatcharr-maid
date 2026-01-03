@@ -3271,7 +3271,7 @@ def health_check():
         }), 200
     except Exception as exc:
         logging.error("Health check failed: %s", exc)
-        return jsonify({'status': 'unhealthy', 'error': str(exc)}), 500
+        return jsonify({'status': 'unhealthy', 'error': 'Health check failed'}), 500
 
 
 @app.route('/results')
