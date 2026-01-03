@@ -1125,6 +1125,7 @@
                 <span class="job-indicator__dot" aria-hidden="true"></span>
                 <span>Job running</span>
             </div>
+            <button class="text-btn" type="button" onclick="goToStep4()" style="margin-left: 10px; color: white; text-decoration: none; font-weight: 700;">Playback Health</button>
         </div>
         <div class="header">
             <div class="brand">
@@ -1149,6 +1150,10 @@
             <div class="step" id="step-indicator-3">
                 <div class="step-number">3</div>
                 <span>Run Jobs</span>
+            </div>
+            <div class="step" id="step-indicator-4">
+                <div class="step-number">4</div>
+                <span>Playback Health</span>
             </div>
         </div>
 
@@ -1313,12 +1318,14 @@
                     </div>
                 </div>
 
-                <div id="channel-health-wrapper" class="selection-summary hidden" style="margin-top: 10px;">
-                    <div class="summary-row" style="margin-bottom: 8px;">
-                        <span class="summary-label">Channels with recent issues</span>
-                        <span class="summary-value" id="channel-health-count">—</span>
+                <div id="channel-health-summary" class="selection-summary hidden" style="margin-top: 10px;">
+                    <div class="summary-row" style="align-items: center; gap: 8px;">
+                        <span class="summary-label">Playback issues detected:</span>
+                        <span class="summary-value" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                            <span id="channel-health-summary-count">—</span>
+                            <button type="button" class="text-btn" onclick="goToStep4()" style="padding: 0; text-decoration: underline;">View Playback Health →</button>
+                        </span>
                     </div>
-                    <div id="channel-health-body" class="channel-health-list"></div>
                 </div>
             </div>
 
@@ -1522,7 +1529,23 @@
                 </button>
             </div>
         </div>
-        
+
+        <!-- Step 4: Playback Health -->
+        <div class="card hidden" id="step-4">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <h2 style="margin: 0;">🎧 Playback Health</h2>
+                <button type="button" class="text-btn" onclick="goToStep3()" style="font-weight: 700;">← Back to Run Jobs</button>
+            </div>
+
+            <div id="channel-health-wrapper" class="selection-summary hidden" style="margin-top: 10px;">
+                <div class="summary-row" style="margin-bottom: 8px;">
+                    <span class="summary-label">Channels with recent issues</span>
+                    <span class="summary-value" id="channel-health-count">—</span>
+                </div>
+                <div id="channel-health-body" class="channel-health-list"></div>
+            </div>
+        </div>
+
         <!-- Current Job Status -->
         <div class="card hidden" id="current-job-card">
             <h2>📊 Current Job</h2>
@@ -2229,16 +2252,21 @@
             const wrapper = document.getElementById('channel-health-wrapper');
             const count = document.getElementById('channel-health-count');
             const body = document.getElementById('channel-health-body');
+            const summary = document.getElementById('channel-health-summary');
+            const summaryCount = document.getElementById('channel-health-summary-count');
             if (!wrapper || !count || !body) return;
 
             if (message === 'hide') {
                 wrapper.classList.add('hidden');
+                if (summary) summary.classList.add('hidden');
                 return;
             }
 
             wrapper.classList.remove('hidden');
             count.textContent = '—';
             body.innerHTML = `<div class="channel-health-row"><div class="channel-health-name">Loading…</div></div>`;
+            if (summary) summary.classList.remove('hidden');
+            if (summaryCount) summaryCount.textContent = '—';
             if (typeof message === 'string' && message) {
                 body.innerHTML = `<div class="channel-health-row"><div><div class="channel-health-name">Channel health</div><div class="channel-health-reason">${message}</div></div></div>`;
             }
@@ -2248,17 +2276,23 @@
             const wrapper = document.getElementById('channel-health-wrapper');
             const count = document.getElementById('channel-health-count');
             const body = document.getElementById('channel-health-body');
+            const summary = document.getElementById('channel-health-summary');
+            const summaryCount = document.getElementById('channel-health-summary-count');
             if (!wrapper || !count || !body) return;
 
             if (!Array.isArray(channels) || channels.length === 0) {
                 wrapper.classList.remove('hidden');
                 count.textContent = '0';
                 body.innerHTML = `<div class="channel-health-row"><div><div class="channel-health-name">No passive channel signals yet</div><div class="channel-health-reason">Observations will appear here after playback is seen.</div></div></div>`;
+                if (summary) summary.classList.remove('hidden');
+                if (summaryCount) summaryCount.textContent = '0';
                 return;
             }
 
             wrapper.classList.remove('hidden');
             count.textContent = String(channels.length);
+            if (summary) summary.classList.remove('hidden');
+            if (summaryCount) summaryCount.textContent = String(channels.length);
             body.innerHTML = channels.map(ch => {
                 const state = (ch.status || 'OK').toLowerCase();
                 const reason = ch.reason || 'Recent playback observed';
@@ -2532,11 +2566,13 @@
             document.getElementById('step-indicator-1').classList.add('completed');
             document.getElementById('step-indicator-2').classList.add('active');
             document.getElementById('step-indicator-3').classList.remove('active', 'completed');
+            document.getElementById('step-indicator-4').classList.remove('active', 'completed');
             
             // Switch cards
             document.getElementById('step-1').classList.add('hidden');
             document.getElementById('step-2').classList.remove('hidden');
             document.getElementById('step-3').classList.add('hidden');
+            document.getElementById('step-4').classList.add('hidden');
             
             // Update summary
             const groupNames = selectedGroups.map(id => {
@@ -2695,6 +2731,7 @@
             const step1 = document.getElementById('step-indicator-1');
             const step2 = document.getElementById('step-indicator-2');
             const step3 = document.getElementById('step-indicator-3');
+            const step4 = document.getElementById('step-indicator-4');
 
             if (step1) {
                 step1.classList.toggle('completed', hasSelection);
@@ -2707,11 +2744,15 @@
             if (step3) {
                 step3.classList.add('active');
             }
+            if (step4) {
+                step4.classList.remove('active');
+            }
 
             // Update step indicators
             // Switch cards
             document.getElementById('step-2').classList.add('hidden');
             document.getElementById('step-3').classList.remove('hidden');
+            document.getElementById('step-4').classList.add('hidden');
 
             if (document.getElementById('step-1')) {
                 document.getElementById('step-1').classList.add('hidden');
@@ -2727,10 +2768,29 @@
             document.getElementById('step-indicator-1').classList.remove('completed');
             document.getElementById('step-indicator-2').classList.remove('active', 'completed');
             document.getElementById('step-indicator-3').classList.remove('active', 'completed');
-            
+            document.getElementById('step-indicator-4').classList.remove('active', 'completed');
+
             document.getElementById('step-1').classList.remove('hidden');
             document.getElementById('step-2').classList.add('hidden');
             document.getElementById('step-3').classList.add('hidden');
+            document.getElementById('step-4').classList.add('hidden');
+        }
+
+        function goToStep4() {
+            const step1 = document.getElementById('step-indicator-1');
+            const step2 = document.getElementById('step-indicator-2');
+            const step3 = document.getElementById('step-indicator-3');
+            const step4 = document.getElementById('step-indicator-4');
+
+            if (step1) step1.classList.remove('active');
+            if (step2) step2.classList.remove('active');
+            if (step3) step3.classList.remove('active');
+            if (step4) step4.classList.add('active');
+
+            if (document.getElementById('step-1')) document.getElementById('step-1').classList.add('hidden');
+            if (document.getElementById('step-2')) document.getElementById('step-2').classList.add('hidden');
+            if (document.getElementById('step-3')) document.getElementById('step-3').classList.add('hidden');
+            if (document.getElementById('step-4')) document.getElementById('step-4').classList.remove('hidden');
         }
 
         // Refresh preview helpers
@@ -3944,6 +4004,8 @@
         const wrapper = document.getElementById('channel-health-wrapper');
         const count = document.getElementById('channel-health-count');
         const body = document.getElementById('channel-health-body');
+        const summary = document.getElementById('channel-health-summary');
+        const summaryCount = document.getElementById('channel-health-summary-count');
 
         if (!wrapper || !count || !body) {
             return;
@@ -3951,6 +4013,8 @@
 
         wrapper.classList.remove('hidden');
         count.textContent = String(issues.length);
+        if (summary) summary.classList.remove('hidden');
+        if (summaryCount) summaryCount.textContent = String(issues.length);
 
         body.innerHTML = issues.map(channel => {
             const name = channel.channel_name || 'Unknown channel';
