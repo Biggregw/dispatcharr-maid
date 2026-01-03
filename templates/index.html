@@ -71,10 +71,36 @@
             background: #48bb78;
             color: white;
         }
-        
+
         .status-idle {
             background: #ed8936;
             color: white;
+        }
+
+        .status-muted {
+            background: rgba(255, 255, 255, 0.14);
+            color: #e2e8f0;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .workspace-indicator {
+            background: rgba(255, 255, 255, 0.05);
+            color: #e2e8f0;
+            padding: 12px 14px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.95em;
+            margin-bottom: 18px;
+        }
+
+        .workspace-indicator code {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 4px 8px;
+            border-radius: 6px;
+            color: #edf2f7;
         }
         
         .progress-container {
@@ -361,7 +387,12 @@
             <span class="spinner"></span>
             <span id="refreshText">Updating...</span>
         </div>
-        
+
+        <div class="workspace-indicator" id="workspaceIndicator">
+            <span class="status-badge status-muted">Workspace</span>
+            <span>Detecting...</span>
+        </div>
+
         <!-- Current Progress Card -->
         <div class="card">
             <h2>📊 Current Job Status</h2>
@@ -463,6 +494,27 @@
             if (rate >= 95) return 'rate-good';
             if (rate >= 80) return 'rate-ok';
             return 'rate-bad';
+        }
+
+        function updateWorkspace(workspace) {
+            const container = getElement('workspaceIndicator');
+
+            if (!workspace) {
+                container.innerHTML = `
+                    <span class="status-badge status-muted">Workspace</span>
+                    <span>No data found. Using current directory.</span>
+                `;
+                return;
+            }
+
+            const { path, source } = workspace;
+            const sourceText = source ? `(${source})` : '';
+
+            container.innerHTML = `
+                <span class="status-badge status-muted">Workspace</span>
+                <code>${path || 'Not set'}</code>
+                <span style="color: #cbd5e0;">${sourceText}</span>
+            `;
         }
         
         function updateCurrentProgress(progress) {
@@ -685,11 +737,12 @@
             try {
                 const response = await fetch('/api/status');
                 const data = await response.json();
-                
+
                 updateCurrentProgress(data.current_progress);
                 updateLastRun(data.last_run);
                 updateConfig(data.config, data.groups);
-                
+                updateWorkspace(data.workspace);
+
                 lastUpdate = new Date();
                 getElement('refreshText').textContent = `Updated: ${lastUpdate.toLocaleTimeString()}`;
             } catch (error) {
