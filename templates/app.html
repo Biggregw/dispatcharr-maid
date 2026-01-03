@@ -1808,6 +1808,16 @@
             applyRegexOnlyMode();
             syncExcludePlusOneCheckboxes();
 
+            const rememberedJobId = getRememberedJobId();
+            if (rememberedJobId) {
+                currentJobId = rememberedJobId;
+                // Assume this may be a refresh job until we learn otherwise so the
+                // progress UI can light up on the first response.
+                refreshJobId = rememberedJobId;
+                getElement('current-job-card').classList.remove('hidden');
+                checkJob(rememberedJobId);
+            }
+
             // Check for active jobs periodically
             if (jobCheckInterval) {
                 clearInterval(jobCheckInterval);
@@ -2867,6 +2877,35 @@
             }[jobType] || jobType;
         }
 
+        const CURRENT_JOB_STORAGE_KEY = 'dispatcharr_current_job_id';
+
+        function rememberCurrentJobId(jobId) {
+            try {
+                if (jobId) {
+                    localStorage.setItem(CURRENT_JOB_STORAGE_KEY, String(jobId));
+                }
+            } catch (err) {
+                console.warn('Unable to persist current job id', err);
+            }
+        }
+
+        function forgetCurrentJobId() {
+            try {
+                localStorage.removeItem(CURRENT_JOB_STORAGE_KEY);
+            } catch (err) {
+                console.warn('Unable to clear persisted job id', err);
+            }
+        }
+
+        function getRememberedJobId() {
+            try {
+                return localStorage.getItem(CURRENT_JOB_STORAGE_KEY) || '';
+            } catch (err) {
+                console.warn('Unable to read persisted job id', err);
+                return '';
+            }
+        }
+
         function startApplyQualityJob(event) {
             if (event) {
                 event.preventDefault();
@@ -3005,6 +3044,7 @@
                 if (data.success) {
                     currentJobId = data.job_id;
                     lastTerminalJobId = null;
+                    rememberCurrentJobId(currentJobId);
 
                     // Show current job card
                     getElement('current-job-card').classList.remove('hidden');
@@ -3091,6 +3131,13 @@
 
                 if (data.success) {
                     const job = normalizeJobStatus(data.job);
+                    // Keep the refresh progress card tied to its job across reloads.
+                    if (job.job_type === 'refresh_optimize') {
+                        refreshJobId = job.job_id;
+                    } else if (refreshJobId && refreshJobId !== job.job_id) {
+                        refreshJobId = null;
+                        resetRefreshProgress();
+                    }
                     const isTerminal = terminalStatuses.includes(job.status);
                     setJobIndicator(job.status === 'running' || job.status === 'queued');
                     const reconciledJob = reconcileJobForRender(job);
@@ -3111,7 +3158,14 @@
                             loadJobHistory();
                         }
                         setJobIndicator(false);
+                        refreshJobId = null;
+                        resetRefreshProgress();
+                        forgetCurrentJobId();
                     }
+                } else if (data.error === 'Job not found') {
+                    refreshJobId = null;
+                    resetRefreshProgress();
+                    forgetCurrentJobId();
                 }
             } catch (error) {
                 if (error.name !== 'AbortError') {
@@ -3427,7 +3481,11 @@
 
                     if (jobToRender) {
                         const normalizedJob = normalizeJobStatus(jobToRender);
+                        if (normalizedJob.job_type === 'refresh_optimize') {
+                            refreshJobId = normalizedJob.job_id;
+                        }
                         currentJobId = normalizedJob.job_id;
+                        rememberCurrentJobId(currentJobId);
                         getElement('current-job-card').classList.remove('hidden');
                         const reconciledJob = reconcileJobForRender(normalizedJob);
                         renderCurrentJob(reconciledJob);
@@ -3452,6 +3510,8 @@
                 } else if (data.success) {
                     // No jobs known by server; clear any stale UI loading state.
                     setJobIndicator(false);
+                    refreshJobId = null;
+                    resetRefreshProgress();
                     resetActionButtons();
                 }
             } catch (error) {
