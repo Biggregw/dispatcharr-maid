@@ -3239,6 +3239,15 @@ def index():
     return render_template('app.html')
 
 
+@app.route('/index')
+def monitor():
+    """Monitor dashboard page"""
+    auth_ok, auth_error = _ensure_dispatcharr_ready()
+    if not auth_ok:
+        return _render_auth_error(auth_error)
+    return render_template('index.html')
+
+
 @app.route('/health')
 def health_check():
     """Lightweight health endpoint that does not require Dispatcharr connectivity."""
