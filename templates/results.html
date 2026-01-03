@@ -108,6 +108,7 @@
                 </div>
             </div>
             <div id="capacity-warning" class="capacity-warning" style="display:none;"></div>
+            <div id="observation-indicator" class="muted small" style="margin-top:10px; display:none;"></div>
         </div>
 
         <div class="card" id="run-meta-card" style="display:none;">
@@ -365,6 +366,38 @@
             card.style.display = '';
         }
 
+        function renderObservationIndicator(payload, results) {
+            const indicator = document.getElementById('observation-indicator');
+            if (!indicator) return;
+
+            const observationSummary = (results && typeof results === 'object' && results.observation_summary)
+                || payload.observation_summary
+                || null;
+            const healthSummary = payload.job_health_summary || payload.health_summary || payload.health_status || null;
+            const observationCount = (observationSummary && typeof observationSummary.count === 'number')
+                ? observationSummary.count
+                : (typeof payload.observation_count === 'number' ? payload.observation_count : null);
+
+            const parts = [];
+            if (observationCount !== null) {
+                parts.push(`Observations recorded: ${observationCount}`);
+            } else if (Array.isArray(observationSummary)) {
+                parts.push(`Observations recorded: ${observationSummary.length}`);
+            }
+
+            if (healthSummary && typeof healthSummary === 'object') {
+                const status = healthSummary.overall_status || healthSummary.status || healthSummary.state;
+                if (status) parts.push(`Job health: ${status}`);
+            } else if (typeof healthSummary === 'string') {
+                parts.push(`Job health: ${healthSummary}`);
+            }
+
+            if (parts.length) {
+                indicator.textContent = parts.join(' • ');
+                indicator.style.display = 'block';
+            }
+        }
+
         async function loadJobPicker() {
             const picker = document.getElementById('job-picker');
             if (!picker) return;
@@ -494,7 +527,8 @@
                     capacityEl.textContent = capacitySummary.warning;
                     capacityEl.style.display = 'block';
                 }
-                
+                renderObservationIndicator(data, r);
+
                 // Providers
                 const tbody = document.getElementById('provider-tbody');
                 const providerCountNote = document.getElementById('provider-count-note');
