@@ -65,6 +65,9 @@ class Observation:
         if isinstance(ts_raw, str) and ts_raw.strip():
             try:
                 parsed = datetime.fromisoformat(ts_raw)
+                # Handle naive datetime (no timezone info)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
                 return parsed.astimezone(timezone.utc).isoformat()
             except Exception:
                 pass

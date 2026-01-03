@@ -29,6 +29,7 @@ services:
       - ./interactive_maid.py:/app/interactive_maid.py        # Interactive CLI
       - ./web_monitor.py:/app/web_monitor.py                  # Web monitor
       - ./templates:/app/templates                            # HTML templates
+      - ./static:/app/static                                  # Static assets (CSS, logo)
     environment:
       - PYTHONUNBUFFERED=1
     command: python3 dispatcharr_web_app.py
