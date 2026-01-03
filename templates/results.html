@@ -34,8 +34,9 @@
         .success-badge.poor { background: #fed7d7; color: #742a2a; }
         .capacity-warning { margin-top: 12px; color: #97266d; font-weight: 600; }
         .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; }
-        .tab { padding: 12px 24px; cursor: pointer; border: none; background: none; font-size: 1em; font-weight: 600; color: #718096; border-bottom: 3px solid transparent; transition: all 0.3s; }
-        .tab.active { color: #667eea; border-bottom-color: #667eea; }
+        .tab { padding: 12px 24px; cursor: pointer; border: none; background: none; font-size: 1em; font-weight: 600; color: #718096; border-bottom: 3px solid transparent; transition: all 0.3s; display: inline-flex; align-items: center; gap: 8px; }
+        .tab:hover { color: #4a5568; background: #f7fafc; border-radius: 8px 8px 0 0; }
+        .tab.active { color: #667eea; border-bottom-color: #667eea; background: #f7fafc; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         .muted { color: #718096; }
@@ -66,9 +67,71 @@
         .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
         details summary { cursor: pointer; }
         .plan-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+
+        .nav-link:hover {
+            color: #667eea;
+            background: #f3f4ff;
+            border-radius: 4px;
+            padding-left: 8px;
+            padding-right: 8px;
+        }
+
+        .nav-link.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: 600;
+        }
+
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none !important;
+            }
+            .nav-links.open {
+                display: flex !important;
+                flex-direction: column;
+                gap: 12px;
+                position: absolute;
+                top: 60px;
+                right: 20px;
+                background: rgba(255,255,255,0.95);
+                padding: 12px 16px;
+                border-radius: 10px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            }
+            .mobile-menu-btn {
+                display: block !important;
+            }
+        }
     </style>
 </head>
 <body>
+    <nav style="position: sticky; top: 0; z-index: 1000; background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+  <div style="max-width: 1400px; margin: 0 auto; padding: 0 20px; height: 60px; display: flex; align-items: center; justify-content: space-between;">
+    <!-- Logo/Brand -->
+    <div style="display: flex; align-items: center; gap: 10px; font-weight: 700; color: #667eea;">
+      Dispatcharr Maid
+    </div>
+    
+    <!-- Navigation Links -->
+    <div class="nav-links" style="display: flex; gap: 30px;">
+      <a href="/" class="nav-link" style="text-decoration: none; color: #4a5568; padding: 8px 0; border-bottom: 3px solid transparent; transition: all 0.3s;">
+        Control Panel
+      </a>
+      <a href="/index" class="nav-link" style="text-decoration: none; color: #4a5568; padding: 8px 0; border-bottom: 3px solid transparent; transition: all 0.3s;">
+        Monitor
+      </a>
+      <a href="/results" class="nav-link" style="text-decoration: none; color: #4a5568; padding: 8px 0; border-bottom: 3px solid transparent; transition: all 0.3s;">
+        Results
+      </a>
+    </div>
+    
+    <!-- Mobile menu button (hidden on desktop) -->
+    <button class="mobile-menu-btn" style="display: none; background: none; border: none; font-size: 24px; cursor: pointer;">
+      ☰
+    </button>
+  </div>
+</nav>
+
     <div class="container">
         <div class="header">
             <div class="brand">
@@ -81,10 +144,15 @@
         </div>
         
         <div class="nav-buttons">
-            <a href="/" class="btn">← Back to Control Panel</a>
-            <a href="/api/results/csv" class="btn" id="export-csv-link">📥 Export CSV</a>
-            <span style="display:inline-block;color:white;font-weight:600;margin-left:10px;">Run:</span>
-            <select id="job-picker" class="input" style="display:inline-block; width:auto; min-width: 320px; max-width: 520px; margin-left:8px;"></select>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <a href="/" class="btn">← Back to Control Panel</a>
+                <a href="/index" class="btn" style="background: #805ad5; border-color: #805ad5;">📊 View Monitor</a>
+                <a href="/api/results/csv" class="btn" id="export-csv-link">📥 Export CSV</a>
+            </div>
+            <div style="display:inline-flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top: 10px;">
+                <span style="display:inline-block;color:white;font-weight:600;">Run:</span>
+                <select id="job-picker" class="input" style="display:inline-block; width:auto; min-width: 320px; max-width: 520px;"></select>
+            </div>
         </div>
         
         <div class="card">
@@ -119,11 +187,21 @@
         <div class="card" id="detailed-breakdown-card">
             <h2>🔍 Detailed Breakdown</h2>
             <div class="tabs">
-                <button class="tab active" onclick="showTab('streams')">Streams</button>
-                <button class="tab" onclick="showTab('providers')">Providers</button>
-                <button class="tab" onclick="showTab('channels')">Channels</button>
-                <button class="tab" onclick="showTab('errors')">Errors</button>
-                <button class="tab" onclick="showTab('plan')">Planned Changes</button>
+                <button class="tab active" onclick="showTab('streams')" title="View and select individual streams">
+                  📺 Streams
+                </button>
+                <button class="tab" onclick="showTab('providers')" title="Provider performance statistics">
+                  🔌 Providers
+                </button>
+                <button class="tab" onclick="showTab('channels')" title="Channel-level success rates">
+                  📋 Channels
+                </button>
+                <button class="tab" onclick="showTab('errors')" title="Analysis errors and warnings">
+                  ⚠️ Errors
+                </button>
+                <button class="tab" onclick="showTab('plan')" title="Preview before committing changes">
+                  📝 Planned Changes
+                </button>
             </div>
             
             <div id="providers-tab" class="tab-content">
@@ -252,6 +330,54 @@
     </div>
     
     <script>
+        const missingElementProxy = new Proxy({
+            classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+            style: {}
+        }, {
+            get(target, prop) {
+                if (prop in target) return target[prop];
+                if (prop === 'appendChild' || prop === 'removeChild' || prop === 'replaceChildren' || prop === 'setAttribute' || prop === 'removeAttribute') return () => {};
+                if (prop === 'querySelectorAll') return () => [];
+                if (prop === 'querySelector') return () => null;
+                if (prop === 'addEventListener' || prop === 'removeEventListener') return () => {};
+                if (prop === 'value' || prop === 'textContent' || prop === 'innerText' || prop === 'innerHTML') return '';
+                return () => {};
+            },
+            set(target, prop, value) {
+                target[prop] = value;
+                return true;
+            }
+        });
+
+        function getElement(id) {
+            const el = document.getElementById(id);
+            if (!el) {
+                console.warn(`Element #${id} not found`);
+                return missingElementProxy;
+            }
+            return el;
+        }
+
+        function initNav() {
+            const path = window.location.pathname;
+            const links = document.querySelectorAll('.nav-link');
+            links.forEach(link => {
+                if (link.getAttribute('href') === path || (path === '/' && link.getAttribute('href') === '/')) {
+                    link.classList.add('active');
+                }
+            });
+
+            const mobileBtn = document.querySelector('.mobile-menu-btn');
+            const navLinks = document.querySelector('.nav-links');
+            if (mobileBtn && navLinks) {
+                mobileBtn.addEventListener('click', () => {
+                    navLinks.classList.toggle('open');
+                });
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', initNav);
+
         const params = new URLSearchParams(window.location.search);
         const jobId = params.get('job_id');
         const resultsUrl = jobId ? `/api/results/job/${encodeURIComponent(jobId)}` : '/api/results/detailed';
@@ -293,7 +419,7 @@
         }
 
         function setExportLink() {
-            const link = document.getElementById('export-csv-link');
+            const link = getElement('export-csv-link');
             if (!link) return;
             link.href = jobId ? `/api/results/csv?job_id=${encodeURIComponent(jobId)}` : '/api/results/csv';
         }
@@ -310,8 +436,8 @@
         }
 
         function renderJobMeta(meta) {
-            const card = document.getElementById('run-meta-card');
-            const body = document.getElementById('run-meta-body');
+            const card = getElement('run-meta-card');
+            const body = getElement('run-meta-body');
             if (!card || !body) return;
             if (!meta || typeof meta !== 'object') {
                 card.style.display = 'none';
@@ -367,7 +493,7 @@
         }
 
         function renderObservationIndicator(payload, results) {
-            const indicator = document.getElementById('observation-indicator');
+            const indicator = getElement('observation-indicator');
             if (!indicator) return;
 
             const observationSummary = (results && typeof results === 'object' && results.observation_summary)
@@ -399,7 +525,7 @@
         }
 
         async function loadJobPicker() {
-            const picker = document.getElementById('job-picker');
+            const picker = getElement('job-picker');
             if (!picker) return;
 
             // Default option (no job_id => latest)
@@ -471,22 +597,22 @@
                     document.querySelector('.header h1').textContent = '🔄 Channel Refresh Results';
                     document.querySelector('.header p').textContent = 'Stream Replacement Summary';
                     
-                    document.getElementById('stat-total').textContent = r.total_matching.toLocaleString();
+                    getElement('stat-total').textContent = r.total_matching.toLocaleString();
                     document.querySelector('#stat-total').previousElementSibling.textContent = 'Total Matching Streams Found';
                     
-                    document.getElementById('stat-success').textContent = r.new_count.toLocaleString();
+                    getElement('stat-success').textContent = r.new_count.toLocaleString();
                     document.querySelector('#stat-success').previousElementSibling.textContent = 'Streams Added';
                     
-                    document.getElementById('stat-failed').textContent = r.previous_count.toLocaleString();
+                    getElement('stat-failed').textContent = r.previous_count.toLocaleString();
                     document.querySelector('#stat-failed').previousElementSibling.textContent = 'Streams Removed';
                     document.querySelector('#stat-failed').classList.remove('failed');
                     document.querySelector('#stat-failed').style.color = '#718096';
                     
-                    document.getElementById('stat-rate').textContent = 'Refresh Complete';
+                    getElement('stat-rate').textContent = 'Refresh Complete';
                     document.querySelector('#stat-rate').previousElementSibling.textContent = 'Status';
                     
                     // Hide the detailed breakdown section
-                    const breakdownCard = document.getElementById('detailed-breakdown-card');
+                    const breakdownCard = getElement('detailed-breakdown-card');
                     if (breakdownCard) {
                         breakdownCard.style.display = 'none';
                     }
@@ -517,22 +643,22 @@
                 }
                 
                 // Otherwise, show analysis results
-                document.getElementById('stat-total').textContent = r.total.toLocaleString();
-                document.getElementById('stat-success').textContent = r.successful.toLocaleString();
-                document.getElementById('stat-failed').textContent = r.failed.toLocaleString();
-                document.getElementById('stat-rate').textContent = r.success_rate + '%';
+                getElement('stat-total').textContent = r.total.toLocaleString();
+                getElement('stat-success').textContent = r.successful.toLocaleString();
+                getElement('stat-failed').textContent = r.failed.toLocaleString();
+                getElement('stat-rate').textContent = r.success_rate + '%';
                 const capacitySummary = r.capacity_summary || data.capacity_summary;
                 if (capacitySummary && capacitySummary.warning) {
-                    const capacityEl = document.getElementById('capacity-warning');
+                    const capacityEl = getElement('capacity-warning');
                     capacityEl.textContent = capacitySummary.warning;
                     capacityEl.style.display = 'block';
                 }
                 renderObservationIndicator(data, r);
 
                 // Providers
-                const tbody = document.getElementById('provider-tbody');
-                const providerCountNote = document.getElementById('provider-count-note');
-                const showAllProvidersEl = document.getElementById('show-all-providers');
+                const tbody = getElement('provider-tbody');
+                const providerCountNote = getElement('provider-count-note');
+                const showAllProvidersEl = getElement('show-all-providers');
 
                 function renderProviders(showAll) {
                     const providerStats = r.provider_stats || {};
@@ -602,7 +728,7 @@
                 });
                 
                 // Channels
-                const chanTbody = document.getElementById('channel-tbody');
+                const chanTbody = getElement('channel-tbody');
                 const channels = Object.entries(r.channel_stats || {}).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
                 
                 chanTbody.innerHTML = channels.map(([num, stats]) => {
@@ -618,7 +744,7 @@
                 
                 // Errors
                 const errors = Object.entries(r.error_types || {}).sort((a, b) => b[1] - a[1]);
-                const errDiv = document.getElementById('error-list');
+                const errDiv = getElement('error-list');
                 
                 if (errors.length === 0) {
                     errDiv.innerHTML = '<p style="color: #38a169;">✅ No errors! All streams working perfectly!</p>';
@@ -632,7 +758,7 @@
                 }
 
                 // If Streams is the default active tab, load it immediately.
-                if (document.getElementById('streams-tab')?.classList.contains('active') && !streamsLoaded) {
+                if (getElement('streams-tab')?.classList.contains('active') && !streamsLoaded) {
                     loadStreams();
                 }
             });
@@ -641,7 +767,7 @@
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
             event.target.classList.add('active');
-            document.getElementById(tabName + '-tab').classList.add('active');
+            getElement(tabName + '-tab').classList.add('active');
 
             if (tabName === 'streams' && !streamsLoaded) {
                 loadStreams();
@@ -652,20 +778,20 @@
         }
 
         function setStreamStatus(msg) {
-            const el = document.getElementById('stream-regex-status');
+            const el = getElement('stream-regex-status');
             if (el) el.textContent = msg || '';
         }
 
         function updateStreamsCount() {
             const all = document.querySelectorAll('.stream-row');
             const checked = document.querySelectorAll('.stream-row input[type="checkbox"]:checked');
-            const pill = document.getElementById('streams-count-pill');
+            const pill = getElement('streams-count-pill');
             if (pill) pill.textContent = `${checked.length}/${all.length} selected`;
         }
 
         async function loadStreams() {
             streamsLoaded = true;
-            const loadingEl = document.getElementById('streams-loading');
+            const loadingEl = getElement('streams-loading');
             if (loadingEl) loadingEl.textContent = 'Loading streams...';
 
             const url = jobId
@@ -680,7 +806,7 @@
                     return;
                 }
                 const rows = Array.isArray(data.streams) ? data.streams : [];
-                const tbody = document.getElementById('stream-tbody');
+                const tbody = getElement('stream-tbody');
                 if (!tbody) return;
 
                 tbody.innerHTML = rows.map((s) => {
@@ -710,23 +836,23 @@
         }
 
         function setPlanStatus(msg) {
-            const el = document.getElementById('plan-status');
+            const el = getElement('plan-status');
             if (el) el.textContent = msg || '';
         }
 
         function setPlanCommitStatus(msg) {
-            const el = document.getElementById('plan-commit-status');
+            const el = getElement('plan-commit-status');
             if (el) el.textContent = msg || '';
         }
 
         function setPlanCommitEnabled(enabled) {
-            const btn = document.getElementById('plan-commit-btn');
+            const btn = getElement('plan-commit-btn');
             if (!btn) return;
             btn.disabled = !enabled;
         }
 
         function setPlanCount(n) {
-            const pill = document.getElementById('plan-count-pill');
+            const pill = getElement('plan-count-pill');
             if (pill) pill.textContent = `${n} channel${n === 1 ? '' : 's'}`;
         }
 
@@ -805,7 +931,7 @@
         }
 
         function updatePlanCommitButtonLabel() {
-            const btn = document.getElementById('plan-commit-btn');
+            const btn = getElement('plan-commit-btn');
             if (!btn) return;
             const n = planSelectedChannelIds ? planSelectedChannelIds.size : 0;
             btn.textContent = n ? `✅ Commit selected (${n})` : '✅ Commit planned changes';
@@ -827,7 +953,7 @@
         }
 
         function getVisiblePlanRows() {
-            const q = (document.getElementById('plan-search')?.value || '').trim().toLowerCase();
+            const q = (getElement('plan-search')?.value || '').trim().toLowerCase();
             const rows = Array.isArray(planRows) ? planRows : [];
             return rows.filter((r) => {
                 if (!r || typeof r !== 'object') return false;
@@ -849,7 +975,7 @@
         }
 
         function renderPlanMeta() {
-            const el = document.getElementById('plan-meta');
+            const el = getElement('plan-meta');
             if (!el) return;
             if (!planMeta || typeof planMeta !== 'object') {
                 el.innerHTML = '';
@@ -868,7 +994,7 @@
         }
 
         function renderPlanRows() {
-            const listEl = document.getElementById('plan-list');
+            const listEl = getElement('plan-list');
             if (!listEl) return;
             const filtered = getVisiblePlanRows();
 
@@ -900,7 +1026,7 @@
                 const addedPreview = Array.isArray(r.added_streams_preview) ? r.added_streams_preview : [];
                 const removedPreview = Array.isArray(r.removed_streams_preview) ? r.removed_streams_preview : [];
                 const beforePreview = Array.isArray(r.before_streams_preview) ? r.before_streams_preview : [];
-                const limit = r.stream_preview_limit || (document.getElementById('plan-preview-limit')?.value || '60');
+                const limit = r.stream_preview_limit || (getElement('plan-preview-limit')?.value || '60');
 
                 return `
                     <div class="plan-card" style="margin-bottom: 12px;">
@@ -966,10 +1092,10 @@
 
         async function loadPlan() {
             planLoaded = true;
-            const listEl = document.getElementById('plan-list');
-            const changedOnlyEl = document.getElementById('plan-changed-only');
-            const previewLimitEl = document.getElementById('plan-preview-limit');
-            const includeBeforeEl = document.getElementById('plan-include-before');
+            const listEl = getElement('plan-list');
+            const changedOnlyEl = getElement('plan-changed-only');
+            const previewLimitEl = getElement('plan-preview-limit');
+            const includeBeforeEl = getElement('plan-include-before');
             if (!listEl) return;
 
             if (!jobId) {
@@ -1092,7 +1218,7 @@
         }
 
         function filterStreamRows() {
-            const q = (document.getElementById('stream-search')?.value || '').trim().toLowerCase();
+            const q = (getElement('stream-search')?.value || '').trim().toLowerCase();
             document.querySelectorAll('.stream-row').forEach((row) => {
                 const name = row.getAttribute('data-stream-name') || '';
                 row.style.display = (!q || name.includes(q)) ? '' : 'none';
@@ -1126,9 +1252,9 @@
         async function generateStreamRegex() {
             setStreamStatus('Generating...');
             const { include, exclude } = getStreamIncludeExclude();
-            const outBox = document.getElementById('stream-regex-output');
-            const outCode = document.getElementById('stream-regex-code');
-            const copyBtn = document.getElementById('copy-stream-regex-btn');
+            const outBox = getElement('stream-regex-output');
+            const outCode = getElement('stream-regex-code');
+            const copyBtn = getElement('copy-stream-regex-btn');
 
             if (!include.length) {
                 setStreamStatus('Select at least one stream.');
@@ -1163,7 +1289,7 @@
         }
 
         async function copyStreamRegex() {
-            const regexText = document.getElementById('stream-regex-code')?.textContent || '';
+            const regexText = getElement('stream-regex-code')?.textContent || '';
             if (!regexText) return;
             try {
                 await navigator.clipboard.writeText(regexText);
