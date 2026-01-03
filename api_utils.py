@@ -47,15 +47,17 @@ class DispatcharrAPI:
             
             data = response.json()
             self.token = data.get('access') or data.get('token')
-            
+
             if not self.token:
                 raise ValueError("No access token found in response")
-            
+
             # Update .env with new token
             env_path = Path('.env')
             if env_path.exists():
                 set_key(env_path, 'DISPATCHARR_TOKEN', self.token)
-            
+            else:
+                logging.warning(".env not found; skipping token persistence")
+
             logging.info("Login successful - token saved")
             return True
             
