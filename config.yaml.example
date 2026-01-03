@@ -14,22 +14,25 @@ filters:
   channel_number_regex: ""  # e.g. ^(?:101|102|103)$
   stream_last_measured_days: 0
 scoring:
-  dropped_frames_penalty: 50
-  error_penalty: 200
-  fps_bonus_points: 25
-  hevc_boost: 1.2
-  max_bitrate_mbps: 15
-  max_dropped_frame_percent: 2.0
-  max_errors: 0
+  # FireStick 4K Optimization
+  # Set to true for optimal FireStick 4K performance (faster switching, better reliability)
+  # Set to false to use legacy algorithm (maximum quality preference)
+  use_firestick_optimization: true
+  
+  # Legacy settings (only used when use_firestick_optimization: false)
+  fps_bonus_points: 100
+  hevc_boost: 1.5
   resolution_scores:
-    1280x720: 30
-    1920x1080: 40
-    3840x2160: 5
-    960x540: 10
+    '3840x2160': 100
+    '1920x1080': 80
+    '1280x720': 50
+    '960x540': 20
 ordering:
-  resilience_mode: false
+  # Resilience mode enables multi-tier failover (highly recommended for FireStick 4K)
+  resilience_mode: true
   fallback_depth: 3
-  similar_score_delta: 5
+  # Increased from 5 to 10 for better bitrate optimization within same quality tier
+  similar_score_delta: 10
 dispatcharr:
   m3u_accounts_endpoint: /api/channels/m3u-accounts/
   manage_py_path: ""  # Optional: path to Dispatcharr manage.py for direct DB access

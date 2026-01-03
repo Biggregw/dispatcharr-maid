@@ -999,6 +999,158 @@ def analyze_streams(config, input_csv=None,
         raise
 
 
+def calculate_optimal_bitrate_score(bitrate_kbps, resolution, codec):
+    """
+    Score bitrate based on optimal ranges for FireStick 4K.
+    Bell curve scoring: peaks at optimal, penalizes excessive (slow startup) and low (poor quality).
+    """
+    if bitrate_kbps is None or pd.isna(bitrate_kbps):
+        return 0
+
+    bitrate = float(bitrate_kbps)
+    codec_lower = str(codec).lower()
+    is_hevc = 'hevc' in codec_lower or 'h265' in codec_lower
+
+    # Optimal ranges: (min_good, ideal_min, ideal_max, max_good) in kbps
+    optimal_ranges = {
+        ('3840x2160', True):  (8000, 12000, 20000, 30000),
+        ('3840x2160', False): (15000, 20000, 35000, 50000),
+        ('1920x1080', True):  (3500, 5000, 10000, 15000),
+        ('1920x1080', False): (6000, 8000, 15000, 22000),
+        ('1280x720', True):   (2000, 2500, 5000, 7500),
+        ('1280x720', False):  (3000, 4000, 8000, 12000),
+        ('960x540', True):    (1000, 1500, 3000, 4500),
+        ('960x540', False):   (1500, 2000, 4000, 6000),
+    }
+
+    key = (str(resolution), is_hevc)
+    if key not in optimal_ranges:
+        return min(bitrate / 100, 100)
+
+    min_good, ideal_min, ideal_max, max_good = optimal_ranges[key]
+
+    if bitrate < min_good:
+        ratio = bitrate / min_good
+        return 50 * ratio
+    elif bitrate < ideal_min:
+        ratio = (bitrate - min_good) / (ideal_min - min_good)
+        return 50 + (50 * ratio)
+    elif bitrate <= ideal_max:
+        return 100
+    elif bitrate <= max_good:
+        ratio = (bitrate - ideal_max) / (max_good - ideal_max)
+        return 100 - (20 * ratio)
+    else:
+        excess_ratio = (bitrate - max_good) / max_good
+        penalty = min(excess_ratio * 60, 60)
+        return max(80 - penalty, 20)
+
+
+def calculate_startup_speed_score(bitrate_kbps):
+    """
+    Estimate channel switching speed. Lower bitrate = faster buffering.
+    Returns 0-50 points.
+    """
+    if bitrate_kbps is None or pd.isna(bitrate_kbps):
+        return 0
+
+    bitrate = float(bitrate_kbps)
+
+    if bitrate < 3000:
+        return 50
+    elif bitrate < 6000:
+        return 45
+    elif bitrate < 10000:
+        return 35
+    elif bitrate < 15000:
+        return 25
+    elif bitrate < 20000:
+        return 15
+    else:
+        return 5
+
+
+def calculate_enhanced_fps_score(fps):
+    """
+    Score FPS based on broadcast standards.
+    Prefer 50fps (PAL/Europe) or 60fps (NTSC/US).
+    Returns 0-100 points.
+    """
+    try:
+        fps_num = float(fps)
+    except (ValueError, TypeError):
+        return 50
+
+    if 24.5 <= fps_num <= 25.5 or 49.5 <= fps_num <= 50.5:
+        return 100  # PAL
+    elif 29.5 <= fps_num <= 30.5 or 59.5 <= fps_num <= 60.5:
+        return 100  # NTSC
+    elif 23.5 <= fps_num <= 24.5:
+        return 90   # Cinema
+    elif fps_num >= 45:
+        return 85   # High FPS
+    elif fps_num >= 25:
+        return 70
+    else:
+        return 40
+
+
+def calculate_enhanced_stability_score(dropped_frame_pct, errors):
+    """
+    Enhanced stability scoring with stricter penalties.
+    Returns 0-100 points.
+    """
+    try:
+        dropped_pct = float(dropped_frame_pct) if not pd.isna(dropped_frame_pct) else 0
+        error_count = int(errors) if not pd.isna(errors) else 0
+    except (ValueError, TypeError):
+        return 50
+
+    stability = 100
+
+    if dropped_pct > 0:
+        penalty = min(dropped_pct * 5, 70)
+        stability -= penalty
+
+    if error_count > 0:
+        penalty = min(error_count * error_count * 15, 80)
+        stability -= penalty
+
+    return max(stability, 0)
+
+
+def calculate_resolution_score_firestick(resolution):
+    """
+    FireStick-optimized resolution scores.
+    Bigger gap between 1080p and 720p (very noticeable).
+    Returns 0-100 points.
+    """
+    scores = {
+        '3840x2160': 100,
+        '1920x1080': 75,
+        '1280x720': 40,
+        '960x540': 10,
+        '720x576': 10,
+        '720x480': 10,
+    }
+    return scores.get(str(resolution).strip(), 0)
+
+
+def calculate_codec_bonus(codec):
+    """
+    Bonus for efficient codecs.
+    Returns 0-60 points.
+    """
+    codec_lower = str(codec).lower()
+
+    if 'hevc' in codec_lower or 'h265' in codec_lower:
+        return 50
+    elif 'av1' in codec_lower:
+        return 60
+    else:
+        return 0
+
+
 def score_streams(api, config, input_csv=None,
                  output_csv=None,
                  update_stats=False):
@@ -1065,46 +1217,106 @@ def score_streams(api, config, input_csv=None,
         summary['avg_frames_dropped'] / summary['avg_frames_decoded'] * 100
     ).fillna(0)
     
-    # Scoring
-    resolution_scores = scoring_cfg.get('resolution_scores', {
-        '3840x2160': 100, '1920x1080': 80, '1280x720': 50, '960x540': 20
-    })
-    summary['resolution_score'] = (
-        summary['resolution'].astype(str).str.strip()
-        .map(resolution_scores).fillna(0)
-    )
+    # Scoring - FireStick 4K Optimized
+    use_firestick_scoring = scoring_cfg.get('use_firestick_optimization', True)
     
-    fps_bonus = scoring_cfg.get('fps_bonus_points', 100)
-    summary['fps_bonus'] = 0
-    summary.loc[pd.to_numeric(summary['fps'], errors='coerce').fillna(0) >= 50, 'fps_bonus'] = fps_bonus
-    
-    # HEVC boost
-    hevc_boost = scoring_cfg.get('hevc_boost', 1.5)
-    summary['scoring_bitrate'] = summary['avg_bitrate_kbps']
-    if hevc_boost != 1.0:
-        summary.loc[summary['video_codec'] == 'hevc', 'scoring_bitrate'] *= hevc_boost
-    
-    summary['max_bitrate_for_channel'] = summary.groupby('channel_id')['scoring_bitrate'].transform('max')
-    summary['bitrate_score'] = (
-        summary['scoring_bitrate'] / (summary['max_bitrate_for_channel'] * 0.01)
-    ).fillna(0)
-    
-    summary['dropped_frames_penalty'] = summary['dropped_frame_percentage'] * 1
-    
-    # Error penalties
-    error_columns = ['err_decode', 'err_discontinuity', 'err_timeout']
-    for col in error_columns:
-        summary[col] = pd.to_numeric(summary[col], errors='coerce').fillna(0)
-    summary['error_penalty'] = summary[error_columns].sum(axis=1) * 25
+    if use_firestick_scoring:
+        # New optimized scoring for FireStick 4K
+        logging.info("Using FireStick 4K optimized scoring")
+        
+        # Calculate all score components
+        summary['bitrate_score'] = summary.apply(
+            lambda row: calculate_optimal_bitrate_score(
+                row.get('avg_bitrate_kbps'),
+                row.get('resolution'),
+                row.get('video_codec')
+            ), axis=1
+        )
+        
+        summary['resolution_score'] = summary['resolution'].apply(
+            calculate_resolution_score_firestick
+        )
+        
+        summary['fps_score'] = summary['fps'].apply(calculate_enhanced_fps_score)
+        
+        summary['startup_score'] = summary['avg_bitrate_kbps'].apply(
+            calculate_startup_speed_score
+        )
+        
+        # Calculate total errors for stability score
+        error_columns = ['err_decode', 'err_discontinuity', 'err_timeout']
+        for col in error_columns:
+            summary[col] = pd.to_numeric(summary[col], errors='coerce').fillna(0)
+        summary['total_errors'] = summary[error_columns].sum(axis=1)
+        
+        summary['stability_score'] = summary.apply(
+            lambda row: calculate_enhanced_stability_score(
+                row.get('dropped_frame_percentage', 0),
+                row.get('total_errors', 0)
+            ), axis=1
+        )
+        
+        summary['codec_bonus'] = summary['video_codec'].apply(calculate_codec_bonus)
+        
+        # Calculate final score
+        # Max possible: 100 + 100 + 100 + 50 + 100 + 60 = 510 points
+        summary['score'] = (
+            summary['bitrate_score'] +      # 0-100
+            summary['resolution_score'] +   # 0-100
+            summary['fps_score'] +          # 0-100
+            summary['startup_score'] +      # 0-50
+            summary['stability_score'] +    # 0-100
+            summary['codec_bonus']          # 0-60
+        )
+        
+        # For debugging/analysis, keep component scores
+        summary['error_penalty'] = 100 - summary['stability_score']
+        
+    else:
+        # Legacy scoring (original algorithm)
+        logging.info("Using legacy scoring algorithm")
+        
+        resolution_scores = scoring_cfg.get('resolution_scores', {
+            '3840x2160': 100, '1920x1080': 80, '1280x720': 50, '960x540': 20
+        })
+        summary['resolution_score'] = (
+            summary['resolution'].astype(str).str.strip()
+            .map(resolution_scores).fillna(0)
+        )
+        
+        fps_bonus = scoring_cfg.get('fps_bonus_points', 100)
+        summary['fps_bonus'] = 0
+        summary.loc[pd.to_numeric(summary['fps'], errors='coerce').fillna(0) >= 50, 'fps_bonus'] = fps_bonus
+        
+        # HEVC boost
+        hevc_boost = scoring_cfg.get('hevc_boost', 1.5)
+        summary['scoring_bitrate'] = summary['avg_bitrate_kbps']
+        if hevc_boost != 1.0:
+            summary.loc[summary['video_codec'] == 'hevc', 'scoring_bitrate'] *= hevc_boost
+        
+        summary['max_bitrate_for_channel'] = summary.groupby('channel_id')['scoring_bitrate'].transform('max')
+        summary['bitrate_score'] = (
+            summary['scoring_bitrate'] / (summary['max_bitrate_for_channel'] * 0.01)
+        ).fillna(0)
+        
+        summary['dropped_frames_penalty'] = summary['dropped_frame_percentage'] * 1
+        
+        # Error penalties
+        error_columns = ['err_decode', 'err_discontinuity', 'err_timeout']
+        for col in error_columns:
+            summary[col] = pd.to_numeric(summary[col], errors='coerce').fillna(0)
+        summary['error_penalty'] = summary[error_columns].sum(axis=1) * 25
 
-    # Calculate final score
-    summary['score'] = (
-        summary['bitrate_score'] +
-        summary['resolution_score'] +
-        summary['fps_bonus'] -
-        summary['dropped_frames_penalty'] -
-        summary['error_penalty']
-    )
+        # Calculate final score
+        summary['score'] = (
+            summary['bitrate_score'] +
+            summary['resolution_score'] +
+            summary['fps_bonus'] -
+            summary['dropped_frames_penalty'] -
+            summary['error_penalty']
+        )
+    
+    # Mark failed streams (applies to both scoring methods)
     summary.loc[summary['avg_bitrate_kbps'].isna(), 'score'] = -1
     
     # Sort by channel and score
@@ -1121,8 +1333,16 @@ def score_streams(api, config, input_csv=None,
         'avg_bitrate_kbps', 'avg_frames_decoded',
         'avg_frames_dropped', 'dropped_frame_percentage', 'fps', 'resolution',
         'video_codec', 'audio_codec', 'interlaced_status', 'status', 'score',
-        'error_penalty'
     ]
+    
+    # Add score component columns if using new scoring (for debugging)
+    if use_firestick_scoring:
+        final_columns.extend([
+            'bitrate_score', 'resolution_score', 'fps_score', 
+            'startup_score', 'stability_score', 'codec_bonus', 'error_penalty'
+        ])
+    else:
+        final_columns.append('error_penalty')
     for col in final_columns:
         if col not in df_sorted.columns:
             df_sorted[col] = 'N/A'
