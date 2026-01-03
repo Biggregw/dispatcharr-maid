@@ -3962,5 +3962,37 @@
             window.location.href = `/results?job_id=${encodeURIComponent(jobId)}`;
         }
     </script>
+<script>
+// Auto-load global channel health on page load
+(async function() {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    try {
+        const resp = await fetch('/api/channel-health');
+        const data = await resp.json();
+        
+        if (data.success && data.channels) {
+            const count = document.getElementById('channel-health-count');
+            const body = document.getElementById('channel-health-body');
+            
+            if (count && body) {
+                const issues = data.channels.filter(ch => ch.status !== 'OK');
+                count.textContent = String(issues.length);
+                
+                if (issues.length > 0) {
+                    body.innerHTML = issues.map(ch => {
+                        const state = (ch.status || 'OK').toLowerCase();
+                        const name = ch.channel_name || `Channel ${ch.channel_number || ch.channel_id}`;
+                        const reason = ch.reason || 'Recent playback observed';
+                        return `<div class="channel-health-row"><div><div class="channel-health-name">${name}</div><div class="channel-health-reason">${reason}</div></div><div class="channel-health-state state-${state}">${ch.status}</div></div>`;
+                    }).join('');
+                }
+            }
+        }
+    } catch (e) {
+        console.log('Channel health:', e.message);
+    }
+})();
+</script>
 </body>
 </html>
