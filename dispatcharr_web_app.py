@@ -54,16 +54,16 @@ from provider_usage import (
     iter_access_events,
 )
 
-# Ensure logs always show up in Docker logs/stdout, even if something else
-# configured logging before this module is imported.
-logging.basicConfig(
-    level=logging.INFO,
-    stream=sys.stdout,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    force=True,
-)
+# Only configure logging if not already configured (avoids conflicts when imported as module)
+if not logging.getLogger().hasHandlers():
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stdout,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB limit
 
 allowed_origins = [
     origin.strip()
