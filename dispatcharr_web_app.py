@@ -257,6 +257,19 @@ observation_store = ObservationStore()
 
 _patterns_lock = threading.Lock()
 _regex_presets_lock = threading.Lock()
+_base_config_lock = threading.Lock()
+_base_config = None
+
+PRESET_LIMIT = 200
+
+
+def _get_base_config():
+    """Lazily instantiate a shared base Config for request handlers."""
+    global _base_config
+    with _base_config_lock:
+        if _base_config is None:
+            _base_config = Config(Path('config.yaml'))
+        return _base_config
 
 
 def _channel_selection_patterns_path():
@@ -303,6 +316,13 @@ def _atomic_json_write(path: Path, payload):
 
 def _save_stream_name_regex_presets(presets):
     path = _stream_name_regex_presets_path()
+    if isinstance(presets, list) and len(presets) > PRESET_LIMIT:
+        logging.warning(
+            "Regex presets truncated to the most recent %d entries; discarding %d extras",
+            PRESET_LIMIT,
+            len(presets) - PRESET_LIMIT,
+        )
+        presets = presets[:PRESET_LIMIT]
     _atomic_json_write(path, presets)
 
 
@@ -330,6 +350,85 @@ def _normalize_id_list(values):
 
 def _normalize_text(value):
     return str(value or '').strip()
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _validate_config_section(section_data, rules):
+    for key, rule in rules.items():
+        if key not in section_data:
+            continue
+        value = section_data[key]
+        kind = rule.get('type')
+        minimum = rule.get('min')
+
+        if kind == 'int':
+            if not isinstance(value, int) or isinstance(value, bool):
+                return f"Invalid type for {key}: expected integer"
+        elif kind == 'number':
+            if not _is_number(value):
+                return f"Invalid type for {key}: expected number"
+        elif kind == 'dict':
+            if not isinstance(value, dict):
+                return f"Invalid type for {key}: expected object"
+            for res_key, res_value in value.items():
+                if not _is_number(res_value):
+                    return f"Invalid resolution score for {res_key}: expected number"
+                if minimum is not None and res_value < minimum:
+                    return f"Resolution score for {res_key} must be >= {minimum}"
+            continue
+        else:
+            continue
+
+        if minimum is not None and value < minimum:
+            return f"{key} must be >= {minimum}"
+
+    return None
+
+
+def _validate_config_update_payload(data):
+    if not isinstance(data, dict):
+        return 'Invalid payload format: expected JSON object'
+
+    if 'analysis' in data:
+        if not isinstance(data['analysis'], dict):
+            return 'Invalid analysis section: expected object'
+        error = _validate_config_section(
+            data['analysis'],
+            {
+                'duration': {'type': 'int', 'min': 1},
+                'idet_frames': {'type': 'int', 'min': 1},
+                'retries': {'type': 'int', 'min': 0},
+                'retry_delay': {'type': 'int', 'min': 0},
+                'timeout': {'type': 'int', 'min': 1},
+                'workers': {'type': 'int', 'min': 1},
+            },
+        )
+        if error:
+            return error
+
+    if 'scoring' in data:
+        if not isinstance(data['scoring'], dict):
+            return 'Invalid scoring section: expected object'
+        error = _validate_config_section(
+            data['scoring'],
+            {
+                'dropped_frames_penalty': {'type': 'number', 'min': 0},
+                'error_penalty': {'type': 'number', 'min': 0},
+                'fps_bonus_points': {'type': 'number', 'min': 0},
+                'hevc_boost': {'type': 'number', 'min': 0},
+                'max_bitrate_mbps': {'type': 'number', 'min': 0},
+                'max_dropped_frame_percent': {'type': 'number', 'min': 0},
+                'max_errors': {'type': 'int', 'min': 0},
+                'resolution_scores': {'type': 'dict', 'min': 0},
+            },
+        )
+        if error:
+            return error
+
+    return None
 
 
 def _regex_preset_identity(
@@ -596,7 +695,7 @@ def _maybe_auto_save_job_request(job_request, preview_only=False):
     with _regex_presets_lock:
         presets = _load_stream_name_regex_presets()
         _replace_or_insert_preset(presets, preset, preserve_existing_name=True)
-        _save_stream_name_regex_presets(presets[:200])
+        _save_stream_name_regex_presets(presets)
     return True
 
 
@@ -5230,7 +5329,7 @@ def api_save_regex():
                 preset,
                 preserve_existing_name=preserve_existing_name
             )
-            _save_stream_name_regex_presets(presets[:200])
+            _save_stream_name_regex_presets(presets)
 
         return jsonify({'success': True, 'saved': True, 'replaced': replaced, 'preset': preset})
     except Exception as e:
@@ -5295,7 +5394,7 @@ def api_delete_regex_preset(preset_id):
             kept = [p for p in presets if not (isinstance(p, dict) and str(p.get('id')) == preset_id)]
             if len(kept) == before:
                 return jsonify({'success': False, 'error': 'Preset not found'}), 404
-            _save_stream_name_regex_presets(kept[:200])
+            _save_stream_name_regex_presets(kept)
 
         return jsonify({'success': True, 'deleted': True, 'preset_id': preset_id})
     except Exception as e:
@@ -5305,7 +5404,7 @@ def api_delete_regex_preset(preset_id):
 def api_get_config():
     """Get current configuration"""
     try:
-        config = Config('config.yaml')
+        config = _get_base_config()
         
         return jsonify({
             'success': True,
@@ -5323,19 +5422,23 @@ def api_get_config():
 def api_update_config():
     """Update configuration"""
     try:
-        data = request.get_json()
-        config = Config('config.yaml')
-        
+        data = request.get_json() or {}
+        config = _get_base_config()
+
+        error = _validate_config_update_payload(data)
+        if error:
+            return jsonify({'success': False, 'error': error}), 400
+
         if 'analysis' in data:
             for key, value in data['analysis'].items():
                 config.set('analysis', key, value)
-        
+
         if 'scoring' in data:
             for key, value in data['scoring'].items():
                 config.set('scoring', key, value)
-        
+
         config.save()
-        
+
         return jsonify({'success': True, 'message': 'Configuration updated'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
