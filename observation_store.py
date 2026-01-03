@@ -308,6 +308,162 @@ def summarize_job_health(job_history: List[Dict], observations: Iterable[Observa
     return summaries
 
 
+def summarize_channel_health(
+    job_history: List[Dict],
+    observations: Iterable[Observation],
+    channels_lookup: Optional[Dict[int, Dict]] = None,
+    focus_job_ids: Optional[Iterable[str]] = None,
+) -> List[Dict]:
+    """Summarize passive channel health for display only.
+
+    The result is deterministic, read-only, and avoids any side effects that could
+    interfere with playback or orchestration flows.
+    """
+
+    def _parse_dt(ts: Optional[str]) -> Optional[datetime]:
+        if not ts:
+            return None
+        try:
+            return datetime.fromisoformat(ts)
+        except Exception:
+            return None
+
+    def _ago_text(ts: Optional[str]) -> str:
+        dt = _parse_dt(ts)
+        if not dt:
+            return "recently"
+        delta = datetime.now(timezone.utc) - dt
+        hours = int(delta.total_seconds() // 3600)
+        if hours < 1:
+            minutes = int(delta.total_seconds() // 60)
+            return f"{minutes}m ago" if minutes > 0 else "just now"
+        if hours < 48:
+            return f"{hours}h ago"
+        days = int(hours // 24)
+        return f"{days}d ago"
+
+    allowed_jobs = {str(jid) for jid in focus_job_ids} if focus_job_ids else set()
+    channels_lookup = channels_lookup or {}
+
+    def _ensure_channel_bucket(cid: int, buckets: Dict[int, Dict]) -> Dict:
+        if cid not in buckets:
+            info = channels_lookup.get(cid) or {}
+            buckets[cid] = {
+                "channel_id": cid,
+                "channel_name": info.get("name"),
+                "channel_number": info.get("channel_number"),
+                "last_playback": None,
+                "last_fallback": None,
+                "last_error": None,
+                "last_seen": None,
+                "playback_sessions_24h": 0,
+            }
+        return buckets[cid]
+
+    channels_for_jobs: Dict[str, set[int]] = {}
+    all_declared_channels: set[int] = set()
+    for job in job_history or []:
+        jid = str(job.get("job_id")) if job.get("job_id") else None
+        if not jid:
+            continue
+        declared = set()
+        for cid in job.get("channels") or []:
+            try:
+                declared.add(int(cid))
+            except Exception:
+                continue
+        channels_for_jobs[jid] = declared
+        all_declared_channels.update(declared)
+
+    buckets: Dict[int, Dict] = {}
+
+    for obs in observations:
+        cid = obs.channel_id
+        if cid is None:
+            continue
+        if allowed_jobs:
+            if obs.job_id and obs.job_id not in allowed_jobs:
+                continue
+            if not obs.job_id:
+                matching_job = next((jid for jid, chans in channels_for_jobs.items() if cid in chans and jid in allowed_jobs), None)
+                if not matching_job:
+                    continue
+        bucket = _ensure_channel_bucket(cid, buckets)
+        try:
+            parsed_ts = datetime.fromisoformat(obs.ts)
+        except Exception:
+            parsed_ts = None
+
+        if obs.event in {"started", "observed"}:
+            existing = bucket.get("last_playback")
+            if existing is None:
+                bucket["last_playback"] = obs.ts
+            elif parsed_ts and _parse_dt(existing) and parsed_ts > _parse_dt(existing):
+                bucket["last_playback"] = obs.ts
+            if parsed_ts and (datetime.now(timezone.utc) - parsed_ts) <= timedelta(hours=24):
+                bucket["playback_sessions_24h"] += 1
+        if obs.event == "fallback_used":
+            existing_fallback = bucket.get("last_fallback")
+            if existing_fallback is None:
+                bucket["last_fallback"] = obs.ts
+            elif parsed_ts and _parse_dt(existing_fallback) and parsed_ts > _parse_dt(existing_fallback):
+                bucket["last_fallback"] = obs.ts
+        if obs.event == "error":
+            existing_error = bucket.get("last_error")
+            if existing_error is None:
+                bucket["last_error"] = obs.ts
+            elif parsed_ts and _parse_dt(existing_error) and parsed_ts > _parse_dt(existing_error):
+                bucket["last_error"] = obs.ts
+
+        if parsed_ts:
+            existing_seen = bucket.get("last_seen")
+            if existing_seen is None or (_parse_dt(existing_seen) and parsed_ts > _parse_dt(existing_seen)):
+                bucket["last_seen"] = obs.ts
+
+    if allowed_jobs:
+        for jid in allowed_jobs:
+            for cid in channels_for_jobs.get(jid, set()):
+                _ensure_channel_bucket(cid, buckets)
+    elif not buckets:
+        for cid in all_declared_channels:
+            _ensure_channel_bucket(cid, buckets)
+
+    def _derive_health(bucket: Dict) -> Dict:
+        now = datetime.now(timezone.utc)
+        playback_dt = _parse_dt(bucket.get("last_playback"))
+        fallback_dt = _parse_dt(bucket.get("last_fallback"))
+        error_dt = _parse_dt(bucket.get("last_error"))
+        last_seen_dt = _parse_dt(bucket.get("last_seen"))
+
+        status = "OK"
+        reason = "Recent playback observed"
+
+        if error_dt and now - error_dt <= timedelta(hours=12):
+            status = "Failing"
+            reason = f"Errors detected {_ago_text(bucket.get('last_error'))}"
+        elif playback_dt is None and last_seen_dt is None:
+            status = "Failing"
+            reason = "No playback observed yet"
+        elif playback_dt and now - playback_dt > timedelta(hours=48):
+            status = "Failing"
+            reason = "No playback observed in last 48h"
+        elif fallback_dt and now - fallback_dt <= timedelta(hours=12):
+            status = "Risk"
+            reason = f"Fallback used {_ago_text(bucket.get('last_fallback'))}"
+        elif playback_dt and now - playback_dt > timedelta(hours=24):
+            status = "Risk"
+            reason = "No playback seen in last 24h"
+
+        bucket["status"] = status
+        bucket["reason"] = reason
+        return bucket
+
+    enriched = [_derive_health(b) for b in buckets.values()]
+    state_order = {"Failing": 0, "Risk": 1, "OK": 2}
+    enriched.sort(key=lambda b: (state_order.get(b.get("status"), 3), (b.get("channel_name") or "").casefold(), b.get("channel_id", 0)))
+    return enriched
+
+
 def attach_jobs_to_observations(observations: Iterable[Observation], job_history: List[Dict]) -> List[Observation]:
     """Attach job_ids to observations without mutating the originals."""
 
