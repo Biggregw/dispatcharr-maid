@@ -5219,7 +5219,25 @@ def api_list_regex_presets():
     try:
         with _regex_presets_lock:
             presets = _load_stream_name_regex_presets()
-        presets = [p for p in presets if isinstance(p, dict)]
+        normalized = []
+        for p in presets:
+            if not isinstance(p, dict):
+                continue
+
+            preset = dict(p)
+            # Older presets may have persisted tuples/sets; normalize so the
+            # Saved Jobs dropdown sees a real array and doesn't drop them.
+            groups = preset.get('groups')
+            if isinstance(groups, (tuple, set)):
+                preset['groups'] = list(groups)
+
+            channels = preset.get('channels')
+            if isinstance(channels, (tuple, set)):
+                preset['channels'] = list(channels)
+
+            normalized.append(preset)
+
+        presets = normalized
         presets.sort(key=lambda p: (p.get('created_at') or ''), reverse=True)
         resp = jsonify({
             'success': True,
