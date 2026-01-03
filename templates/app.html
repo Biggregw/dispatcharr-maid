@@ -1118,43 +1118,6 @@
         }
     </style>
 </head>
-<script>
-// Show test health data immediately
-(function() {
-    const channelHealthWrapper = document.getElementById('channel-health-wrapper');
-    
-    if (channelHealthWrapper) {
-        channelHealthWrapper.classList.remove('hidden');
-        
-        document.getElementById('channel-health-count').textContent = '3';
-        document.getElementById('channel-health-body').innerHTML = `
-            <div class="channel-health-row">
-                <div>
-                    <div class="channel-health-name">Sky Sports Main Event</div>
-                    <div class="channel-health-reason">Errors detected 5h ago</div>
-                </div>
-                <div class="channel-health-state state-failing">FAILING</div>
-            </div>
-            <div class="channel-health-row">
-                <div>
-                    <div class="channel-health-name">Sky Sports Premier League</div>
-                    <div class="channel-health-reason">Fallback used 3h ago</div>
-                </div>
-                <div class="channel-health-state state-risk">RISK</div>
-            </div>
-            <div class="channel-health-row">
-                <div>
-                    <div class="channel-health-name">Sky Sports Football</div>
-                    <div class="channel-health-reason">Recent playback observed</div>
-                </div>
-                <div class="channel-health-state state-ok">OK</div>
-            </div>
-        `;
-        
-        console.log('? Channel health shown');
-    }
-})();
-</script>
 <body>
     <div class="container">
         <div class="global-status">
@@ -3963,34 +3926,50 @@
         }
     </script>
 <script>
-// Auto-load global channel health on page load
-(async function() {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
+// Populate channel health with live data on page load
+(async function loadChannelHealth() {
     try {
-        const resp = await fetch('/api/channel-health');
-        const data = await resp.json();
-        
-        if (data.success && data.channels) {
-            const count = document.getElementById('channel-health-count');
-            const body = document.getElementById('channel-health-body');
-            
-            if (count && body) {
-                const issues = data.channels.filter(ch => ch.status !== 'OK');
-                count.textContent = String(issues.length);
-                
-                if (issues.length > 0) {
-                    body.innerHTML = issues.map(ch => {
-                        const state = (ch.status || 'OK').toLowerCase();
-                        const name = ch.channel_name || `Channel ${ch.channel_number || ch.channel_id}`;
-                        const reason = ch.reason || 'Recent playback observed';
-                        return `<div class="channel-health-row"><div><div class="channel-health-name">${name}</div><div class="channel-health-reason">${reason}</div></div><div class="channel-health-state state-${state}">${ch.status}</div></div>`;
-                    }).join('');
-                }
-            }
+        const response = await fetch('/api/channel-health');
+        const payload = await response.json();
+
+        if (!payload || !Array.isArray(payload.channels) || payload.channels.length === 0) {
+            return;
         }
-    } catch (e) {
-        console.log('Channel health:', e.message);
+
+        const issues = payload.channels.filter(channel => channel && channel.status !== 'OK').slice(0, 10);
+        if (issues.length === 0) {
+            return;
+        }
+
+        const wrapper = document.getElementById('channel-health-wrapper');
+        const count = document.getElementById('channel-health-count');
+        const body = document.getElementById('channel-health-body');
+
+        if (!wrapper || !count || !body) {
+            return;
+        }
+
+        wrapper.classList.remove('hidden');
+        count.textContent = String(issues.length);
+
+        body.innerHTML = issues.map(channel => {
+            const name = channel.channel_name || 'Unknown channel';
+            const reason = channel.reason ? `<div class="channel-health-reason">${channel.reason}</div>` : '';
+            const status = channel.status || 'OK';
+            const badgeClass = `state-${status.toLowerCase()}`;
+
+            return `
+                <div class="channel-health-row">
+                    <div>
+                        <div class="channel-health-name">${name}</div>
+                        ${reason}
+                    </div>
+                    <div class="channel-health-state ${badgeClass}">${status}</div>
+                </div>
+            `;
+        }).join('');
+    } catch (error) {
+        console.warn('Channel health unavailable', error);
     }
 })();
 </script>
