@@ -4025,20 +4025,20 @@ def api_get_jobs():
     """Get all active jobs"""
     with job_lock:
         active_jobs = [job.to_dict() for job in jobs.values()]
-
+    
     return jsonify({'success': True, 'jobs': active_jobs})
 
 
 @app.route('/api/status')
 def api_status():
     """Status endpoint for monitor dashboard - provides current job progress and last run info"""
-
+    
     # Get current active job if any
     current_progress = None
     with job_lock:
         active_jobs = [job for job in jobs.values() if job.status in ('running', 'queued')]
         if active_jobs:
-            job = active_jobs[0]
+            job = active_jobs[0]  # Get first active job
             current_progress = {
                 'active': True,
                 'processed': job.processed_count,
@@ -4047,32 +4047,33 @@ def api_status():
                 'timestamp': job.start_time.isoformat() if job.start_time else '',
                 'percent': (job.processed_count / job.total_count * 100) if job.total_count > 0 else 0
             }
-
+    
     # Get last completed job from history
     last_run = None
     try:
         history = get_job_history()
         completed_jobs = [j for j in history if j.get('status') == 'completed']
         if completed_jobs:
-            last_job = completed_jobs[0]
-
+            last_job = completed_jobs[0]  # Most recent completed job
+            
+            # Calculate basic stats from last job
             total = last_job.get('total_count', 0)
             processed = last_job.get('processed_count', 0)
             failed = last_job.get('failed_count', 0)
             successful = processed - failed
-
+            
             last_run = {
                 'timestamp': last_job.get('end_time', ''),
                 'total': total,
                 'successful': successful,
                 'failed': failed,
                 'success_rate': round(successful / total * 100, 1) if total > 0 else 0,
-                'top_providers': [],
+                'top_providers': [],  # Can be populated if provider stats are available
                 'problematic_providers': []
             }
     except Exception as e:
         logging.warning(f"Could not get last run info: {e}")
-
+    
     # Get config info
     config_info = None
     try:
@@ -4085,7 +4086,7 @@ def api_status():
         }
     except Exception as e:
         logging.warning(f"Could not load config: {e}")
-
+    
     # Get channel groups from Dispatcharr API
     groups = []
     try:
@@ -4094,7 +4095,7 @@ def api_status():
         groups = [{'id': g['id'], 'name': g['name']} for g in groups_data]
     except Exception as e:
         logging.warning(f"Could not fetch groups: {e}")
-
+    
     return jsonify({
         'current_progress': current_progress,
         'last_run': last_run,
