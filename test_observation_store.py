@@ -6,6 +6,7 @@ from observation_store import (
     Observation,
     ObservationStore,
     get_observation_count,
+    summarize_channel_health,
     summarize_job_health,
 )
 
@@ -116,3 +117,29 @@ def test_get_observation_count_handles_missing_file(tmp_path):
     path = tmp_path / "does-not-exist.jsonl"
 
     assert get_observation_count(path) == 0
+
+
+def test_channel_health_statuses_are_explainable():
+    now = datetime.now(timezone.utc)
+    recent_playback = (now - timedelta(hours=2)).isoformat()
+    fallback_ts = (now - timedelta(hours=3)).isoformat()
+    stale_playback = (now - timedelta(hours=50)).isoformat()
+
+    observations = [
+        Observation.from_dict({'ts': recent_playback, 'event': 'started', 'channel_id': 1, 'job_id': 'job-1'}),
+        Observation.from_dict({'ts': fallback_ts, 'event': 'fallback_used', 'channel_id': 2, 'job_id': 'job-1'}),
+        Observation.from_dict({'ts': stale_playback, 'event': 'started', 'channel_id': 3, 'job_id': 'job-1'}),
+        Observation.from_dict({'ts': now.isoformat(), 'event': 'error', 'channel_id': 4, 'job_id': 'job-1'}),
+    ]
+
+    history = [
+        {'job_id': 'job-1', 'channels': [1, 2, 3, 4]},
+    ]
+
+    results = summarize_channel_health(history, observations, focus_job_ids=['job-1'])
+    by_id = {r['channel_id']: r for r in results}
+
+    assert by_id[1]['status'] == 'OK'
+    assert by_id[2]['status'] == 'Risk' and 'Fallback' in by_id[2]['reason']
+    assert by_id[3]['status'] == 'Failing' and '48h' in by_id[3]['reason']
+    assert by_id[4]['status'] == 'Failing' and 'Errors' in by_id[4]['reason']

@@ -45,6 +45,7 @@ from observation_store import (
     attach_jobs_to_observations,
     get_observation_count,
     summarize_job_health,
+    summarize_channel_health,
 )
 from provider_usage import (
     aggregate_provider_usage,
@@ -1746,6 +1747,36 @@ def _build_job_health_response(job_id: str | None = None, regex_preset_id: str |
 
     unassigned = [obs for obs in observations if not obs.job_id]
     return jobs_payload, len(unassigned)
+
+
+def _build_channel_health_response(job_id: str | None = None, regex_preset_id: str | None = None):
+    observations, history = _load_observation_snapshot(limit=1500)
+
+    focus_jobs: list[str] = []
+    if job_id:
+        focus_jobs.append(str(job_id))
+    if regex_preset_id:
+        for job in history:
+            if str(job.get('regex_preset_id')) == str(regex_preset_id) and job.get('job_id'):
+                focus_jobs.append(str(job['job_id']))
+
+    channels_lookup: dict[int, dict] = {}
+    try:
+        api = DispatcharrAPI()
+        api.login()
+        for channel in api.fetch_channels():
+            try:
+                cid = int(channel.get('id'))
+            except Exception:
+                continue
+            channels_lookup[cid] = {
+                'name': channel.get('name'),
+                'channel_number': channel.get('channel_number'),
+            }
+    except Exception:
+        logging.debug('Channel lookup failed; proceeding with IDs only', exc_info=True)
+
+    return summarize_channel_health(history, observations, channels_lookup, focus_jobs or None)
 
 
 def progress_callback(job, progress_data):
@@ -4253,6 +4284,20 @@ def api_job_health_readonly():
         })
     except Exception as exc:
         logging.debug("Job health summary failed", exc_info=True)
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/channel-health')
+def api_channel_health_readonly():
+    """Derive passive channel health for display only."""
+
+    job_id = request.args.get('job_id')
+    regex_preset_id = request.args.get('regex_preset_id')
+    try:
+        channel_health = _build_channel_health_response(job_id=job_id, regex_preset_id=regex_preset_id)
+        return jsonify({'success': True, 'channels': channel_health})
+    except Exception as exc:
+        logging.debug("Channel health summary failed", exc_info=True)
         return jsonify({'success': False, 'error': str(exc)}), 500
 
 
