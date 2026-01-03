@@ -135,3 +135,29 @@ def test_preview_auto_save_does_not_run(monkeypatch):
     assert saved is False
     assert calls['loaded'] == 0
     assert calls['saved'] == 0
+
+
+def test_api_list_presets_normalizes_sequences(monkeypatch):
+    raw_presets = [{
+        'id': 'legacy',
+        'name': 'Legacy',
+        'regex': 'abc',
+        'groups': (1, 2),
+        'channels': {3, 4},
+        'created_at': '2024-01-01T00:00:00'
+    }]
+
+    monkeypatch.setattr(app, '_load_stream_name_regex_presets', lambda: raw_presets)
+
+    client = app.app.test_client()
+    resp = client.get('/api/regex/presets')
+    data = resp.get_json()
+
+    assert data['success'] is True
+    presets = data['presets']
+    assert isinstance(presets, list) and len(presets) == 1
+    first = presets[0]
+    assert isinstance(first.get('groups'), list)
+    assert set(first['groups']) == {1, 2}
+    assert isinstance(first.get('channels'), list)
+    assert set(first['channels']) == {3, 4}
