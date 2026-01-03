@@ -273,9 +273,71 @@
             color: #667eea;
             margin-left: 5px;
         }
+
+        .nav-link:hover {
+            color: #667eea;
+            background: #f3f4ff;
+            border-radius: 4px;
+            padding-left: 8px;
+            padding-right: 8px;
+        }
+
+        .nav-link.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: 600;
+        }
+
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none !important;
+            }
+            .nav-links.open {
+                display: flex !important;
+                flex-direction: column;
+                gap: 12px;
+                position: absolute;
+                top: 60px;
+                right: 20px;
+                background: rgba(255,255,255,0.95);
+                padding: 12px 16px;
+                border-radius: 10px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            }
+            .mobile-menu-btn {
+                display: block !important;
+            }
+        }
     </style>
 </head>
 <body>
+    <nav style="position: sticky; top: 0; z-index: 1000; background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+  <div style="max-width: 1400px; margin: 0 auto; padding: 0 20px; height: 60px; display: flex; align-items: center; justify-content: space-between;">
+    <!-- Logo/Brand -->
+    <div style="display: flex; align-items: center; gap: 10px; font-weight: 700; color: #667eea;">
+      Dispatcharr Maid
+    </div>
+    
+    <!-- Navigation Links -->
+    <div class="nav-links" style="display: flex; gap: 30px;">
+      <a href="/" class="nav-link" style="text-decoration: none; color: #4a5568; padding: 8px 0; border-bottom: 3px solid transparent; transition: all 0.3s;">
+        Control Panel
+      </a>
+      <a href="/index" class="nav-link" style="text-decoration: none; color: #4a5568; padding: 8px 0; border-bottom: 3px solid transparent; transition: all 0.3s;">
+        Monitor
+      </a>
+      <a href="/results" class="nav-link" style="text-decoration: none; color: #4a5568; padding: 8px 0; border-bottom: 3px solid transparent; transition: all 0.3s;">
+        Results
+      </a>
+    </div>
+    
+    <!-- Mobile menu button (hidden on desktop) -->
+    <button class="mobile-menu-btn" style="display: none; background: none; border: none; font-size: 24px; cursor: pointer;">
+      ☰
+    </button>
+  </div>
+</nav>
+
     <div class="container">
         <div class="header">
             <div class="brand">
@@ -286,7 +348,15 @@
                 </div>
             </div>
         </div>
-        
+
+        <div style="text-align: center; color: white; margin-bottom: 20px; font-size: 0.95em;">
+            <a href="/" style="color: white; opacity: 0.8;">Control Panel</a> 
+            <span style="opacity: 0.6; margin: 0 8px;">›</span>
+            <span style="font-weight: 600;">Monitor</span>
+            <span style="opacity: 0.6; margin: 0 8px;">›</span>
+            <a href="/results" style="color: white; opacity: 0.8;">Results</a>
+        </div>
+
         <div class="refresh-indicator" id="refreshIndicator">
             <span class="spinner"></span>
             <span id="refreshText">Updating...</span>
@@ -318,6 +388,54 @@
     </div>
     
     <script>
+        const missingElementProxy = new Proxy({
+            classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+            style: {}
+        }, {
+            get(target, prop) {
+                if (prop in target) return target[prop];
+                if (prop === 'appendChild' || prop === 'removeChild' || prop === 'replaceChildren' || prop === 'setAttribute' || prop === 'removeAttribute') return () => {};
+                if (prop === 'querySelectorAll') return () => [];
+                if (prop === 'querySelector') return () => null;
+                if (prop === 'addEventListener' || prop === 'removeEventListener') return () => {};
+                if (prop === 'value' || prop === 'textContent' || prop === 'innerText' || prop === 'innerHTML') return '';
+                return () => {};
+            },
+            set(target, prop, value) {
+                target[prop] = value;
+                return true;
+            }
+        });
+
+        function getElement(id) {
+            const el = document.getElementById(id);
+            if (!el) {
+                console.warn(`Element #${id} not found`);
+                return missingElementProxy;
+            }
+            return el;
+        }
+
+        function initNav() {
+            const path = window.location.pathname;
+            const links = document.querySelectorAll('.nav-link');
+            links.forEach(link => {
+                if (link.getAttribute('href') === path || (path === '/' && link.getAttribute('href') === '/')) {
+                    link.classList.add('active');
+                }
+            });
+
+            const mobileBtn = document.querySelector('.mobile-menu-btn');
+            const navLinks = document.querySelector('.nav-links');
+            if (mobileBtn && navLinks) {
+                mobileBtn.addEventListener('click', () => {
+                    navLinks.classList.toggle('open');
+                });
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', initNav);
+
         let lastUpdate = null;
         
         function formatTimestamp(isoString) {
@@ -348,7 +466,7 @@
         }
         
         function updateCurrentProgress(progress) {
-            const container = document.getElementById('currentProgressContainer');
+            const container = getElement('currentProgressContainer');
             
             if (!progress) {
                 container.innerHTML = `
@@ -423,7 +541,7 @@
         }
         
         function updateLastRun(lastRun) {
-            const container = document.getElementById('lastRunContainer');
+            const container = getElement('lastRunContainer');
             
             if (!lastRun) {
                 container.innerHTML = `
@@ -525,7 +643,7 @@
         }
         
         function updateConfig(config, groups) {
-            const container = document.getElementById('configContainer');
+            const container = getElement('configContainer');
             
             if (!config) {
                 container.innerHTML = `
@@ -573,10 +691,10 @@
                 updateConfig(data.config, data.groups);
                 
                 lastUpdate = new Date();
-                document.getElementById('refreshText').textContent = `Updated: ${lastUpdate.toLocaleTimeString()}`;
+                getElement('refreshText').textContent = `Updated: ${lastUpdate.toLocaleTimeString()}`;
             } catch (error) {
                 console.error('Error fetching status:', error);
-                document.getElementById('refreshText').textContent = 'Error updating';
+                getElement('refreshText').textContent = 'Error updating';
             }
         }
         

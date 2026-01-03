@@ -1045,9 +1045,71 @@
             border-color: #e2e8f0;
             color: #718096;
         }
+
+        .nav-link:hover {
+            color: #667eea;
+            background: #f3f4ff;
+            border-radius: 4px;
+            padding-left: 8px;
+            padding-right: 8px;
+        }
+
+        .nav-link.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: 600;
+        }
+
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none !important;
+            }
+            .nav-links.open {
+                display: flex !important;
+                flex-direction: column;
+                gap: 12px;
+                position: absolute;
+                top: 60px;
+                right: 20px;
+                background: rgba(255,255,255,0.95);
+                padding: 12px 16px;
+                border-radius: 10px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            }
+            .mobile-menu-btn {
+                display: block !important;
+            }
+        }
     </style>
 </head>
 <body>
+    <nav style="position: sticky; top: 0; z-index: 1000; background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+  <div style="max-width: 1400px; margin: 0 auto; padding: 0 20px; height: 60px; display: flex; align-items: center; justify-content: space-between;">
+    <!-- Logo/Brand -->
+    <div style="display: flex; align-items: center; gap: 10px; font-weight: 700; color: #667eea;">
+      Dispatcharr Maid
+    </div>
+    
+    <!-- Navigation Links -->
+    <div class="nav-links" style="display: flex; gap: 30px;">
+      <a href="/" class="nav-link" style="text-decoration: none; color: #4a5568; padding: 8px 0; border-bottom: 3px solid transparent; transition: all 0.3s;">
+        Control Panel
+      </a>
+      <a href="/index" class="nav-link" style="text-decoration: none; color: #4a5568; padding: 8px 0; border-bottom: 3px solid transparent; transition: all 0.3s;">
+        Monitor
+      </a>
+      <a href="/results" class="nav-link" style="text-decoration: none; color: #4a5568; padding: 8px 0; border-bottom: 3px solid transparent; transition: all 0.3s;">
+        Results
+      </a>
+    </div>
+    
+    <!-- Mobile menu button (hidden on desktop) -->
+    <button class="mobile-menu-btn" style="display: none; background: none; border: none; font-size: 24px; cursor: pointer;">
+      ☰
+    </button>
+  </div>
+</nav>
+
     <div class="container">
         <div class="global-status">
             <div id="global-job-indicator" class="job-indicator hidden" title="Job running">
@@ -1065,6 +1127,12 @@
             </div>
         </div>
         
+        <div style="text-align: center; margin-bottom: 15px;">
+            <div style="background: rgba(255,255,255,0.15); padding: 10px 20px; border-radius: 20px; display: inline-block; color: white;">
+                💡 Track live progress in <a href="/index" style="color: white; text-decoration: underline; font-weight: 700;">Monitor</a>
+            </div>
+        </div>
+
         <!-- Step Indicator -->
         <div class="steps">
             <div class="step active" id="step-indicator-1">
@@ -1517,6 +1585,54 @@
     </div>
 
     <script>
+        const missingElementProxy = new Proxy({
+            classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+            style: {}
+        }, {
+            get(target, prop) {
+                if (prop in target) return target[prop];
+                if (prop === 'appendChild' || prop === 'removeChild' || prop === 'replaceChildren' || prop === 'setAttribute' || prop === 'removeAttribute') return () => {};
+                if (prop === 'querySelectorAll') return () => [];
+                if (prop === 'querySelector') return () => null;
+                if (prop === 'addEventListener' || prop === 'removeEventListener') return () => {};
+                if (prop === 'value' || prop === 'textContent' || prop === 'innerText' || prop === 'innerHTML') return '';
+                return () => {};
+            },
+            set(target, prop, value) {
+                target[prop] = value;
+                return true;
+            }
+        });
+
+        function getElement(id) {
+            const el = document.getElementById(id);
+            if (!el) {
+                console.warn(`Element #${id} not found`);
+                return missingElementProxy;
+            }
+            return el;
+        }
+
+        function initNav() {
+            const path = window.location.pathname;
+            const links = document.querySelectorAll('.nav-link');
+            links.forEach(link => {
+                if (link.getAttribute('href') === path || (path === '/' && link.getAttribute('href') === '/')) {
+                    link.classList.add('active');
+                }
+            });
+
+            const mobileBtn = document.querySelector('.mobile-menu-btn');
+            const navLinks = document.querySelector('.nav-links');
+            if (mobileBtn && navLinks) {
+                mobileBtn.addEventListener('click', () => {
+                    navLinks.classList.toggle('open');
+                });
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', initNav);
+
         // Global state
         let selectedGroups = [];
         let selectedChannels = null; // null = all channels, [] = specific channels
@@ -1524,6 +1640,7 @@
         let allChannels = {};
         let currentJobId = null;
         let jobCheckInterval = null;
+        let currentJobCheckRequest = null;
         let refreshPreviewStreams = [];
         let refreshPreviewMeta = null;
         let refreshJobId = null;
@@ -1561,7 +1678,7 @@
 
         function maybeAutoScrollToCurrentJob(token = null) {
             if (!autoScrollToCurrentJobRequested) return;
-            const card = document.getElementById('current-job-card');
+            const card = getElement('current-job-card');
             if (!card || card.classList.contains('hidden')) {
                 // Card not visible yet; keep the request pending.
                 return;
@@ -1576,7 +1693,7 @@
             }
 
             requestAnimationFrame(() => {
-                const cardNow = document.getElementById('current-job-card');
+                const cardNow = getElement('current-job-card');
                 if (!cardNow || cardNow.classList.contains('hidden')) return;
                 scrollElementToViewportCenter(cardNow);
                 lastAutoScrollToken = effectiveToken;
@@ -1585,10 +1702,10 @@
         }
         
         function syncRegexInputsFromAdvanced() {
-            const advanced = document.getElementById('advancedRegexInput');
-            const regexOnly = document.getElementById('regexOnlyMode');
-            const overrideInput = document.getElementById('streamNameRegexOverride');
-            const filterInput = document.getElementById('streamNameRegex');
+            const advanced = getElement('advancedRegexInput');
+            const regexOnly = getElement('regexOnlyMode');
+            const overrideInput = getElement('streamNameRegexOverride');
+            const filterInput = getElement('streamNameRegex');
             if (!advanced || !regexOnly) return;
 
             const value = (advanced.value || '').trim();
@@ -1601,10 +1718,10 @@
         }
 
         function syncAdvancedFieldFromInputs() {
-            const advanced = document.getElementById('advancedRegexInput');
-            const regexOnly = document.getElementById('regexOnlyMode');
-            const overrideInput = document.getElementById('streamNameRegexOverride');
-            const filterInput = document.getElementById('streamNameRegex');
+            const advanced = getElement('advancedRegexInput');
+            const regexOnly = getElement('regexOnlyMode');
+            const overrideInput = getElement('streamNameRegexOverride');
+            const filterInput = getElement('streamNameRegex');
             if (!advanced || !regexOnly) return;
 
             const overrideValue = (overrideInput?.value || '').trim();
@@ -1623,8 +1740,8 @@
         }
 
         function updateRegexOnlyVisibility() {
-            const advanced = document.getElementById('advancedRegexInput');
-            const container = document.getElementById('regex-only-container');
+            const advanced = getElement('advancedRegexInput');
+            const container = getElement('regex-only-container');
             if (!advanced || !container) return;
 
             const hasValue = (advanced.value || '').trim().length > 0;
@@ -1632,20 +1749,20 @@
         }
 
         function applyRegexOnlyMode() {
-            const regexOnly = document.getElementById('regexOnlyMode');
+            const regexOnly = getElement('regexOnlyMode');
             const useOnly = !!regexOnly?.checked;
 
             const disableIds = ['baseSearchText', 'includeFilter', 'excludeFilter'];
             disableIds.forEach(id => {
-                const el = document.getElementById(id);
+                const el = getElement(id);
                 if (el) {
                     el.disabled = useOnly;
                     el.classList.toggle('input-disabled', useOnly);
                 }
             });
 
-            const exPlusOne = document.getElementById('excludePlusOne');
-            const exPlusOneRefine = document.getElementById('excludePlusOneRefine');
+            const exPlusOne = getElement('excludePlusOne');
+            const exPlusOneRefine = getElement('excludePlusOneRefine');
             [exPlusOne, exPlusOneRefine].forEach(el => {
                 if (el) {
                     el.disabled = useOnly;
@@ -1655,8 +1772,8 @@
         }
 
         function syncExcludePlusOneCheckboxes() {
-            const primary = document.getElementById('excludePlusOne');
-            const refine = document.getElementById('excludePlusOneRefine');
+            const primary = getElement('excludePlusOne');
+            const refine = getElement('excludePlusOneRefine');
             if (!primary || !refine) return;
 
             const align = (source, target) => {
@@ -1679,8 +1796,8 @@
             initSavedRegexPresetDropdown();
             loadSavedRegexPresets();
 
-            const advancedRegexInput = document.getElementById('advancedRegexInput');
-            const regexOnlyCheckbox = document.getElementById('regexOnlyMode');
+            const advancedRegexInput = getElement('advancedRegexInput');
+            const regexOnlyCheckbox = getElement('regexOnlyMode');
             if (advancedRegexInput) {
                 advancedRegexInput.addEventListener('input', syncRegexInputsFromAdvanced);
             }
@@ -1692,7 +1809,10 @@
             syncExcludePlusOneCheckboxes();
 
             // Check for active jobs periodically
-            setInterval(checkActiveJobs, 2000);
+            if (jobCheckInterval) {
+                clearInterval(jobCheckInterval);
+            }
+            jobCheckInterval = setInterval(checkActiveJobs, 2000);
         });
 
         // Saved stream-name regex presets
@@ -1704,8 +1824,8 @@
             if (savedRegexDropdownInitialized) return;
             savedRegexDropdownInitialized = true;
 
-            const control = document.getElementById('saved-regex-control');
-            const dropdown = document.getElementById('saved-regex-dropdown');
+            const control = getElement('saved-regex-control');
+            const dropdown = getElement('saved-regex-dropdown');
             if (!control || !dropdown) return;
 
             const toggle = () => toggleSavedRegexMenu();
@@ -1721,7 +1841,7 @@
             });
 
             document.addEventListener('click', (e) => {
-                const menu = document.getElementById('saved-regex-menu');
+                const menu = getElement('saved-regex-menu');
                 if (!menu || menu.classList.contains('hidden')) return;
                 if (!dropdown.contains(e.target)) closeSavedRegexMenu();
             });
@@ -1740,35 +1860,35 @@
         }
 
         function setSavedRegexLabel(text) {
-            const label = document.getElementById('saved-regex-label');
+            const label = getElement('saved-regex-label');
             if (label) label.textContent = text || '— Select Saved Job —';
         }
 
         function openSavedRegexMenu() {
-            const menu = document.getElementById('saved-regex-menu');
-            const control = document.getElementById('saved-regex-control');
+            const menu = getElement('saved-regex-menu');
+            const control = getElement('saved-regex-control');
             if (!menu || !control) return;
             menu.classList.remove('hidden');
             control.setAttribute('aria-expanded', 'true');
         }
 
         function closeSavedRegexMenu() {
-            const menu = document.getElementById('saved-regex-menu');
-            const control = document.getElementById('saved-regex-control');
+            const menu = getElement('saved-regex-menu');
+            const control = getElement('saved-regex-control');
             if (!menu || !control) return;
             menu.classList.add('hidden');
             control.setAttribute('aria-expanded', 'false');
         }
 
         function toggleSavedRegexMenu() {
-            const menu = document.getElementById('saved-regex-menu');
+            const menu = getElement('saved-regex-menu');
             if (!menu) return;
             if (menu.classList.contains('hidden')) openSavedRegexMenu();
             else closeSavedRegexMenu();
         }
 
         function renderSavedRegexPresets() {
-            const menu = document.getElementById('saved-regex-menu');
+            const menu = getElement('saved-regex-menu');
             if (!menu) return;
 
             // Rebuild menu items.
@@ -1853,16 +1973,16 @@
             if (!preset?.regex) return;
 
             const mode = String(preset?.regex_mode || '').trim().toLowerCase();
-            const overrideInput = document.getElementById('streamNameRegexOverride');
-            const filterInput = document.getElementById('streamNameRegex');
+            const overrideInput = getElement('streamNameRegexOverride');
+            const filterInput = getElement('streamNameRegex');
 
             // Apply any stored refresh filter settings (best-effort).
-            const base = document.getElementById('baseSearchText');
-            const inc = document.getElementById('includeFilter');
-            const exc = document.getElementById('excludeFilter');
-            const exPlusOne = document.getElementById('excludePlusOne');
-            const exPlusOneRefine = document.getElementById('excludePlusOneRefine');
-            const analysisProfile = document.getElementById('analysisProfile');
+            const base = getElement('baseSearchText');
+            const inc = getElement('includeFilter');
+            const exc = getElement('excludeFilter');
+            const exPlusOne = getElement('excludePlusOne');
+            const exPlusOneRefine = getElement('excludePlusOneRefine');
+            const analysisProfile = getElement('analysisProfile');
             if (base && typeof preset.base_search_text === 'string') base.value = preset.base_search_text;
             if (inc && typeof preset.include_filter === 'string') inc.value = preset.include_filter;
             if (exc && typeof preset.exclude_filter === 'string') exc.value = preset.exclude_filter;
@@ -1931,7 +2051,7 @@
         }
 
         function renderSavedPatterns() {
-            const select = document.getElementById('saved-pattern-select');
+            const select = getElement('saved-pattern-select');
             if (!select) return;
             const current = select.value;
 
@@ -1941,7 +2061,7 @@
                 select.onchange = () => onSavedPatternSelected();
                 onSavedPatternSelected();
                 // If there was no explicit error shown, show a helpful hint.
-                const status = document.getElementById('saved-pattern-status');
+                const status = getElement('saved-pattern-status');
                 if (status && status.classList.contains('hidden')) {
                     showSavedPatternStatus('No saved jobs yet. Run a job to auto-save it (or save from the preview dialog if you prefer).', false);
                 }
@@ -1960,7 +2080,7 @@
         }
 
         function showSavedPatternStatus(message, isError) {
-            const el = document.getElementById('saved-pattern-status');
+            const el = getElement('saved-pattern-status');
             if (!el) return;
             el.textContent = message || '';
             el.classList.remove('hidden');
@@ -1969,7 +2089,7 @@
         }
 
         function hideSavedPatternStatus() {
-            const el = document.getElementById('saved-pattern-status');
+            const el = getElement('saved-pattern-status');
             if (!el) return;
             el.classList.add('hidden');
             el.textContent = '';
@@ -1978,12 +2098,12 @@
         }
 
         async function onSavedPatternSelected() {
-            const select = document.getElementById('saved-pattern-select');
-            const runBtn = document.getElementById('btn-run-saved-pipeline');
-            const delBtn = document.getElementById('btn-delete-saved-preset');
-            const preview = document.getElementById('saved-pattern-preview');
-            const nameEl = document.getElementById('saved-pattern-preview-name');
-            const countEl = document.getElementById('saved-pattern-preview-count');
+            const select = getElement('saved-pattern-select');
+            const runBtn = getElement('btn-run-saved-pipeline');
+            const delBtn = getElement('btn-delete-saved-preset');
+            const preview = getElement('saved-pattern-preview');
+            const nameEl = getElement('saved-pattern-preview-name');
+            const countEl = getElement('saved-pattern-preview-count');
 
             const patternId = select?.value || '';
             if (!patternId) {
@@ -2012,7 +2132,7 @@
                     // If preset stored suggested settings, apply them.
                     const preset = data.preset;
                     const spp = preset?.streams_per_provider;
-                    const sppInput = document.getElementById('streamsPerProvider');
+                    const sppInput = getElement('streamsPerProvider');
                     if (sppInput && typeof spp === 'number' && spp >= 1) sppInput.value = String(spp);
                 } else {
                     if (countEl) countEl.textContent = data.error || 'Unable to resolve';
@@ -2028,7 +2148,7 @@
                 event.preventDefault();
                 event.stopPropagation();
             }
-            const patternId = document.getElementById('saved-pattern-select')?.value || '';
+            const patternId = getElement('saved-pattern-select')?.value || '';
             if (!patternId) return;
             const pattern = savedPatterns.find(p => p.id === patternId);
 
@@ -2042,8 +2162,8 @@
             const payload = {
                 job_type: 'pattern_refresh_full_cleanup',
                 regex_preset_id: patternId,
-                streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
-                exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false
+                streams_per_provider: parseInt(getElement('streamsPerProvider')?.value) || 2,
+                exclude_plus_one: getElement('excludePlusOne')?.checked || false
             };
 
             try {
@@ -2062,7 +2182,7 @@
                 if (data.success) {
                     currentJobId = data.job_id;
                     lastTerminalJobId = null;
-                    document.getElementById('current-job-card').classList.remove('hidden');
+                    getElement('current-job-card').classList.remove('hidden');
                     if (data.job) {
                         const reconciled = reconcileJobForRender(normalizeJobStatus(data.job));
                         renderCurrentJob(reconciled);
@@ -2088,7 +2208,7 @@
                 event.stopPropagation();
             }
 
-            const select = document.getElementById('saved-pattern-select');
+            const select = getElement('saved-pattern-select');
             const patternId = select?.value || '';
             if (!patternId) return;
 
@@ -2109,8 +2229,8 @@
                 if (data.success) {
                     allGroups = data.groups;
                     renderGroups();
-                    document.getElementById('group-loading').classList.add('hidden');
-                    document.getElementById('group-container').classList.remove('hidden');
+                    getElement('group-loading').classList.add('hidden');
+                    getElement('group-container').classList.remove('hidden');
                 } else {
                     showError('group-error', data.error);
                 }
@@ -2121,7 +2241,7 @@
         
         // Render groups
         function renderGroups() {
-            const grid = document.getElementById('group-grid');
+            const grid = getElement('group-grid');
             grid.innerHTML = '';
             
             allGroups.forEach(group => {
@@ -2164,13 +2284,13 @@
 
         // Update step 1 button
         function updateStep1Button() {
-            const btn = document.getElementById('btn-next-1');
+            const btn = getElement('btn-next-1');
             btn.disabled = selectedGroups.length === 0;
         }
 
         function renderRunSummaries() {
-            const groupSummary = document.getElementById('final-groups-summary');
-            const channelSummary = document.getElementById('final-channels-summary');
+            const groupSummary = getElement('final-groups-summary');
+            const channelSummary = getElement('final-channels-summary');
             const hasSelection = selectedGroups.length > 0;
 
             if (!groupSummary || !channelSummary) return;
@@ -2194,7 +2314,7 @@
 
         function updateRunAccessUI() {
             const hasSelection = selectedGroups.length > 0;
-            const emptyState = document.getElementById('run-empty-state');
+            const emptyState = getElement('run-empty-state');
             if (emptyState) {
                 emptyState.classList.toggle('hidden', hasSelection);
             }
@@ -2210,22 +2330,22 @@
             if (selectedGroups.length === 0) return;
             
             // Update step indicators
-            document.getElementById('step-indicator-1').classList.remove('active');
-            document.getElementById('step-indicator-1').classList.add('completed');
-            document.getElementById('step-indicator-2').classList.add('active');
-            document.getElementById('step-indicator-3').classList.remove('active', 'completed');
+            getElement('step-indicator-1').classList.remove('active');
+            getElement('step-indicator-1').classList.add('completed');
+            getElement('step-indicator-2').classList.add('active');
+            getElement('step-indicator-3').classList.remove('active', 'completed');
             
             // Switch cards
-            document.getElementById('step-1').classList.add('hidden');
-            document.getElementById('step-2').classList.remove('hidden');
-            document.getElementById('step-3').classList.add('hidden');
+            getElement('step-1').classList.add('hidden');
+            getElement('step-2').classList.remove('hidden');
+            getElement('step-3').classList.add('hidden');
             
             // Update summary
             const groupNames = selectedGroups.map(id => {
                 const group = allGroups.find(g => g.id === id);
                 return group ? group.name : id;
             }).join(', ');
-            document.getElementById('selected-groups-summary').textContent = groupNames;
+            getElement('selected-groups-summary').textContent = groupNames;
             
             // Load channels
             await loadChannels();
@@ -2234,8 +2354,8 @@
         // Load channels for selected groups
         async function loadChannels() {
             try {
-                document.getElementById('channel-loading').classList.remove('hidden');
-                document.getElementById('channel-container').classList.add('hidden');
+                getElement('channel-loading').classList.remove('hidden');
+                getElement('channel-container').classList.add('hidden');
                 
                 const response = await fetch(`/api/channels?groups=${selectedGroups.join(',')}`);
                 const data = await response.json();
@@ -2245,8 +2365,8 @@
                     renderChannels();
                     updateChannelCounts();
                     
-                    document.getElementById('channel-loading').classList.add('hidden');
-                    document.getElementById('channel-container').classList.remove('hidden');
+                    getElement('channel-loading').classList.add('hidden');
+                    getElement('channel-container').classList.remove('hidden');
                 } else {
                     showError('channel-error', data.error);
                 }
@@ -2257,7 +2377,7 @@
         
         // Render channels
         function renderChannels() {
-            const container = document.getElementById('channel-container');
+            const container = getElement('channel-container');
             container.innerHTML = '';
             
             // Render each group
@@ -2308,7 +2428,7 @@
         
         // Filter channels by search
         function filterChannels() {
-            const search = document.getElementById('channel-search-input').value.toLowerCase();
+            const search = getElement('channel-search-input').value.toLowerCase();
             const items = document.querySelectorAll('.channel-item');
             
             items.forEach(item => {
@@ -2331,15 +2451,15 @@
             // Update UI
             if (count === 0) {
                 selectedChannels = null; // All channels
-                document.getElementById('selected-channels-count').textContent = '0 (All)';
+                getElement('selected-channels-count').textContent = '0 (All)';
             } else {
                 selectedChannels = Array.from(checkedBoxes).map(cb => {
                     return parseInt(cb.closest('.channel-item').dataset.channelId);
                 });
-                document.getElementById('selected-channels-count').textContent = count;
+                getElement('selected-channels-count').textContent = count;
             }
 
-            const baseSearchInput = document.getElementById('baseSearchText');
+            const baseSearchInput = getElement('baseSearchText');
             if (baseSearchInput) {
                 if (selectedChannels && selectedChannels.length === 1) {
                     const selectedChannelId = selectedChannels[0];
@@ -2351,7 +2471,7 @@
             }
 
             // Show/hide refresh filters based on selection
-            const refreshFiltersDiv = document.getElementById('refreshFilters');
+            const refreshFiltersDiv = getElement('refreshFilters');
             if (refreshFiltersDiv) {
                 if (selectedChannels && selectedChannels.length === 1) {
                     refreshFiltersDiv.style.display = 'block';
@@ -2367,16 +2487,16 @@
             for (const channels of Object.values(allChannels)) {
                 total += channels.length;
             }
-            document.getElementById('total-channels-count').textContent = total;
+            getElement('total-channels-count').textContent = total;
         }
         
         // Go to step 3
         function goToStep3() {
             const hasSelection = selectedGroups.length > 0;
 
-            const step1 = document.getElementById('step-indicator-1');
-            const step2 = document.getElementById('step-indicator-2');
-            const step3 = document.getElementById('step-indicator-3');
+            const step1 = getElement('step-indicator-1');
+            const step2 = getElement('step-indicator-2');
+            const step3 = getElement('step-indicator-3');
 
             if (step1) {
                 step1.classList.toggle('completed', hasSelection);
@@ -2392,11 +2512,11 @@
 
             // Update step indicators
             // Switch cards
-            document.getElementById('step-2').classList.add('hidden');
-            document.getElementById('step-3').classList.remove('hidden');
+            getElement('step-2').classList.add('hidden');
+            getElement('step-3').classList.remove('hidden');
 
-            if (document.getElementById('step-1')) {
-                document.getElementById('step-1').classList.add('hidden');
+            if (getElement('step-1')) {
+                getElement('step-1').classList.add('hidden');
             }
 
             renderRunSummaries();
@@ -2405,19 +2525,19 @@
         
         // Go back to step 1
         function goToStep1() {
-            document.getElementById('step-indicator-1').classList.add('active');
-            document.getElementById('step-indicator-1').classList.remove('completed');
-            document.getElementById('step-indicator-2').classList.remove('active', 'completed');
-            document.getElementById('step-indicator-3').classList.remove('active', 'completed');
+            getElement('step-indicator-1').classList.add('active');
+            getElement('step-indicator-1').classList.remove('completed');
+            getElement('step-indicator-2').classList.remove('active', 'completed');
+            getElement('step-indicator-3').classList.remove('active', 'completed');
 
-            document.getElementById('step-1').classList.remove('hidden');
-            document.getElementById('step-2').classList.add('hidden');
-            document.getElementById('step-3').classList.add('hidden');
+            getElement('step-1').classList.remove('hidden');
+            getElement('step-2').classList.add('hidden');
+            getElement('step-3').classList.add('hidden');
         }
 
         // Refresh preview helpers
         function closeRefreshPreview() {
-            document.getElementById('refresh-preview-modal').classList.add('hidden');
+            getElement('refresh-preview-modal').classList.add('hidden');
             refreshPreviewStreams = [];
             refreshPreviewMeta = null;
             refreshJobId = null;
@@ -2428,9 +2548,9 @@
             refreshPreviewStreams = preview.streams || [];
             refreshPreviewMeta = preview;
 
-            const list = document.getElementById('refresh-preview-list');
-            const description = document.getElementById('refresh-preview-description');
-            const summary = document.getElementById('refresh-preview-summary');
+            const list = getElement('refresh-preview-list');
+            const description = getElement('refresh-preview-description');
+            const summary = getElement('refresh-preview-summary');
 
             const baseSearchText = preview.base_search_text ? `Base search text: "${preview.base_search_text}". ` : '';
             description.textContent = (preview.channel_name
@@ -2546,14 +2666,14 @@
                 return;
             }
 
-            const saveBtn = document.getElementById('refresh-save-regex-button');
+            const saveBtn = getElement('refresh-save-regex-button');
             if (saveBtn) {
                 saveBtn.disabled = true;
                 saveBtn.textContent = 'Saving...';
             }
 
             try {
-                const overrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
+                const overrideValue = (getElement('streamNameRegexOverride')?.value || '').trim();
                 let regex = overrideValue;
                 let regexMode = 'override';
 
@@ -2583,11 +2703,11 @@
                         regex_mode: regexMode,
                         groups: (Array.isArray(selectedGroups) && selectedGroups.length > 0) ? selectedGroups : undefined,
                         channels: Array.isArray(selectedChannels) ? selectedChannels : null,
-                        streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
-                        exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
-                        base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                        include_filter: document.getElementById('includeFilter')?.value || null,
-                        exclude_filter: document.getElementById('excludeFilter')?.value || null
+                        streams_per_provider: parseInt(getElement('streamsPerProvider')?.value) || 2,
+                        exclude_plus_one: getElement('excludePlusOne')?.checked || false,
+                        base_search_text: getElement('baseSearchText')?.value ?? null,
+                        include_filter: getElement('includeFilter')?.value || null,
+                        exclude_filter: getElement('excludeFilter')?.value || null
                     })
                 });
                 const saveData = await saveResp.json();
@@ -2597,10 +2717,10 @@
 
                 // Fill the appropriate input immediately.
                 if (regexMode === 'filter') {
-                    const input = document.getElementById('streamNameRegex');
+                    const input = getElement('streamNameRegex');
                     if (input) input.value = regex;
                 } else {
-                    const input = document.getElementById('streamNameRegexOverride');
+                    const input = getElement('streamNameRegexOverride');
                     if (input) input.value = regex;
                 }
 
@@ -2636,21 +2756,21 @@
 
             syncRegexInputsFromAdvanced();
 
-            document.getElementById('refresh-preview-modal').classList.remove('hidden');
-            document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-info preview-loading"><span class="loading-ellipsis">Searching for matching streams</span></div>';
+            getElement('refresh-preview-modal').classList.remove('hidden');
+            getElement('refresh-preview-list').innerHTML = '<div class="alert alert-info preview-loading"><span class="loading-ellipsis">Searching for matching streams</span></div>';
             resetRefreshProgress();
-            document.getElementById('refresh-preview-summary').textContent = 'Looking up matching streams...';
-            document.getElementById('refresh-preview-description').textContent = '';
+            getElement('refresh-preview-summary').textContent = 'Looking up matching streams...';
+            getElement('refresh-preview-description').textContent = '';
 
             try {
-                const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
-                const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
+                const regexOverrideValue = (getElement('streamNameRegexOverride')?.value || '').trim();
+                const regexFilterValue = (getElement('streamNameRegex')?.value || '').trim();
                 const payload = {
                     channel_id: selectedChannels[0],
-                    base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                    include_filter: document.getElementById('includeFilter')?.value || null,
-                    exclude_filter: document.getElementById('excludeFilter')?.value || null,
-                    exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
+                    base_search_text: getElement('baseSearchText')?.value ?? null,
+                    include_filter: getElement('includeFilter')?.value || null,
+                    exclude_filter: getElement('excludeFilter')?.value || null,
+                    exclude_plus_one: getElement('excludePlusOne')?.checked || false,
                     stream_name_regex: regexFilterValue ? regexFilterValue : null,
                     stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
                 };
@@ -2666,35 +2786,35 @@
                 if (data.success) {
                     renderRefreshPreview(data.preview);
                 } else {
-                    document.getElementById('refresh-preview-list').innerHTML = `<div class="alert alert-error">${data.error || 'Unable to preview streams.'}</div>`;
-                    document.getElementById('refresh-preview-summary').textContent = '';
+                    getElement('refresh-preview-list').innerHTML = `<div class="alert alert-error">${data.error || 'Unable to preview streams.'}</div>`;
+                    getElement('refresh-preview-summary').textContent = '';
                 }
             } catch (error) {
-                document.getElementById('refresh-preview-list').innerHTML = `<div class="alert alert-error">Failed to preview streams: ${error.message}</div>`;
-                document.getElementById('refresh-preview-summary').textContent = '';
+                getElement('refresh-preview-list').innerHTML = `<div class="alert alert-error">Failed to preview streams: ${error.message}</div>`;
+                getElement('refresh-preview-summary').textContent = '';
             }
         }
 
         function showRefreshProgress(message) {
-            const container = document.getElementById('refresh-progress-container');
-            const bar = document.getElementById('refresh-progress-bar');
+            const container = getElement('refresh-progress-container');
+            const bar = getElement('refresh-progress-bar');
             container.classList.remove('hidden');
-            document.getElementById('refresh-progress-message').textContent = message;
-            document.getElementById('refresh-progress-detail').textContent = 'Please wait. This dialog will close once the refresh finishes.';
-            document.getElementById('refresh-progress-percentage').textContent = '';
+            getElement('refresh-progress-message').textContent = message;
+            getElement('refresh-progress-detail').textContent = 'Please wait. This dialog will close once the refresh finishes.';
+            getElement('refresh-progress-percentage').textContent = '';
             bar.classList.add('indeterminate');
             bar.style.width = '45%';
         }
 
         function resetRefreshProgress() {
-            const container = document.getElementById('refresh-progress-container');
-            const bar = document.getElementById('refresh-progress-bar');
-            const submitButton = document.getElementById('refresh-submit-button');
+            const container = getElement('refresh-progress-container');
+            const bar = getElement('refresh-progress-bar');
+            const submitButton = getElement('refresh-submit-button');
 
             container.classList.add('hidden');
-            document.getElementById('refresh-progress-message').textContent = 'Preparing to add streams...';
-            document.getElementById('refresh-progress-detail').textContent = 'This window will stay open until the channel is updated.';
-            document.getElementById('refresh-progress-percentage').textContent = '';
+            getElement('refresh-progress-message').textContent = 'Preparing to add streams...';
+            getElement('refresh-progress-detail').textContent = 'This window will stay open until the channel is updated.';
+            getElement('refresh-progress-percentage').textContent = '';
             bar.classList.add('indeterminate');
             bar.style.width = '45%';
 
@@ -2710,7 +2830,7 @@
                 event.stopPropagation();
             }
             const selected = Array.from(document.querySelectorAll('.refresh-stream-checkbox:checked')).map(cb => parseInt(cb.value));
-            const submitButton = document.getElementById('refresh-submit-button');
+            const submitButton = getElement('refresh-submit-button');
 
             submitButton.disabled = true;
             submitButton.textContent = 'Adding...';
@@ -2721,10 +2841,10 @@
             if (!jobId) {
                 submitButton.disabled = false;
                 submitButton.textContent = 'Add Selected Streams';
-                document.getElementById('refresh-progress-message').textContent = 'Failed to start refresh job. Please try again.';
-                document.getElementById('refresh-progress-detail').textContent = '';
-                document.getElementById('refresh-progress-bar').classList.remove('indeterminate');
-                document.getElementById('refresh-progress-bar').style.width = '0%';
+                getElement('refresh-progress-message').textContent = 'Failed to start refresh job. Please try again.';
+                getElement('refresh-progress-detail').textContent = '';
+                getElement('refresh-progress-bar').classList.remove('indeterminate');
+                getElement('refresh-progress-bar').style.width = '0%';
                 return;
             }
 
@@ -2775,7 +2895,7 @@
                 failed: 0,
                 current_step: `Starting ${jobTypeLabel(jobType)}...`
             };
-            document.getElementById('current-job-card').classList.remove('hidden');
+            getElement('current-job-card').classList.remove('hidden');
             renderCurrentJob(reconcileJobForRender(optimisticJob));
             setJobIndicator(true);
         }
@@ -2843,21 +2963,21 @@
                 const scrollToken = requestAutoScrollToCurrentJob();
                 maybeAutoScrollToCurrentJob(scrollToken);
                 
-                const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
-                const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
-                const regexOnly = document.getElementById('regexOnlyMode')?.checked || false;
+                const regexOverrideValue = (getElement('streamNameRegexOverride')?.value || '').trim();
+                const regexFilterValue = (getElement('streamNameRegex')?.value || '').trim();
+                const regexOnly = getElement('regexOnlyMode')?.checked || false;
                 const payload = {
                     job_type: jobType,
                     groups: selectedGroups,
                     channels: selectedChannels,
                     group_names: groupNames,
                     channel_names: channelNames,
-                    streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
-                    analysis_profile: document.getElementById('analysisProfile')?.value || 'balanced',
-                    base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                    include_filter: document.getElementById('includeFilter')?.value || null,
-                    exclude_filter: document.getElementById('excludeFilter')?.value || null,
-                    exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
+                    streams_per_provider: parseInt(getElement('streamsPerProvider')?.value) || 2,
+                    analysis_profile: getElement('analysisProfile')?.value || 'balanced',
+                    base_search_text: getElement('baseSearchText')?.value ?? null,
+                    include_filter: getElement('includeFilter')?.value || null,
+                    exclude_filter: getElement('excludeFilter')?.value || null,
+                    exclude_plus_one: getElement('excludePlusOne')?.checked || false,
                     selected_stream_ids: selectedStreamIds,
                     stream_name_regex: regexFilterValue ? regexFilterValue : null,
                     stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null,
@@ -2887,7 +3007,7 @@
                     lastTerminalJobId = null;
 
                     // Show current job card
-                    document.getElementById('current-job-card').classList.remove('hidden');
+                    getElement('current-job-card').classList.remove('hidden');
 
                     // Render immediately from the start-job response (don't wait for first poll)
                     if (data.job) {
@@ -2958,8 +3078,15 @@
 
         // Check job status
         async function checkJob(jobId) {
+            if (currentJobCheckRequest) {
+                currentJobCheckRequest.abort();
+            }
+
+            const controller = new AbortController();
+            currentJobCheckRequest = controller;
+
             try {
-                const response = await fetch(`/api/job/${jobId}`);
+                const response = await fetch(`/api/job/${jobId}`, { signal: controller.signal });
                 const data = await response.json();
 
                 if (data.success) {
@@ -2987,18 +3114,22 @@
                     }
                 }
             } catch (error) {
-                console.error('Failed to check job:', error);
+                if (error.name !== 'AbortError') {
+                    console.error('Failed to check job:', error);
+                }
+            } finally {
+                currentJobCheckRequest = null;
             }
         }
 
         function updateRefreshProgress(job) {
             resetRefreshProgress();
-            const container = document.getElementById('refresh-progress-container');
-            const messageEl = document.getElementById('refresh-progress-message');
-            const detailEl = document.getElementById('refresh-progress-detail');
-            const bar = document.getElementById('refresh-progress-bar');
-            const percentEl = document.getElementById('refresh-progress-percentage');
-            const submitButton = document.getElementById('refresh-submit-button');
+            const container = getElement('refresh-progress-container');
+            const messageEl = getElement('refresh-progress-message');
+            const detailEl = getElement('refresh-progress-detail');
+            const bar = getElement('refresh-progress-bar');
+            const percentEl = getElement('refresh-progress-percentage');
+            const submitButton = getElement('refresh-submit-button');
 
             if (!refreshJobId || job.job_id !== refreshJobId) {
                 return;
@@ -3051,7 +3182,7 @@
         
         // Render current job
         function renderCurrentJob(job) {
-            const container = document.getElementById('current-job-content');
+            const container = getElement('current-job-content');
             
             const statusClass = {
                 'completed': 'status-completed',
@@ -3276,7 +3407,7 @@
         }
 
         function setJobIndicator(isActive) {
-            const indicator = document.getElementById('global-job-indicator');
+            const indicator = getElement('global-job-indicator');
             if (!indicator) return;
             indicator.classList.toggle('hidden', !isActive);
         }
@@ -3297,7 +3428,7 @@
                     if (jobToRender) {
                         const normalizedJob = normalizeJobStatus(jobToRender);
                         currentJobId = normalizedJob.job_id;
-                        document.getElementById('current-job-card').classList.remove('hidden');
+                        getElement('current-job-card').classList.remove('hidden');
                         const reconciledJob = reconcileJobForRender(normalizedJob);
                         renderCurrentJob(reconciledJob);
                         updateRefreshProgress(reconciledJob);
@@ -3336,8 +3467,8 @@
                 
                 if (data.success) {
                     renderJobHistory(data.history);
-                    document.getElementById('history-loading').classList.add('hidden');
-                    document.getElementById('history-container').classList.remove('hidden');
+                    getElement('history-loading').classList.add('hidden');
+                    getElement('history-container').classList.remove('hidden');
                     // Provider ranking is tied to the most recent analysis results.
                     loadProviderRanking();
                 }
@@ -3381,12 +3512,12 @@
 
         // Load provider ranking
         async function loadProviderRanking() {
-            const loading = document.getElementById('provider-ranking-loading');
-            const container = document.getElementById('provider-ranking-container');
-            const empty = document.getElementById('provider-ranking-empty');
-            const tbody = document.getElementById('provider-ranking-body');
-            const meta = document.getElementById('provider-ranking-meta');
-            const windowSelect = document.getElementById('provider-ranking-window');
+            const loading = getElement('provider-ranking-loading');
+            const container = getElement('provider-ranking-container');
+            const empty = getElement('provider-ranking-empty');
+            const tbody = getElement('provider-ranking-body');
+            const meta = getElement('provider-ranking-meta');
+            const windowSelect = getElement('provider-ranking-window');
 
             if (tbody) tbody.innerHTML = '';
             if (meta) meta.textContent = '';
@@ -3523,7 +3654,7 @@
         
         // Render job history
         function renderJobHistory(history) {
-            const list = document.getElementById('history-list');
+            const list = getElement('history-list');
             
             if (history.length === 0) {
                 list.innerHTML = '<div class="alert alert-info">No jobs completed yet</div>';
@@ -3595,7 +3726,7 @@
         
         // Show error
         function showError(elementId, message) {
-            const el = document.getElementById(elementId);
+            const el = getElement(elementId);
             el.textContent = message;
             el.classList.remove('hidden');
         }
@@ -3606,6 +3737,15 @@
             }
             window.location.href = `/results?job_id=${encodeURIComponent(jobId)}`;
         }
+
+        window.addEventListener('beforeunload', () => {
+            if (jobCheckInterval) {
+                clearInterval(jobCheckInterval);
+            }
+            if (currentJobCheckRequest) {
+                currentJobCheckRequest.abort();
+            }
+        });
     </script>
 </body>
 </html>
