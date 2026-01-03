@@ -50,7 +50,7 @@ class ProgressTracker:
                 with open(self.checkpoint_file, 'r') as f:
                     data = json.load(f)
                     return set(data.get('processed_ids', []))
-            except:
+            except (FileNotFoundError, json.JSONDecodeError, ValueError, KeyError, OSError):
                 return set()
         return set()
     
@@ -208,7 +208,7 @@ def _get_provider_from_url(url):
     """Extract provider identifier from URL"""
     try:
         return urlparse(url).netloc
-    except:
+    except (ValueError, AttributeError, TypeError):
         return "unknown_provider"
 
 

@@ -21,6 +21,10 @@ services:
       - ./dispatcharr_web_app.py:/app/dispatcharr_web_app.py  # Main web app
       - ./stream_analysis.py:/app/stream_analysis.py          # Stream analysis library
       - ./api_utils.py:/app/api_utils.py                      # API utilities
+      - ./engine:/app/engine                                  # Engine package
+      - ./observation_store.py:/app/observation_store.py      # Observation store
+      - ./provider_data.py:/app/provider_data.py              # Provider data helpers
+      - ./job_workspace.py:/app/job_workspace.py              # Job workspace helpers
       - ./provider_usage.py:/app/provider_usage.py            # Provider usage via access logs
       - ./interactive_maid.py:/app/interactive_maid.py        # Interactive CLI
       - ./web_monitor.py:/app/web_monitor.py                  # Web monitor

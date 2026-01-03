@@ -36,7 +36,7 @@ def get_current_progress():
             try:
                 df = pd.read_csv('csv/02_grouped_channel_streams.csv')
                 total = len(df)
-            except:
+            except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError, ValueError):
                 pass
         
         return {
@@ -48,7 +48,7 @@ def get_current_progress():
             'percent': (processed / total * 100) if total and total > 0 else 0
         }
     
-    except Exception as e:
+    except (OSError, json.JSONDecodeError, ValueError, KeyError) as e:
         return None
 
 
@@ -118,7 +118,7 @@ def get_last_run_summary():
             'problematic_providers': bad_list
         }
     
-    except Exception as e:
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError, ValueError, KeyError) as e:
         print(f"Error reading summary: {e}")
         return None
 
@@ -136,7 +136,7 @@ def get_channel_groups():
             {'id': int(row['id']), 'name': row['name']}
             for _, row in df.iterrows()
         ]
-    except:
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError, ValueError, KeyError):
         return []
 
 
@@ -161,7 +161,7 @@ def get_config_info():
             'workers': analysis.get('workers', 8),
             'duration': analysis.get('duration', 10)
         }
-    except:
+    except (OSError, yaml.YAMLError, ValueError, AttributeError, KeyError):
         return None
 
 
