@@ -1158,6 +1158,30 @@ def score_streams(api, config, input_csv=None,
                     logging.warning(f"Could not update stats for stream {stream_id}: {e}")
 
 
+def _interleave_by_provider(records, provider_fn, score_fn):
+    """Interleave ranked records by provider to maintain deterministic tiers."""
+
+    provider_order = []
+    provider_buckets = {}
+
+    for record in sorted(records, key=score_fn, reverse=True):
+        provider = provider_fn(record)
+        if provider not in provider_buckets:
+            provider_buckets[provider] = []
+            provider_order.append(provider)
+        provider_buckets[provider].append(record)
+
+    interleaved = []
+    max_len = max((len(bucket) for bucket in provider_buckets.values()), default=0)
+    for idx in range(max_len):
+        for provider in provider_order:
+            bucket = provider_buckets.get(provider, [])
+            if len(bucket) > idx:
+                interleaved.append(bucket[idx])
+
+    return interleaved
+
+
 def reorder_streams(api, config, input_csv=None):
     """Reorder streams in Dispatcharr based on scores"""
 
@@ -1232,8 +1256,16 @@ def reorder_streams(api, config, input_csv=None):
 
     def apply_resilience_ordering(group_df):
         records = group_df.to_dict('records')
-        if not records or not resilience_mode:
-            return [r['stream_id'] for r in records]
+        if not records:
+            return []
+
+        base_interleaved = _interleave_by_provider(
+            records,
+            _provider,
+            lambda r: _normalize_numeric(r.get('score')),
+        )
+        if not resilience_mode:
+            return [r['stream_id'] for r in base_interleaved]
 
         def _bitrate(record):
             try:
@@ -1321,7 +1353,24 @@ def reorder_streams(api, config, input_csv=None):
         ordered_tier3 = _order_tier(tier3)
         ordered_overflow = _order_tier(overflow)
 
-        diversified = ordered_tier1 + ordered_tier2 + ordered_tier3 + ordered_overflow
+        provider_buckets = {}
+        provider_order = []
+
+        for tier_records in [ordered_tier1, ordered_tier2, ordered_tier3, ordered_overflow]:
+            for record in tier_records:
+                provider = _provider(record)
+                if provider not in provider_buckets:
+                    provider_buckets[provider] = []
+                    provider_order.append(provider)
+                provider_buckets[provider].append(record)
+
+        diversified = []
+        max_len = max((len(bucket) for bucket in provider_buckets.values()), default=0)
+        for idx in range(max_len):
+            for provider in provider_order:
+                bucket = provider_buckets.get(provider, [])
+                if len(bucket) > idx:
+                    diversified.append(bucket[idx])
 
         # Ensure at least one Tier 2 or Tier 3 entry appears early
         early_window = diversified[:fallback_depth]
