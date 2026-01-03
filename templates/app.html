@@ -31,6 +31,40 @@
             color: white;
             margin-bottom: 30px;
         }
+
+        .global-status {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 10px;
+        }
+
+        .job-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: rgba(255, 255, 255, 0.18);
+            border-radius: 999px;
+            color: white;
+            font-weight: 600;
+            font-size: 0.95em;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+        }
+
+        .job-indicator__dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            background: #10b981;
+            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+            animation: pulse 1.6s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
         
         .header h1 {
             font-size: 2.5em;
@@ -1032,6 +1066,12 @@
 </head>
 <body>
     <div class="container">
+        <div class="global-status">
+            <div id="global-job-indicator" class="job-indicator hidden" title="Job running">
+                <span class="job-indicator__dot" aria-hidden="true"></span>
+                <span>Job running</span>
+            </div>
+        </div>
         <div class="header">
             <div class="brand">
                 <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="Dispatcharr Maid">
@@ -1056,6 +1096,10 @@
                 <div class="step-number">3</div>
                 <span>Run Jobs</span>
             </div>
+        </div>
+
+        <div style="text-align: right; margin-top: -10px; margin-bottom: 10px;">
+            <button class="text-btn" onclick="goToStep3()" style="font-weight: 700;">Go to Run Jobs</button>
         </div>
         
         <!-- Step 1: Group Selection -->
@@ -1122,6 +1166,10 @@
         <!-- Step 3: Actions & Jobs -->
         <div class="card hidden" id="step-3">
             <h2>⚡ Step 3: Run Jobs</h2>
+
+            <div id="run-empty-state" class="alert alert-info hidden" style="margin-bottom: 12px;">
+                No groups selected yet. Choose a channel group to enable run controls.
+            </div>
             
             <div class="selection-summary">
                 <div class="summary-row">
@@ -2295,12 +2343,51 @@
                 selectedGroups.push(groupId);
             }
             renderGroups();
+            renderRunSummaries();
+            updateRunAccessUI();
         }
-        
+
         // Update step 1 button
         function updateStep1Button() {
             const btn = document.getElementById('btn-next-1');
             btn.disabled = selectedGroups.length === 0;
+        }
+
+        function renderRunSummaries() {
+            const groupSummary = document.getElementById('final-groups-summary');
+            const channelSummary = document.getElementById('final-channels-summary');
+            const hasSelection = selectedGroups.length > 0;
+
+            if (!groupSummary || !channelSummary) return;
+
+            if (hasSelection) {
+                const groupNames = selectedGroups.map(id => {
+                    const group = allGroups.find(g => g.id === id);
+                    return group ? group.name : id;
+                }).join(', ');
+                groupSummary.textContent = groupNames || 'Selected groups';
+                if (selectedChannels && selectedChannels.length > 0) {
+                    channelSummary.textContent = `${selectedChannels.length} specific channels`;
+                } else {
+                    channelSummary.textContent = 'All channels';
+                }
+            } else {
+                groupSummary.textContent = 'No groups selected yet';
+                channelSummary.textContent = 'Select a group to choose channels';
+            }
+        }
+
+        function updateRunAccessUI() {
+            const hasSelection = selectedGroups.length > 0;
+            const emptyState = document.getElementById('run-empty-state');
+            if (emptyState) {
+                emptyState.classList.toggle('hidden', hasSelection);
+            }
+
+            document.querySelectorAll('#step-3 .action-btn').forEach(btn => {
+                btn.disabled = !hasSelection;
+                btn.classList.toggle('input-disabled', !hasSelection);
+            });
         }
         
         // Go to step 2
@@ -2470,27 +2557,35 @@
         
         // Go to step 3
         function goToStep3() {
+            const hasSelection = selectedGroups.length > 0;
+
+            const step1 = document.getElementById('step-indicator-1');
+            const step2 = document.getElementById('step-indicator-2');
+            const step3 = document.getElementById('step-indicator-3');
+
+            if (step1) {
+                step1.classList.toggle('completed', hasSelection);
+                step1.classList.toggle('active', !hasSelection);
+            }
+            if (step2) {
+                step2.classList.remove('active');
+                step2.classList.toggle('completed', hasSelection);
+            }
+            if (step3) {
+                step3.classList.add('active');
+            }
+
             // Update step indicators
-            document.getElementById('step-indicator-2').classList.remove('active');
-            document.getElementById('step-indicator-2').classList.add('completed');
-            document.getElementById('step-indicator-3').classList.add('active');
-            
             // Switch cards
             document.getElementById('step-2').classList.add('hidden');
             document.getElementById('step-3').classList.remove('hidden');
-            
-            // Update summary
-            const groupNames = selectedGroups.map(id => {
-                const group = allGroups.find(g => g.id === id);
-                return group ? group.name : id;
-            }).join(', ');
-            document.getElementById('final-groups-summary').textContent = groupNames;
-            
-            if (selectedChannels && selectedChannels.length > 0) {
-                document.getElementById('final-channels-summary').textContent = `${selectedChannels.length} specific channels`;
-            } else {
-                document.getElementById('final-channels-summary').textContent = 'All channels';
+
+            if (document.getElementById('step-1')) {
+                document.getElementById('step-1').classList.add('hidden');
             }
+
+            renderRunSummaries();
+            updateRunAccessUI();
         }
         
         // Go back to step 1
@@ -2867,6 +2962,7 @@
             };
             document.getElementById('current-job-card').classList.remove('hidden');
             renderCurrentJob(reconcileJobForRender(optimisticJob));
+            setJobIndicator(true);
         }
 
         function getClickedButton(event) {
@@ -3054,6 +3150,7 @@
                 if (data.success) {
                     const job = normalizeJobStatus(data.job);
                     const isTerminal = terminalStatuses.includes(job.status);
+                    setJobIndicator(job.status === 'running' || job.status === 'queued');
                     const reconciledJob = reconcileJobForRender(job);
 
                     renderCurrentJob(reconciledJob);
@@ -3071,6 +3168,7 @@
                             lastTerminalJobId = job.job_id;
                             loadJobHistory();
                         }
+                        setJobIndicator(false);
                     }
                 }
             } catch (error) {
@@ -3344,7 +3442,7 @@
         // Cancel job
         async function cancelJob(jobId) {
             if (!confirm('Are you sure you want to cancel this job?')) return;
-            
+
             try {
                 const response = await fetch(`/api/job/${jobId}/cancel`, {
                     method: 'POST'
@@ -3361,17 +3459,25 @@
                 alert('Failed to cancel job: ' + error.message);
             }
         }
-        
+
+        function setJobIndicator(isActive) {
+            const indicator = document.getElementById('global-job-indicator');
+            if (!indicator) return;
+            indicator.classList.toggle('hidden', !isActive);
+        }
+
         // Check for active jobs
         async function checkActiveJobs() {
             try {
                 const response = await fetch('/api/jobs');
                 const data = await response.json();
-                
+
                 if (data.success && data.jobs.length > 0) {
                     const activeJob = data.jobs.find(j => j.status === 'running' || j.status === 'queued');
                     const trackedJob = currentJobId ? data.jobs.find(j => j.job_id === currentJobId) : null;
                     const jobToRender = activeJob || trackedJob;
+
+                    setJobIndicator(!!activeJob);
 
                     if (jobToRender) {
                         const normalizedJob = normalizeJobStatus(jobToRender);
@@ -3399,6 +3505,7 @@
                     }
                 } else if (data.success) {
                     // No jobs known by server; clear any stale UI loading state.
+                    setJobIndicator(false);
                     resetActionButtons();
                 }
             } catch (error) {
