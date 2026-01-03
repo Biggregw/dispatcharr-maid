@@ -303,27 +303,6 @@ except subprocess.TimeoutExpired as e:
 
 ---
 
-### 🟠 BUG-008: Missing Volume Mount for observation_store.py
-**File:** `docker-compose.yml`  
-**Lines:** 21-27  
-**Severity:** HIGH
-
-**Issue:**
-`observation_store.py` is imported by `dispatcharr_web_app.py` but not mounted as a volume.
-
-**Impact:**
-- Changes to observation store logic require container rebuild
-- Inconsistent with other module mounts
-
-**Fix:**
-```yaml
-- ./observation_store.py:/app/observation_store.py
-- ./provider_data.py:/app/provider_data.py
-- ./job_workspace.py:/app/job_workspace.py
-```
-
----
-
 ## Medium Severity Issues
 
 ### 🟡 BUG-009: Config File Path Inconsistency

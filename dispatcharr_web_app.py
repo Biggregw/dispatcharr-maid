@@ -16,7 +16,6 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from queue import Queue
@@ -39,15 +38,6 @@ from engine import (
 )
 from stream_analysis import refresh_channel_streams
 from job_workspace import create_job_workspace
-from observation_store import (
-    Observation,
-    ObservationStore,
-    attach_jobs_to_observations,
-    get_observation_count,
-    summarize_job_health,
-    summarize_channel_health,
-)
-from dispatcharr_ws_listener import start_dispatcharr_ws_listener
 from provider_usage import (
     aggregate_provider_usage,
     aggregate_provider_usage_detailed,
@@ -255,8 +245,6 @@ def _render_auth_error(error_message):
 # Job management
 jobs = {}  # {job_id: Job}
 job_lock = threading.Lock()
-observation_store = ObservationStore()
-_ws_listener = start_dispatcharr_ws_listener(observation_store)
 
 _patterns_lock = threading.Lock()
 _regex_presets_lock = threading.Lock()
@@ -1644,143 +1632,6 @@ def save_job_to_history(job):
         json.dump(history, f, indent=2)
 
 
-def _serialize_observation(obs: Observation) -> dict:
-    try:
-        return asdict(obs)
-    except Exception:
-        return {
-            'ts': obs.ts,
-            'event': obs.event,
-            'channel_id': obs.channel_id,
-            'stream_id': obs.stream_id,
-            'provider': obs.provider,
-            'duration': obs.duration,
-            'source': obs.source,
-            'job_id': obs.job_id,
-        }
-
-
-def _record_observation_payload(payload) -> tuple[bool, dict]:
-    """Record a single observation without changing engine behaviour."""
-
-    history = get_job_history()
-    observation = Observation.from_dict(payload or {})
-    attached = attach_jobs_to_observations([observation], history)[0]
-    success = observation_store.append(attached)
-    return success, _serialize_observation(attached)
-
-
-def _record_job_completion_observation(job) -> bool:
-    """Record a passive job completion observation without blocking execution."""
-
-    try:
-        observation = Observation(
-            ts=datetime.now(timezone.utc).isoformat(),
-            event="ended",
-            job_id=str(getattr(job, "job_id", None)) if getattr(job, "job_id", None) else None,
-            source="job_runner",
-        )
-    except Exception:
-        logging.debug("Failed to build job completion observation", exc_info=True)
-        return False
-
-    try:
-        return bool(observation_store.append(observation))
-    except Exception:
-        logging.debug("Failed to record job completion observation", exc_info=True)
-        return False
-
-
-def _load_observation_snapshot(limit: int = 500):
-    history = get_job_history()
-    observations = list(
-        attach_jobs_to_observations(
-            observation_store.iter_observations(limit=limit),
-            history,
-        )
-    )
-    return observations, history
-
-
-def _build_job_health_response(job_id: str | None = None, regex_preset_id: str | None = None):
-    observations, history = _load_observation_snapshot(limit=1000)
-    summary = summarize_job_health(history, observations)
-
-    def _default_bucket():
-        return {
-            'last_playback': None,
-            'fallback_events': 0,
-            'error_events': 0,
-            'last_job_started': None,
-            'last_job_ended': None,
-            'last_run_status': 'Unknown',
-            'playback_sessions_24h': 0,
-            'warnings': [],
-        }
-
-    jobs_payload = []
-    for job in history:
-        jid = str(job.get('job_id')) if job.get('job_id') else None
-        if not jid:
-            continue
-        if job_id and jid != job_id:
-            continue
-        if regex_preset_id and str(job.get('regex_preset_id')) != str(regex_preset_id):
-            continue
-        bucket = summary.get(jid, _default_bucket())
-        jobs_payload.append(
-            {
-                'job_id': jid,
-                'regex_preset_id': job.get('regex_preset_id'),
-                'regex_preset_name': job.get('regex_preset_name')
-                or job.get('selection_pattern_name')
-                or job.get('group_names')
-                or 'Saved job',
-                'last_playback': bucket.get('last_playback'),
-                'fallback_events': bucket.get('fallback_events', 0),
-                'error_events': bucket.get('error_events', 0),
-                'last_job_started': bucket.get('last_job_started'),
-                'last_job_ended': bucket.get('last_job_ended'),
-                'last_run_status': bucket.get('last_run_status'),
-                'playback_sessions_24h': bucket.get('playback_sessions_24h', 0),
-                'warnings': bucket.get('warnings') or [],
-            }
-        )
-
-    unassigned = [obs for obs in observations if not obs.job_id]
-    return jobs_payload, len(unassigned)
-
-
-def _build_channel_health_response(job_id: str | None = None, regex_preset_id: str | None = None):
-    observations, history = _load_observation_snapshot(limit=1500)
-
-    focus_jobs: list[str] = []
-    if job_id:
-        focus_jobs.append(str(job_id))
-    if regex_preset_id:
-        for job in history:
-            if str(job.get('regex_preset_id')) == str(regex_preset_id) and job.get('job_id'):
-                focus_jobs.append(str(job['job_id']))
-
-    channels_lookup: dict[int, dict] = {}
-    try:
-        api = DispatcharrAPI()
-        api.login()
-        for channel in api.fetch_channels():
-            try:
-                cid = int(channel.get('id'))
-            except Exception:
-                continue
-            channels_lookup[cid] = {
-                'name': channel.get('name'),
-                'channel_number': channel.get('channel_number'),
-            }
-    except Exception:
-        logging.debug('Channel lookup failed; proceeding with IDs only', exc_info=True)
-
-    return summarize_channel_health(history, observations, channels_lookup, focus_jobs or None)
-
-
 def progress_callback(job, progress_data):
     """Callback function for progress updates"""
     processed = progress_data.get('processed', 0)
@@ -2574,10 +2425,6 @@ def run_job_worker(job, api, config):
             logging.info(f"TASK_END: {task_name}")
         # Save to history
         save_job_to_history(job)
-        try:
-            _record_job_completion_observation(job)
-        except Exception:
-            logging.debug("Unable to record job completion observation", exc_info=True)
 
 
 def cleanup_streams_by_provider(
@@ -4180,129 +4027,6 @@ def api_job_history():
     return jsonify({'success': True, 'history': history})
 
 
-@app.route('/api/observations', methods=['GET', 'POST'])
-def api_observations():
-    """Record or fetch passive playback observations."""
-
-    if request.method == 'POST':
-        try:
-            payload = request.get_json() or {}
-        except Exception:
-            payload = {}
-        try:
-            success, obs_dict = _record_observation_payload(payload)
-            # Observation capture must never affect playback; return 200 even on failure.
-            return jsonify({'success': success, 'observation': obs_dict})
-        except Exception as exc:
-            logging.debug("Unable to record observation", exc_info=True)
-            return jsonify({'success': False, 'error': str(exc)}), 200
-
-    job_id = request.args.get('job_id')
-    limit_raw = request.args.get('limit')
-    try:
-        limit = max(1, int(limit_raw)) if limit_raw is not None else 250
-    except Exception:
-        limit = 250
-
-    observations, _history = _load_observation_snapshot(limit=limit)
-    if job_id:
-        observations = [o for o in observations if str(o.job_id) == str(job_id)]
-
-    return jsonify({'success': True, 'observations': [_serialize_observation(o) for o in observations]})
-
-
-@app.route('/api/observations/proxy-scan', methods=['POST'])
-def api_observation_proxy_scan():
-    """Derive observations from proxy access logs without triggering engine flows."""
-
-    try:
-        payload = request.get_json() or {}
-    except Exception:
-        payload = {}
-
-    log_dir = Path(payload.get('log_dir') or 'logs')
-    log_glob = payload.get('glob') or 'proxy-host-*_access.log*'
-    max_events = payload.get('max_events') or 500
-    stream_provider_map = payload.get('stream_provider_map') or {}
-    stream_channel_map = payload.get('stream_channel_map') or {}
-
-    try:
-        limit = max(1, int(max_events))
-    except Exception:
-        limit = 500
-
-    since = compute_since(payload.get('days'))
-    log_files = find_log_files(log_dir, log_glob)
-
-    observations: list[Observation] = []
-    try:
-        for ev in iter_access_events(log_files, since=since, playback_only=True):
-            stream_id = ev.extract_stream_id()
-            provider = stream_provider_map.get(stream_id) if isinstance(stream_id, int) else None
-            if provider is None and stream_id is not None:
-                provider = stream_provider_map.get(str(stream_id))
-            channel_id = stream_channel_map.get(stream_id) if isinstance(stream_id, int) else None
-            if channel_id is None and stream_id is not None:
-                channel_id = stream_channel_map.get(str(stream_id))
-            observations.append(
-                Observation.from_dict(
-                    {
-                        'ts': ev.ts.isoformat(),
-                        'event': 'started',
-                        'stream_id': stream_id,
-                        'channel_id': channel_id,
-                        'provider': provider,
-                        'source': 'proxy_log',
-                    }
-                )
-            )
-            if len(observations) >= limit:
-                break
-    except Exception:
-        # Parsing is tolerant and never blocks playback.
-        logging.debug("Proxy scan observation failed", exc_info=True)
-
-    attached = attach_jobs_to_observations(observations, get_job_history())
-    recorded = observation_store.extend(attached)
-    return jsonify({
-        'success': True,
-        'seen': len(observations),
-        'recorded': recorded,
-    })
-
-
-@app.route('/api/job-health')
-def api_job_health_readonly():
-    """Summarize observation-only job health without automation."""
-
-    job_id = request.args.get('job_id')
-    regex_preset_id = request.args.get('regex_preset_id')
-    try:
-        jobs_payload, unassigned_count = _build_job_health_response(job_id, regex_preset_id)
-        return jsonify({
-            'success': True,
-            'jobs': jobs_payload,
-            'unassigned_observations': unassigned_count,
-        })
-    except Exception as exc:
-        logging.debug("Job health summary failed", exc_info=True)
-        return jsonify({'success': False, 'error': str(exc)}), 500
-
-
-@app.route('/api/channel-health')
-def api_channel_health_readonly():
-    """Derive passive channel health for display only."""
-
-    job_id = request.args.get('job_id')
-    regex_preset_id = request.args.get('regex_preset_id')
-    try:
-        channel_health = _build_channel_health_response(job_id=job_id, regex_preset_id=regex_preset_id)
-        return jsonify({'success': True, 'channels': channel_health})
-    except Exception as exc:
-        logging.debug("Channel health summary failed", exc_info=True)
-        return jsonify({'success': False, 'error': str(exc)}), 500
-
-
 @app.route('/api/usage/providers')
 def api_usage_providers():
     """
@@ -5412,11 +5136,9 @@ def api_list_regex_presets():
             presets = _load_stream_name_regex_presets()
         presets = [p for p in presets if isinstance(p, dict)]
         presets.sort(key=lambda p: (p.get('created_at') or ''), reverse=True)
-        observation_count = get_observation_count(observation_store.path)
         resp = jsonify({
             'success': True,
             'presets': presets,
-            'observation_count': observation_count,
         })
         # Avoid stale caches (mobile browsers / proxies).
         resp.headers['Cache-Control'] = 'no-store, max-age=0'
