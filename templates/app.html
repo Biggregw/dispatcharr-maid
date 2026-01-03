@@ -1811,9 +1811,6 @@
             const rememberedJobId = getRememberedJobId();
             if (rememberedJobId) {
                 currentJobId = rememberedJobId;
-                // Assume this may be a refresh job until we learn otherwise so the
-                // progress UI can light up on the first response.
-                refreshJobId = rememberedJobId;
                 getElement('current-job-card').classList.remove('hidden');
                 checkJob(rememberedJobId);
             }
@@ -3158,13 +3155,9 @@
                             loadJobHistory();
                         }
                         setJobIndicator(false);
-                        refreshJobId = null;
-                        resetRefreshProgress();
                         forgetCurrentJobId();
                     }
                 } else if (data.error === 'Job not found') {
-                    refreshJobId = null;
-                    resetRefreshProgress();
                     forgetCurrentJobId();
                 }
             } catch (error) {
