@@ -65,37 +65,64 @@ logging.basicConfig(
 
 app = Flask(__name__)
 
-CORS(app)
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv('CORS_ORIGINS', 'http://localhost:5000').split(',')
+    if origin.strip()
+]
+CORS(app, origins=allowed_origins, supports_credentials=True)
 
 _dispatcharr_auth_state = {
     'authenticated': False,
     'last_error': None
 }
+_dispatcharr_auth_lock = threading.Lock()
 
 # Cache provider-usage computations (log parsing can be expensive).
 _provider_usage_cache_lock = threading.Lock()
 _provider_usage_cache = {
     # (log_dir, glob, days) -> {'ts': epoch_seconds, 'payload': dict}
 }
+PROVIDER_USAGE_CACHE_TTL = 300
+
+
+def _get_cached_provider_usage(cache_key):
+    with _provider_usage_cache_lock:
+        cached = _provider_usage_cache.get(cache_key)
+        if cached is None:
+            return None
+
+        now = time.time()
+        if now - float(cached.get('ts', 0)) > PROVIDER_USAGE_CACHE_TTL:
+            del _provider_usage_cache[cache_key]
+            return None
+
+        return cached.get('payload')
+
+
+def _set_cached_provider_usage(cache_key, payload):
+    with _provider_usage_cache_lock:
+        _provider_usage_cache[cache_key] = {'ts': time.time(), 'payload': payload}
 
 
 # Check authentication lazily on first UI request to avoid crashing when Dispatcharr is temporarily unavailable.
 def _ensure_dispatcharr_ready():
     """Lazily validate Dispatcharr auth on first UI request to avoid startup crashes."""
-    if _dispatcharr_auth_state['authenticated']:
-        return True, None
+    with _dispatcharr_auth_lock:
+        if _dispatcharr_auth_state['authenticated']:
+            return True, None
 
-    try:
-        api = DispatcharrAPI()
-        api.login()
-        api.fetch_channel_groups()
-        _dispatcharr_auth_state['authenticated'] = True
-        _dispatcharr_auth_state['last_error'] = None
-        return True, None
-    except Exception as exc:
-        _dispatcharr_auth_state['last_error'] = str(exc)
-        logging.error("Dispatcharr authentication check failed: %s", exc)
-        return False, _dispatcharr_auth_state['last_error']
+        try:
+            api = DispatcharrAPI()
+            api.login()
+            api.fetch_channel_groups()
+            _dispatcharr_auth_state['authenticated'] = True
+            _dispatcharr_auth_state['last_error'] = None
+            return True, None
+        except Exception as exc:
+            _dispatcharr_auth_state['last_error'] = str(exc)
+            logging.error("Dispatcharr authentication check failed: %s", exc)
+            return False, _dispatcharr_auth_state['last_error']
 
 
 def _render_auth_error(error_message):
@@ -3236,7 +3263,15 @@ def index():
 @app.route('/health')
 def health_check():
     """Lightweight health endpoint that does not require Dispatcharr connectivity."""
-    return jsonify({'status': 'ok'}), 200
+    try:
+        Config('config.yaml')
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }), 200
+    except Exception as exc:
+        logging.error("Health check failed: %s", exc)
+        return jsonify({'status': 'unhealthy', 'error': 'Health check failed'}), 500
 
 
 @app.route('/results')
@@ -4183,11 +4218,9 @@ def api_usage_providers():
         }), 404
 
     cache_key = (str(log_dir_path), str(log_glob), int(days_int))
-    now = time.time()
-    with _provider_usage_cache_lock:
-        cached = _provider_usage_cache.get(cache_key)
-        if isinstance(cached, dict) and (now - float(cached.get('ts', 0))) < 120:
-            return jsonify(cached.get('payload', {'success': True}))
+    cached_payload = _get_cached_provider_usage(cache_key)
+    if cached_payload is not None:
+        return jsonify(cached_payload)
 
     # Map stream_id -> provider (m3u_account) using Dispatcharr API.
     try:
@@ -4269,8 +4302,7 @@ def api_usage_providers():
         }
     }
 
-    with _provider_usage_cache_lock:
-        _provider_usage_cache[cache_key] = {'ts': now, 'payload': payload}
+    _set_cached_provider_usage(cache_key, payload)
 
     return jsonify(payload)
 
