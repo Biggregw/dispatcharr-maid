@@ -36,13 +36,6 @@ from stream_analysis import (
     reorder_streams
 )
 from job_workspace import create_job_workspace
-from provider_usage import (
-    aggregate_provider_usage,
-    aggregate_provider_usage_detailed,
-    compute_since,
-    find_log_files,
-    iter_access_events,
-)
 
 # Ensure logs always show up in Docker logs/stdout, even if something else
 # configured logging before this module is imported.
@@ -61,13 +54,6 @@ _dispatcharr_auth_state = {
     'authenticated': False,
     'last_error': None
 }
-
-# Cache provider-usage computations (log parsing can be expensive).
-_provider_usage_cache_lock = threading.Lock()
-_provider_usage_cache = {
-    # (log_dir, glob, days) -> {'ts': epoch_seconds, 'payload': dict}
-}
-
 
 # Check authentication lazily on first UI request to avoid crashing when Dispatcharr is temporarily unavailable.
 def _ensure_dispatcharr_ready():
@@ -3841,159 +3827,6 @@ def api_job_history():
     """Get job history"""
     history = get_job_history()
     return jsonify({'success': True, 'history': history})
-
-
-@app.route('/api/usage/providers')
-def api_usage_providers():
-    """
-    Derive provider usage from reverse-proxy access logs (e.g. Nginx Proxy Manager).
-
-    Requires config.yaml:
-      usage.access_log_dir: directory containing access log files
-      usage.access_log_glob: file glob (non-recursive)
-
-    Query params:
-      - days: lookback days (default: usage.lookback_days or 7)
-      - proxy_host: optional NPM proxy-host id (e.g. 1) to override the glob to proxy-host-<id>_access.log*
-    """
-    try:
-        config = Config('config.yaml')
-    except Exception as exc:
-        return jsonify({'success': False, 'error': f'Could not load config.yaml: {exc}'}), 500
-
-    usage_cfg = config.get('usage') or {}
-    log_dir = usage_cfg.get('access_log_dir')
-    log_glob = usage_cfg.get('access_log_glob') or 'proxy-host-*_access.log*'
-    default_days = usage_cfg.get('lookback_days', 7)
-
-    days_raw = request.args.get('days')
-    days = default_days if days_raw is None or str(days_raw).strip() == '' else days_raw
-    try:
-        days_int = int(days)
-    except Exception:
-        return jsonify({'success': False, 'error': 'Invalid days parameter'}), 400
-    days_int = max(1, min(365, days_int))
-
-    proxy_host_raw = request.args.get('proxy_host')
-    if proxy_host_raw is not None and str(proxy_host_raw).strip() != '':
-        try:
-            proxy_host_id = int(str(proxy_host_raw).strip())
-        except Exception:
-            return jsonify({'success': False, 'error': 'Invalid proxy_host parameter'}), 400
-        proxy_host_id = max(1, min(9999, proxy_host_id))
-        log_glob = f'proxy-host-{proxy_host_id}_access.log*'
-
-    if not log_dir:
-        return jsonify({
-            'success': False,
-            'error': (
-                "Missing usage.access_log_dir in config.yaml. "
-                "Mount your proxy logs into the Maid container and set usage.access_log_dir accordingly."
-            )
-        }), 400
-
-    log_dir_path = Path(str(log_dir))
-    log_files = find_log_files(log_dir_path, str(log_glob))
-    if not log_files:
-        return jsonify({
-            'success': False,
-            'error': (
-                f"No access logs found in {str(log_dir_path)} matching {str(log_glob)}. "
-                "If you're using Nginx Proxy Manager, mount its /data/logs directory into the Maid container."
-            )
-        }), 404
-
-    cache_key = (str(log_dir_path), str(log_glob), int(days_int))
-    now = time.time()
-    with _provider_usage_cache_lock:
-        cached = _provider_usage_cache.get(cache_key)
-        if isinstance(cached, dict) and (now - float(cached.get('ts', 0))) < 120:
-            return jsonify(cached.get('payload', {'success': True}))
-
-    # Map stream_id -> provider (m3u_account) using Dispatcharr API.
-    try:
-        api = DispatcharrAPI()
-        api.login()
-        stream_provider_map = api.fetch_stream_provider_map()
-        # Normalize to str provider ids for stable keys.
-        stream_id_to_provider_id = {int(k): str(v) for k, v in stream_provider_map.items()}
-    except Exception as exc:
-        return jsonify({'success': False, 'error': f'Failed to fetch stream/provider map from Dispatcharr: {exc}'}), 500
-
-    since = compute_since(days_int)
-    events = iter_access_events(log_files, since=since, playback_only=True)
-    usage, diagnostics = aggregate_provider_usage_detailed(
-        events,
-        stream_id_to_provider_id,
-        session_gap_seconds=int(usage_cfg.get('session_gap_seconds', 30) or 30),
-    )
-
-    # Attach provider display names (best-effort).
-    provider_names = _load_provider_names(config) if config else {}
-    usage_named = {}
-    for provider_id, stats in (usage or {}).items():
-        usage_named[provider_id] = {
-            **stats,
-            'provider_name': provider_names.get(str(provider_id)) if isinstance(provider_names, dict) else None,
-        }
-
-    # Best-effort: enrich "unknown" with a few stream details to explain why attribution failed.
-    try:
-        top_unknown = diagnostics.get('unmapped_stream_ids_top') if isinstance(diagnostics, dict) else None
-        if isinstance(top_unknown, list) and top_unknown:
-            details = []
-            for row in top_unknown[:10]:
-                sid = row.get('stream_id') if isinstance(row, dict) else None
-                if sid is None:
-                    continue
-                info = None
-                try:
-                    info = api.fetch_stream_details(int(sid))
-                except Exception:
-                    info = None
-                exists = isinstance(info, dict)
-                # Dispatcharr field names vary; be defensive.
-                name = None
-                m3u_account = None
-                if exists:
-                    name = info.get('stream_name') or info.get('name') or info.get('title')
-                    m3u_account = info.get('m3u_account')
-                details.append({
-                    'stream_id': int(sid),
-                    'requests': int(row.get('requests') or 0) if isinstance(row, dict) else 0,
-                    'exists_in_dispatcharr': bool(exists),
-                    'stream_name': str(name) if name is not None else None,
-                    'm3u_account': int(m3u_account) if isinstance(m3u_account, int) else (str(m3u_account) if m3u_account is not None else None),
-                })
-            diagnostics['unmapped_stream_details'] = details
-    except Exception:
-        # Never fail provider usage if enrichment fails.
-        pass
-
-    if isinstance(diagnostics, dict):
-        diagnostics['stream_provider_map_size'] = int(len(stream_id_to_provider_id))
-
-    payload = {
-        'success': True,
-        'since': since.isoformat() if since else None,
-        'days': days_int,
-        'log_dir': str(log_dir_path),
-        'log_glob': str(log_glob),
-        'log_files': [p.name for p in log_files[:50]],
-        'provider_usage': usage_named,
-        'diagnostics': diagnostics if isinstance(diagnostics, dict) else {},
-        'totals': {
-            'providers': len(usage_named),
-            'playback_requests': sum(int(v.get('requests', 0) or 0) for v in usage_named.values()),
-            'playback_sessions': sum(int(v.get('sessions', 0) or 0) for v in usage_named.values()),
-            'bytes_sent': sum(int(v.get('bytes_sent', 0) or 0) for v in usage_named.values()),
-        }
-    }
-
-    with _provider_usage_cache_lock:
-        _provider_usage_cache[cache_key] = {'ts': now, 'payload': payload}
-
-    return jsonify(payload)
 
 
 @app.route('/api/provider-ranking')
