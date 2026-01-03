@@ -47,6 +47,7 @@ from observation_store import (
     summarize_job_health,
     summarize_channel_health,
 )
+from dispatcharr_ws_listener import start_dispatcharr_ws_listener
 from provider_usage import (
     aggregate_provider_usage,
     aggregate_provider_usage_detailed,
@@ -255,6 +256,7 @@ def _render_auth_error(error_message):
 jobs = {}  # {job_id: Job}
 job_lock = threading.Lock()
 observation_store = ObservationStore()
+_ws_listener = start_dispatcharr_ws_listener(observation_store)
 
 _patterns_lock = threading.Lock()
 _regex_presets_lock = threading.Lock()
