@@ -1643,6 +1643,46 @@ def get_job_history():
         return []
 
 
+def _sanitize_result_summary(result_summary):
+    """Strip or coerce fields that are unsafe to inline in job list responses."""
+    if result_summary is None:
+        return None
+
+    drop_keys = {
+        'streams',
+        'previous_streams',
+        'final_streams',
+        'cleanup_plan_rows',
+        'dispatcharr_plan',
+    }
+
+    def _coerce(value):
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        if isinstance(value, (list, tuple)):
+            return [_coerce(v) for v in value]
+        if isinstance(value, dict):
+            return {k: _coerce(v) for k, v in value.items() if k not in drop_keys}
+        return str(value)
+
+    if isinstance(result_summary, dict):
+        return {k: _coerce(v) for k, v in result_summary.items() if k not in drop_keys}
+
+    return _coerce(result_summary)
+
+
+def _sanitize_job_for_response(job):
+    if isinstance(job, Job):
+        payload = job.to_dict()
+    elif isinstance(job, dict):
+        payload = dict(job)
+    else:
+        return None
+
+    payload['result_summary'] = _sanitize_result_summary(payload.get('result_summary'))
+    return payload
+
+
 def save_job_to_history(job):
     """Save completed job to history"""
     history_file = 'logs/job_history.json'
@@ -4048,8 +4088,12 @@ def api_cancel_job(job_id):
 def api_get_jobs():
     """Get all active jobs"""
     with job_lock:
-        active_jobs = [job.to_dict() for job in jobs.values()]
-    
+        active_jobs = []
+        for job in jobs.values():
+            sanitized = _sanitize_job_for_response(job)
+            if sanitized:
+                active_jobs.append(sanitized)
+
     return jsonify({'success': True, 'jobs': active_jobs})
 
 
