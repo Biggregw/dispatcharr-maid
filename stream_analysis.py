@@ -151,14 +151,7 @@ class Config:
                 'retry_delay': 10,
             },
             'scoring': {
-                'fps_bonus_points': 100,
-                'hevc_boost': 1.5,
-                'resolution_scores': {
-                    '3840x2160': 100,
-                    '1920x1080': 80,
-                    '1280x720': 50,
-                    '960x540': 20
-                }
+                'proxy_startup_bias': True,
             },
             'filters': {
                 'channel_group_ids': [],
@@ -999,156 +992,86 @@ def analyze_streams(config, input_csv=None,
         raise
 
 
-def calculate_optimal_bitrate_score(bitrate_kbps, resolution, codec):
-    """
-    Score bitrate based on optimal ranges for FireStick 4K.
-    Bell curve scoring: peaks at optimal, penalizes excessive (slow startup) and low (poor quality).
-    """
+def _calculate_proxy_startup_score(bitrate_kbps):
+    """Favor streams that buffer quickly under proxy timeouts."""
     if bitrate_kbps is None or pd.isna(bitrate_kbps):
         return 0
 
     bitrate = float(bitrate_kbps)
-    codec_lower = str(codec).lower()
-    is_hevc = 'hevc' in codec_lower or 'h265' in codec_lower
 
-    # Optimal ranges: (min_good, ideal_min, ideal_max, max_good) in kbps
-    optimal_ranges = {
-        ('3840x2160', True):  (8000, 12000, 20000, 30000),
-        ('3840x2160', False): (15000, 20000, 35000, 50000),
-        ('1920x1080', True):  (3500, 5000, 10000, 15000),
-        ('1920x1080', False): (6000, 8000, 15000, 22000),
-        ('1280x720', True):   (2000, 2500, 5000, 7500),
-        ('1280x720', False):  (3000, 4000, 8000, 12000),
-        ('960x540', True):    (1000, 1500, 3000, 4500),
-        ('960x540', False):   (1500, 2000, 4000, 6000),
-    }
-
-    key = (str(resolution), is_hevc)
-    if key not in optimal_ranges:
-        return min(bitrate / 100, 100)
-
-    min_good, ideal_min, ideal_max, max_good = optimal_ranges[key]
-
-    if bitrate < min_good:
-        ratio = bitrate / min_good
-        return 50 * ratio
-    elif bitrate < ideal_min:
-        ratio = (bitrate - min_good) / (ideal_min - min_good)
-        return 50 + (50 * ratio)
-    elif bitrate <= ideal_max:
+    # Lower bitrate generally buffers faster through the proxy. Higher values
+    # are still allowed but are penalized because they are more likely to stall
+    # during the aggressive startup window.
+    if bitrate <= 3000:
         return 100
-    elif bitrate <= max_good:
-        ratio = (bitrate - ideal_max) / (max_good - ideal_max)
-        return 100 - (20 * ratio)
-    else:
-        excess_ratio = (bitrate - max_good) / max_good
-        penalty = min(excess_ratio * 60, 60)
-        return max(80 - penalty, 20)
-
-
-def calculate_startup_speed_score(bitrate_kbps):
-    """
-    Estimate channel switching speed. Lower bitrate = faster buffering.
-    Returns 0-50 points.
-    """
-    if bitrate_kbps is None or pd.isna(bitrate_kbps):
-        return 0
-
-    bitrate = float(bitrate_kbps)
-
-    if bitrate < 3000:
-        return 50
-    elif bitrate < 6000:
-        return 45
-    elif bitrate < 10000:
-        return 35
-    elif bitrate < 15000:
-        return 25
-    elif bitrate < 20000:
-        return 15
-    else:
-        return 5
-
-
-def calculate_enhanced_fps_score(fps):
-    """
-    Score FPS based on broadcast standards.
-    Prefer 50fps (PAL/Europe) or 60fps (NTSC/US).
-    Returns 0-100 points.
-    """
-    try:
-        fps_num = float(fps)
-    except (ValueError, TypeError):
-        return 50
-
-    if 24.5 <= fps_num <= 25.5 or 49.5 <= fps_num <= 50.5:
-        return 100  # PAL
-    elif 29.5 <= fps_num <= 30.5 or 59.5 <= fps_num <= 60.5:
-        return 100  # NTSC
-    elif 23.5 <= fps_num <= 24.5:
-        return 90   # Cinema
-    elif fps_num >= 45:
-        return 85   # High FPS
-    elif fps_num >= 25:
+    if bitrate <= 6000:
+        return 85
+    if bitrate <= 10000:
         return 70
-    else:
+    if bitrate <= 15000:
+        return 55
+    if bitrate <= 20000:
         return 40
+    return 25
 
 
-def calculate_enhanced_stability_score(dropped_frame_pct, errors):
-    """
-    Enhanced stability scoring with stricter penalties.
-    Returns 0-100 points.
-    """
+def _calculate_proxy_stability_score(dropped_frame_pct, errors):
+    """Penalize early instability that risks rebuffering under strict thresholds."""
     try:
         dropped_pct = float(dropped_frame_pct) if not pd.isna(dropped_frame_pct) else 0
+    except (ValueError, TypeError):
+        dropped_pct = 0
+
+    try:
         error_count = int(errors) if not pd.isna(errors) else 0
     except (ValueError, TypeError):
-        return 50
+        error_count = 0
 
     stability = 100
 
-    if dropped_pct > 0:
-        penalty = min(dropped_pct * 5, 70)
-        stability -= penalty
-
+    # Decode/discontinuity/timeout errors are the strongest signal of proxy
+    # survival risk. Penalize quadratically to push unstable streams down.
     if error_count > 0:
-        penalty = min(error_count * error_count * 15, 80)
-        stability -= penalty
+        stability -= min(error_count * error_count * 25, 90)
+
+    # Dropped frames during the sample window often precede buffering.
+    if dropped_pct > 0:
+        stability -= min(dropped_pct * 2, 40)
 
     return max(stability, 0)
 
 
-def calculate_resolution_score_firestick(resolution):
-    """
-    FireStick-optimized resolution scores.
-    Bigger gap between 1080p and 720p (very noticeable).
-    Returns 0-100 points.
-    """
-    scores = {
-        '3840x2160': 100,
-        '1920x1080': 75,
-        '1280x720': 40,
-        '960x540': 10,
-        '720x576': 10,
-        '720x480': 10,
-    }
-    return scores.get(str(resolution).strip(), 0)
+def _determine_validation(row):
+    """Classify validation outcome before scoring.
 
-
-def calculate_codec_bonus(codec):
+    Streams that failed to start, hit early decode/discontinuity/timeout errors,
+    or produced no decoded frames are considered failed for ordering purposes.
     """
-    Bonus for efficient codecs.
-    Returns 0-60 points.
-    """
-    codec_lower = str(codec).lower()
+    reasons = []
 
-    if 'hevc' in codec_lower or 'h265' in codec_lower:
-        return 50
-    elif 'av1' in codec_lower:
-        return 60
-    else:
-        return 0
+    status = str(row.get('status', '')).strip().lower()
+    if status and status != 'ok':
+        reasons.append(f"status:{status}")
+
+    for err_key in ('err_decode', 'err_discontinuity', 'err_timeout'):
+        err_val = row.get(err_key)
+        try:
+            has_error = bool(int(err_val))
+        except Exception:
+            has_error = bool(err_val)
+        if has_error:
+            reasons.append(err_key)
+
+    try:
+        frames_decoded = float(row.get('avg_frames_decoded', 0))
+    except (ValueError, TypeError):
+        frames_decoded = 0
+    if frames_decoded == 0:
+        reasons.append('no_frames_decoded')
+
+    if reasons:
+        return 'fail', ';'.join(sorted(set(reasons)))
+    return 'pass', 'clean'
 
 
 def score_streams(api, config, input_csv=None,
@@ -1168,7 +1091,7 @@ def score_streams(api, config, input_csv=None,
         return
     
     filters = config.get('filters') or {}
-    scoring_cfg = config.get('scoring') or {}
+    config.get('scoring') or {}
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])
     specific_channel_ids = filters.get('specific_channel_ids')
@@ -1216,111 +1139,51 @@ def score_streams(api, config, input_csv=None,
     summary['dropped_frame_percentage'] = (
         summary['avg_frames_dropped'] / summary['avg_frames_decoded'] * 100
     ).fillna(0)
-    
-    # Scoring - FireStick 4K Optimized
-    use_firestick_scoring = scoring_cfg.get('use_firestick_optimization', True)
-    
-    if use_firestick_scoring:
-        # New optimized scoring for FireStick 4K
-        logging.info("Using FireStick 4K optimized scoring")
-        
-        # Calculate all score components
-        summary['bitrate_score'] = summary.apply(
-            lambda row: calculate_optimal_bitrate_score(
-                row.get('avg_bitrate_kbps'),
-                row.get('resolution'),
-                row.get('video_codec')
-            ), axis=1
-        )
-        
-        summary['resolution_score'] = summary['resolution'].apply(
-            calculate_resolution_score_firestick
-        )
-        
-        summary['fps_score'] = summary['fps'].apply(calculate_enhanced_fps_score)
-        
-        summary['startup_score'] = summary['avg_bitrate_kbps'].apply(
-            calculate_startup_speed_score
-        )
-        
-        # Calculate total errors for stability score
-        error_columns = ['err_decode', 'err_discontinuity', 'err_timeout']
-        for col in error_columns:
-            summary[col] = pd.to_numeric(summary[col], errors='coerce').fillna(0)
-        summary['total_errors'] = summary[error_columns].sum(axis=1)
-        
-        summary['stability_score'] = summary.apply(
-            lambda row: calculate_enhanced_stability_score(
-                row.get('dropped_frame_percentage', 0),
-                row.get('total_errors', 0)
-            ), axis=1
-        )
-        
-        summary['codec_bonus'] = summary['video_codec'].apply(calculate_codec_bonus)
-        
-        # Calculate final score
-        # Max possible: 100 + 100 + 100 + 50 + 100 + 60 = 510 points
-        summary['score'] = (
-            summary['bitrate_score'] +      # 0-100
-            summary['resolution_score'] +   # 0-100
-            summary['fps_score'] +          # 0-100
-            summary['startup_score'] +      # 0-50
-            summary['stability_score'] +    # 0-100
-            summary['codec_bonus']          # 0-60
-        )
-        
-        # For debugging/analysis, keep component scores
-        summary['error_penalty'] = 100 - summary['stability_score']
-        
-    else:
-        # Legacy scoring (original algorithm)
-        logging.info("Using legacy scoring algorithm")
-        
-        resolution_scores = scoring_cfg.get('resolution_scores', {
-            '3840x2160': 100, '1920x1080': 80, '1280x720': 50, '960x540': 20
-        })
-        summary['resolution_score'] = (
-            summary['resolution'].astype(str).str.strip()
-            .map(resolution_scores).fillna(0)
-        )
-        
-        fps_bonus = scoring_cfg.get('fps_bonus_points', 100)
-        summary['fps_bonus'] = 0
-        summary.loc[pd.to_numeric(summary['fps'], errors='coerce').fillna(0) >= 50, 'fps_bonus'] = fps_bonus
-        
-        # HEVC boost
-        hevc_boost = scoring_cfg.get('hevc_boost', 1.5)
-        summary['scoring_bitrate'] = summary['avg_bitrate_kbps']
-        if hevc_boost != 1.0:
-            summary.loc[summary['video_codec'] == 'hevc', 'scoring_bitrate'] *= hevc_boost
-        
-        summary['max_bitrate_for_channel'] = summary.groupby('channel_id')['scoring_bitrate'].transform('max')
-        summary['bitrate_score'] = (
-            summary['scoring_bitrate'] / (summary['max_bitrate_for_channel'] * 0.01)
-        ).fillna(0)
-        
-        summary['dropped_frames_penalty'] = summary['dropped_frame_percentage'] * 1
-        
-        # Error penalties
-        error_columns = ['err_decode', 'err_discontinuity', 'err_timeout']
-        for col in error_columns:
-            summary[col] = pd.to_numeric(summary[col], errors='coerce').fillna(0)
-        summary['error_penalty'] = summary[error_columns].sum(axis=1) * 25
 
-        # Calculate final score
-        summary['score'] = (
-            summary['bitrate_score'] +
-            summary['resolution_score'] +
-            summary['fps_bonus'] -
-            summary['dropped_frames_penalty'] -
-            summary['error_penalty']
-        )
+    # Proxy-first scoring: prioritize fast startup and early stability.
+    logging.info("Using proxy-optimized scoring (validation-first)")
+
+    error_columns = ['err_decode', 'err_discontinuity', 'err_timeout']
+    for col in error_columns:
+        summary[col] = pd.to_numeric(summary[col], errors='coerce').fillna(0)
+    summary['total_errors'] = summary[error_columns].sum(axis=1)
+
+    validation_results = summary.apply(_determine_validation, axis=1)
+    summary['validation_result'] = validation_results.apply(lambda x: x[0])
+    summary['validation_reason'] = validation_results.apply(lambda x: x[1])
+    summary['validation_rank'] = summary['validation_result'].apply(
+        lambda result: 0 if str(result).lower() == 'pass' else 1
+    )
+
+    summary['startup_score'] = summary['avg_bitrate_kbps'].apply(
+        _calculate_proxy_startup_score
+    )
+
+    summary['stability_score'] = summary.apply(
+        lambda row: _calculate_proxy_stability_score(
+            row.get('dropped_frame_percentage', 0),
+            row.get('total_errors', 0)
+        ), axis=1
+    )
+
+    # Validation demotion is intentionally heavy so failed validation streams
+    # cannot outrank clean ones in proxy-first ordering.
+    summary['validation_demotion'] = summary['validation_result'].apply(
+        lambda result: 0 if str(result).lower() == 'pass' else 200
+    )
+
+    summary['score'] = summary['startup_score'] + summary['stability_score']
+    summary['ordering_score'] = summary['score'] - summary['validation_demotion']
+
+    # Mark failed streams (missing bitrate) with a deterministic low score
+    summary.loc[summary['avg_bitrate_kbps'].isna(), 'ordering_score'] = -1
     
-    # Mark failed streams (applies to both scoring methods)
-    summary.loc[summary['avg_bitrate_kbps'].isna(), 'score'] = -1
-    
-    # Sort by channel and score
-    df_sorted = summary.sort_values(by=['channel_number', 'score'], ascending=[True, False])
+    # Sort by channel, validation outcome, and ordering score so proxy startup
+    # always favors validated, stable options first.
+    df_sorted = summary.sort_values(
+        by=['channel_number', 'validation_rank', 'ordering_score'],
+        ascending=[True, True, False]
+    )
     
     # Prepare final columns
     final_columns = [
@@ -1333,16 +1196,9 @@ def score_streams(api, config, input_csv=None,
         'avg_bitrate_kbps', 'avg_frames_decoded',
         'avg_frames_dropped', 'dropped_frame_percentage', 'fps', 'resolution',
         'video_codec', 'audio_codec', 'interlaced_status', 'status', 'score',
+        'validation_result', 'validation_reason', 'validation_rank',
+        'startup_score', 'stability_score', 'validation_demotion', 'ordering_score'
     ]
-    
-    # Add score component columns if using new scoring (for debugging)
-    if use_firestick_scoring:
-        final_columns.extend([
-            'bitrate_score', 'resolution_score', 'fps_score', 
-            'startup_score', 'stability_score', 'codec_bonus', 'error_penalty'
-        ])
-    else:
-        final_columns.append('error_penalty')
     for col in final_columns:
         if col not in df_sorted.columns:
             df_sorted[col] = 'N/A'
@@ -1402,6 +1258,196 @@ def _interleave_by_provider(records, provider_fn, score_fn):
     return interleaved
 
 
+def _parse_resolution(resolution):
+    try:
+        width_str, height_str = str(resolution).lower().split('x')
+        return int(width_str), int(height_str)
+    except Exception:
+        return None
+
+
+def _is_low_fallback(row):
+    parsed = _parse_resolution(row.get('resolution'))
+    if not parsed:
+        return False
+    width, height = parsed
+    return width <= 1280 and height <= 720
+
+
+def _normalize_numeric(value):
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def order_streams_for_channel(
+    records,
+    resilience_mode=False,
+    fallback_depth=3,
+    similar_score_delta=5,
+    provider_fn=None,
+):
+    """Order streams so proxy playback starts on the most stable option.
+
+    Validation failures are always demoted behind clean streams. Provider
+    diversification is applied only within the validated set so that a failed
+    stream can never leapfrog a stable one.
+    """
+
+    provider_fn = provider_fn or (lambda r: r.get('m3u_account_name') or r.get('m3u_account') or 'unknown_provider')
+
+    if not records:
+        return []
+
+    def _score(record):
+        ordering = record.get('ordering_score')
+        if ordering in (None, 'N/A'):
+            ordering = record.get('score')
+        return _normalize_numeric(ordering)
+
+    def _bitrate(record):
+        try:
+            return float(record.get('avg_bitrate_kbps'))
+        except Exception:
+            return None
+
+    def _resilience_order(ordered_records):
+        ordered_records = list(ordered_records)
+        if not ordered_records:
+            return []
+
+        base_interleaved = _interleave_by_provider(
+            ordered_records,
+            provider_fn,
+            _score,
+        )
+        if not resilience_mode:
+            return base_interleaved
+
+        scored_records = sorted(ordered_records, key=_score, reverse=True)
+
+        provider_best = {}
+        tier1 = []
+        tier2_candidates = []
+        tier3_candidates = []
+        tier3_providers = set()
+
+        for record in scored_records:
+            provider = provider_fn(record)
+            if _is_low_fallback(record):
+                if provider not in tier3_providers:
+                    tier3_candidates.append(record)
+                    tier3_providers.add(provider)
+                continue
+
+            if provider not in provider_best:
+                provider_best[provider] = record
+                tier1.append(record)
+            else:
+                tier2_candidates.append(record)
+
+        tier2 = []
+        tier2_providers = set()
+        overflow = []
+        for record in tier2_candidates:
+            provider = provider_fn(record)
+            best = provider_best.get(provider)
+            if not best:
+                continue
+
+            resolution_differs = str(record.get('resolution')) != str(best.get('resolution'))
+            codec_differs = str(record.get('video_codec')) != str(best.get('video_codec'))
+
+            best_bitrate = _bitrate(best)
+            current_bitrate = _bitrate(record)
+            bitrate_lower = (
+                best_bitrate is not None and current_bitrate is not None and current_bitrate < best_bitrate
+            )
+            if (resolution_differs or codec_differs or bitrate_lower) and provider not in tier2_providers:
+                tier2.append(record)
+                tier2_providers.add(provider)
+            else:
+                overflow.append(record)
+
+        tier3 = list(tier3_candidates)
+
+        def _order_tier(tier_records):
+            ordered = sorted(tier_records, key=_score, reverse=True)
+            ordered = list(ordered)
+            for idx, record in enumerate(list(ordered)):
+                current_res = record.get('resolution')
+                current_score = _score(record)
+                current_bitrate = _bitrate(record)
+                if current_bitrate is None:
+                    continue
+                for alt_idx in range(idx + 1, len(ordered)):
+                    alt = ordered[alt_idx]
+                    if str(alt.get('resolution')) != str(current_res):
+                        continue
+                    alt_score = _score(alt)
+                    if abs(current_score - alt_score) > similar_score_delta:
+                        continue
+                    alt_bitrate = _bitrate(alt)
+                    if alt_bitrate is None:
+                        continue
+                    if alt_bitrate < current_bitrate:
+                        ordered.insert(idx, ordered.pop(alt_idx))
+                        break
+            return ordered
+
+        ordered_tier1 = _order_tier(tier1)
+        ordered_tier2 = _order_tier(tier2)
+        ordered_tier3 = _order_tier(tier3)
+        ordered_overflow = _order_tier(overflow)
+
+        provider_buckets = {}
+        provider_order = []
+
+        for tier_records in [ordered_tier1, ordered_tier2, ordered_tier3, ordered_overflow]:
+            for record in tier_records:
+                provider = provider_fn(record)
+                if provider not in provider_buckets:
+                    provider_buckets[provider] = []
+                    provider_order.append(provider)
+                provider_buckets[provider].append(record)
+
+        diversified = []
+        max_len = max((len(bucket) for bucket in provider_buckets.values()), default=0)
+        for idx in range(max_len):
+            for provider in provider_order:
+                bucket = provider_buckets.get(provider, [])
+                if len(bucket) > idx:
+                    diversified.append(bucket[idx])
+
+        early_window = diversified[:max(fallback_depth, 1)]
+        has_variant_early = any(record in ordered_tier2 + ordered_tier3 for record in early_window)
+        if not has_variant_early:
+            for idx, record in enumerate(diversified):
+                if record in ordered_tier2 + ordered_tier3:
+                    if idx >= fallback_depth:
+                        variant_record = diversified.pop(idx)
+                        insert_at = max(min(fallback_depth - 1, len(diversified)), 0)
+                        diversified.insert(insert_at, variant_record)
+                    break
+
+        return diversified
+
+    clean_records = [r for r in records if str(r.get('validation_result', 'pass')).lower() == 'pass']
+    failed_records = [r for r in records if r not in clean_records]
+
+    ordered_clean = _resilience_order(clean_records) if clean_records else []
+    ordered_failed = _interleave_by_provider(failed_records, provider_fn, _score) if failed_records else []
+
+    if clean_records:
+        ordered = ordered_clean + ordered_failed
+    else:
+        # When everything failed validation, keep legacy behaviour for ordering.
+        ordered = _resilience_order(records)
+
+    return [r.get('stream_id') for r in ordered]
+
+
 def reorder_streams(api, config, input_csv=None):
     """Reorder streams in Dispatcharr based on scores"""
 
@@ -1454,160 +1500,14 @@ def reorder_streams(api, config, input_csv=None):
     def _provider(row):
         return row.get('m3u_account_name') or row.get('m3u_account') or 'unknown_provider'
 
-    def _parse_resolution(resolution):
-        try:
-            width_str, height_str = str(resolution).lower().split('x')
-            return int(width_str), int(height_str)
-        except Exception:
-            return None
-
-    def _is_low_fallback(row):
-        parsed = _parse_resolution(row.get('resolution'))
-        if not parsed:
-            return False
-        width, height = parsed
-        return width <= 1280 and height <= 720
-
-    def _normalize_numeric(value):
-        try:
-            return float(value)
-        except Exception:
-            return 0.0
-
-    def apply_resilience_ordering(group_df):
-        records = group_df.to_dict('records')
-        if not records:
-            return []
-
-        base_interleaved = _interleave_by_provider(
-            records,
-            _provider,
-            lambda r: _normalize_numeric(r.get('score')),
-        )
-        if not resilience_mode:
-            return [r['stream_id'] for r in base_interleaved]
-
-        def _bitrate(record):
-            try:
-                return float(record.get('avg_bitrate_kbps'))
-            except Exception:
-                return None
-
-        def _prefer_lower_bitrate(ordered_records):
-            ordered_records = list(ordered_records)
-            for idx, record in enumerate(ordered_records):
-                current_res = record.get('resolution')
-                current_score = _normalize_numeric(record.get('score'))
-                current_bitrate = _bitrate(record)
-                if current_bitrate is None:
-                    continue
-
-                for alt_idx in range(idx + 1, len(ordered_records)):
-                    alt = ordered_records[alt_idx]
-                    if str(alt.get('resolution')) != str(current_res):
-                        continue
-                    alt_score = _normalize_numeric(alt.get('score'))
-                    if abs(current_score - alt_score) > similar_score_delta:
-                        continue
-                    alt_bitrate = _bitrate(alt)
-                    if alt_bitrate is None:
-                        continue
-                    if alt_bitrate < current_bitrate:
-                        ordered_records.insert(idx, ordered_records.pop(alt_idx))
-                        break
-            return ordered_records
-
-        scored_records = sorted(records, key=lambda r: _normalize_numeric(r.get('score')), reverse=True)
-
-        provider_best = {}
-        tier1 = []
-        tier2_candidates = []
-        tier3_candidates = []
-        tier3_providers = set()
-
-        for record in scored_records:
-            provider = _provider(record)
-            if _is_low_fallback(record):
-                if provider not in tier3_providers:
-                    tier3_candidates.append(record)
-                    tier3_providers.add(provider)
-                continue
-
-            if provider not in provider_best:
-                provider_best[provider] = record
-                tier1.append(record)
-            else:
-                tier2_candidates.append(record)
-
-        tier2 = []
-        tier2_providers = set()
-        overflow = []
-        for record in tier2_candidates:
-            provider = _provider(record)
-            best = provider_best.get(provider)
-            if not best:
-                continue
-
-            resolution_differs = str(record.get('resolution')) != str(best.get('resolution'))
-            codec_differs = str(record.get('video_codec')) != str(best.get('video_codec'))
-
-            best_bitrate = _bitrate(best)
-            current_bitrate = _bitrate(record)
-            bitrate_lower = (
-                best_bitrate is not None and current_bitrate is not None and current_bitrate < best_bitrate
-            )
-            if (resolution_differs or codec_differs or bitrate_lower) and provider not in tier2_providers:
-                tier2.append(record)
-                tier2_providers.add(provider)
-            else:
-                overflow.append(record)
-
-        tier3 = list(tier3_candidates)
-
-        def _order_tier(tier_records):
-            ordered = sorted(tier_records, key=lambda r: _normalize_numeric(r.get('score')), reverse=True)
-            return _prefer_lower_bitrate(ordered)
-
-        ordered_tier1 = _order_tier(tier1)
-        ordered_tier2 = _order_tier(tier2)
-        ordered_tier3 = _order_tier(tier3)
-        ordered_overflow = _order_tier(overflow)
-
-        provider_buckets = {}
-        provider_order = []
-
-        for tier_records in [ordered_tier1, ordered_tier2, ordered_tier3, ordered_overflow]:
-            for record in tier_records:
-                provider = _provider(record)
-                if provider not in provider_buckets:
-                    provider_buckets[provider] = []
-                    provider_order.append(provider)
-                provider_buckets[provider].append(record)
-
-        diversified = []
-        max_len = max((len(bucket) for bucket in provider_buckets.values()), default=0)
-        for idx in range(max_len):
-            for provider in provider_order:
-                bucket = provider_buckets.get(provider, [])
-                if len(bucket) > idx:
-                    diversified.append(bucket[idx])
-
-        # Ensure at least one Tier 2 or Tier 3 entry appears early
-        early_window = diversified[:fallback_depth]
-        has_variant_early = any(record in ordered_tier2 + ordered_tier3 for record in early_window)
-        if not has_variant_early:
-            for idx, record in enumerate(diversified):
-                if record in ordered_tier2 + ordered_tier3:
-                    if idx >= fallback_depth:
-                        variant_record = diversified.pop(idx)
-                        insert_at = max(min(fallback_depth - 1, len(diversified)), 0)
-                        diversified.insert(insert_at, variant_record)
-                    break
-
-        return [r['stream_id'] for r in diversified]
-
     for channel_id, group in grouped:
-        sorted_stream_ids = apply_resilience_ordering(group)
+        sorted_stream_ids = order_streams_for_channel(
+            group.to_dict('records'),
+            resilience_mode=resilience_mode,
+            fallback_depth=fallback_depth,
+            similar_score_delta=similar_score_delta,
+            provider_fn=_provider,
+        )
 
         # Get current streams from API
         current_streams = api.fetch_channel_streams(channel_id)
