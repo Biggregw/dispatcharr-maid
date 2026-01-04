@@ -273,6 +273,14 @@
         .action-help--orange {
             border-left-color: #f97316;
         }
+
+        .action-section-title {
+            font-weight: 700;
+            color: #1f2937;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
         
         .action-btn {
             padding: 15px 20px;
@@ -1306,41 +1314,50 @@
                 </div>
             </div>
 
-            <h3 style="margin: 25px 0 15px 0; color: #2d3748;">Choose Action:</h3>
-            
-            <div class="action-grid">
-                <div class="action-panel">
-                    <button class="action-btn primary" onclick="showRefreshPreview()"
-                            style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
-                        <span>🔄</span>
-                        <span>Refresh Channel Streams</span>
-                    </button>
-                    <div class="action-help action-help--orange">
-                        Adds matching streams to the selected channels using the filters above (include/exclude, regex, +1 options).
+            <div style="margin: 25px 0 15px 0; color: #2d3748;">
+                <div class="action-section-title" style="margin-bottom: 10px;">
+                    <span style="color:#f97316;">1️⃣</span>
+                    <span>Refresh actions (run first)</span>
+                </div>
+                <div class="action-grid" style="margin: 12px 0 24px 0;">
+                    <div class="action-panel">
+                        <button class="action-btn primary" onclick="showRefreshPreview()"
+                                style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
+                            <span>🔄</span>
+                            <span>Refresh Channel Streams</span>
+                        </button>
+                        <div class="action-help action-help--orange">
+                            Adds matching streams to the selected channels using the filters above (include/exclude, regex, +1 options).
+                        </div>
                     </div>
                 </div>
 
-                <div class="action-stack">
-                    <button class="action-btn primary" onclick="startApplyQualityJob(event)"
-                            style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
-                        <span>✅</span>
-                        <span>Quality Check (Apply Changes)</span>
-                    </button>
+                <div class="action-section-title" style="margin: 10px 0;">
+                    <span style="color:#6366f1;">2️⃣</span>
+                    <span>Quality Check actions (after refresh)</span>
+                </div>
+                <div class="action-grid" style="margin: 12px 0;">
+                    <div class="action-stack">
+                        <button class="action-btn primary" onclick="startApplyQualityJob(event)"
+                                style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
+                            <span>✅</span>
+                            <span>Quality Check (Apply Changes)</span>
+                        </button>
 
-                    <button class="action-btn primary" onclick="startJob('full_cleanup_plan', null, event)"
-                            style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
-                        <span>🔎</span>
-                        <span>Quality Check (Preview Plan)</span>
-                    </button>
+                        <button class="action-btn primary" onclick="startJob('full_cleanup_plan', null, event)"
+                                style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                            <span>🔎</span>
+                            <span>Quality Check (Preview Plan)</span>
+                        </button>
 
-                    <div class="action-help">
-                        <div style="font-weight: 700; color: #2d3748; margin-bottom: 6px;">Which one should I use?</div>
-                        <div><strong>Apply Changes</strong> will analyze + score, then <strong>order</strong> and <strong>clean up</strong> streams immediately (uses your “Streams Per Provider” limit).</div>
-                        <div style="margin-top: 6px;"><strong>Preview Plan</strong> makes <strong>no changes</strong>. It generates a reviewable plan in Results, where you can commit it later.</div>
+                        <div class="action-help">
+                            <div style="font-weight: 700; color: #2d3748; margin-bottom: 6px;">Which one should I use?</div>
+                            <div><strong>Apply Changes</strong> will analyze + score, then <strong>order</strong> and <strong>clean up</strong> streams immediately (uses your “Streams Per Provider” limit).</div>
+                            <div style="margin-top: 6px;"><strong>Preview Plan</strong> makes <strong>no changes</strong>. It generates a reviewable plan in Results, where you can commit it later.</div>
+                        </div>
                     </div>
                 </div>
             </div>
-
             <div style="margin: 20px 0; padding: 20px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
                 <label for="analysisProfile" style="display: block; margin-bottom: 8px; font-weight: 700; color: #1f2937; font-size: 1.05em;">
                     🧮 Analysis Profile
