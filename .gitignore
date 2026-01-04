@@ -13,6 +13,8 @@ env/
 .vscode/
 .idea/
 .DS_Store
+*.swp
+*.swo
 
 # Logs and runtime output
 logs/

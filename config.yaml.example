@@ -1,9 +1,9 @@
 analysis:
-  duration: 30
+  duration: 10
   idet_frames: 500
   retries: 1
   retry_delay: 10
-  timeout: 45
+  timeout: 30
   workers: 8
 filters:
   channel_group_ids: []  # Add your channel group IDs here
@@ -25,7 +25,7 @@ scoring:
     "960x540": 20
 ordering:
   # Resilience mode enables multi-tier failover while keeping failed streams demoted
-  resilience_mode: true
+  resilience_mode: false
   fallback_depth: 3
   similar_score_delta: 5
 dispatcharr:
