@@ -151,7 +151,15 @@ class Config:
                 'retry_delay': 10,
             },
             'scoring': {
-                'proxy_startup_bias': True,
+                'proxy_first': True,
+                'fps_bonus_points': 100,
+                'hevc_boost': 1.5,
+                'resolution_scores': {
+                    '3840x2160': 100,
+                    '1920x1080': 80,
+                    '1280x720': 50,
+                    '960x540': 20,
+                },
             },
             'filters': {
                 'channel_group_ids': [],
@@ -1074,48 +1082,46 @@ def _determine_validation(row):
     return 'pass', 'clean'
 
 
-def score_streams(api, config, input_csv=None,
-                 output_csv=None,
-                 update_stats=False):
-    """Calculate scores and sort streams"""
+def _calculate_legacy_score(row, scoring_cfg):
+    resolution_scores = scoring_cfg.get('resolution_scores', {}) or {}
+    fps_bonus_points = scoring_cfg.get('fps_bonus_points', 0) or 0
+    hevc_boost = scoring_cfg.get('hevc_boost', 1.0) or 1.0
 
-    logging.info("Scoring streams...")
+    resolution = str(row.get('resolution', '')).lower()
+    resolution_score = resolution_scores.get(resolution, 0)
 
-    input_csv = input_csv or config.resolve_path('csv/03_iptv_stream_measurements.csv')
-    output_csv = output_csv or config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
-    
     try:
-        df = pd.read_csv(input_csv)
-    except FileNotFoundError:
-        logging.error(f"Input CSV not found: {input_csv}")
-        return
-    
-    filters = config.get('filters') or {}
-    config.get('scoring') or {}
-    # Apply filters
-    group_ids_list = filters.get('channel_group_ids', [])
-    specific_channel_ids = filters.get('specific_channel_ids')
-    
-    if specific_channel_ids:
-        specific_ids_set = set(specific_channel_ids)
-        df['channel_id'] = pd.to_numeric(df['channel_id'], errors='coerce')
-        df = df[df['channel_id'].isin(specific_ids_set)]
-    elif group_ids_list:
-        target_group_ids = set(group_ids_list)
-        df['channel_group_id'] = pd.to_numeric(df['channel_group_id'], errors='coerce')
-        df = df[df['channel_group_id'].isin(target_group_ids)]
-    
-    start_range = filters.get('start_channel', 1)
-    end_range = filters.get('end_channel', 99999)
-    df['channel_number'] = pd.to_numeric(df['channel_number'], errors='coerce')
-    df = df[df['channel_number'].between(start_range, end_range)]
-    
-    if df.empty:
-        logging.warning("No streams to score")
-        return
-    
-    include_provider_name = 'm3u_account_name' in df.columns
+        bitrate = float(row.get('avg_bitrate_kbps'))
+    except Exception:
+        bitrate = 0.0
 
+    codec = str(row.get('video_codec', '')).lower()
+    if 'hevc' in codec or '265' in codec:
+        bitrate *= hevc_boost
+
+    bitrate_score = bitrate / 100
+
+    try:
+        fps = float(row.get('fps'))
+    except Exception:
+        fps = 0.0
+
+    fps_bonus = fps_bonus_points if fps >= 50 else 0
+
+    dropped_pct = _normalize_numeric(row.get('dropped_frame_percentage'))
+
+    error_penalty = 0
+    for err_key in ('err_decode', 'err_discontinuity', 'err_timeout'):
+        try:
+            error_penalty += 200 * int(row.get(err_key, 0))
+        except Exception:
+            continue
+
+    score = resolution_score + bitrate_score + fps_bonus - dropped_pct - error_penalty
+    return score
+
+
+def _score_streams_proxy_first(df, include_provider_name, output_csv, update_stats, api):
     # Convert types
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
     df['frames_decoded'] = pd.to_numeric(df['frames_decoded'], errors='coerce')
@@ -1126,12 +1132,12 @@ def score_streams(api, config, input_csv=None,
         avg_frames_decoded=('frames_decoded', 'mean'),
         avg_frames_dropped=('frames_dropped', 'mean')
     ).reset_index()
-    
+
     # Merge with latest metadata
     latest_meta = df.drop_duplicates(subset='stream_id', keep='last')
     summary = pd.merge(
-        summary, 
-        latest_meta.drop(columns=['bitrate_kbps', 'frames_decoded', 'frames_dropped']), 
+        summary,
+        latest_meta.drop(columns=['bitrate_kbps', 'frames_decoded', 'frames_dropped']),
         on='stream_id'
     )
 
@@ -1166,8 +1172,6 @@ def score_streams(api, config, input_csv=None,
         ), axis=1
     )
 
-    # Validation demotion is intentionally heavy so failed validation streams
-    # cannot outrank clean ones in proxy-first ordering.
     summary['validation_demotion'] = summary['validation_result'].apply(
         lambda result: 0 if str(result).lower() == 'pass' else 200
     )
@@ -1175,17 +1179,13 @@ def score_streams(api, config, input_csv=None,
     summary['score'] = summary['startup_score'] + summary['stability_score']
     summary['ordering_score'] = summary['score'] - summary['validation_demotion']
 
-    # Mark failed streams (missing bitrate) with a deterministic low score
     summary.loc[summary['avg_bitrate_kbps'].isna(), 'ordering_score'] = -1
-    
-    # Sort by channel, validation outcome, and ordering score so proxy startup
-    # always favors validated, stable options first.
+
     df_sorted = summary.sort_values(
         by=['channel_number', 'validation_rank', 'ordering_score'],
         ascending=[True, True, False]
     )
-    
-    # Prepare final columns
+
     final_columns = [
         'stream_id', 'channel_number', 'channel_id', 'channel_group_id', 'stream_name',
         'stream_url', 'm3u_account',
@@ -1202,36 +1202,164 @@ def score_streams(api, config, input_csv=None,
     for col in final_columns:
         if col not in df_sorted.columns:
             df_sorted[col] = 'N/A'
-    
+
     df_sorted = df_sorted[final_columns]
     df_sorted.to_csv(output_csv, index=False, na_rep='N/A')
     logging.info(f"Scored streams saved to {output_csv}")
-    
-    # Update stream stats on server
+
     if update_stats:
         logging.info("Updating stream stats on server...")
         for _, row in df_sorted.iterrows():
             stream_id = row.get("stream_id")
             if not stream_id or pd.isna(stream_id):
                 continue
-            
+
             stats = {
                 "resolution": row.get("resolution"),
                 "source_fps": row.get("fps"),
                 "video_codec": row.get("video_codec"),
                 "audio_codec": row.get("audio_codec"),
-                "ffmpeg_output_bitrate": int(row.get("avg_bitrate_kbps")) 
+                "ffmpeg_output_bitrate": int(row.get("avg_bitrate_kbps"))
                     if pd.notna(row.get("avg_bitrate_kbps")) else None,
             }
-            
-            # Clean None values
+
             stats = {k: v for k, v in stats.items() if pd.notna(v)}
-            
+
             if stats:
                 try:
                     api.update_stream_stats(int(stream_id), stats)
                 except Exception as e:
                     logging.warning(f"Could not update stats for stream {stream_id}: {e}")
+
+
+def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, update_stats, api):
+    logging.info("Using legacy scoring (resolution/bitrate driven)")
+
+    df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
+    df['frames_decoded'] = pd.to_numeric(df['frames_decoded'], errors='coerce')
+    df['frames_dropped'] = pd.to_numeric(df['frames_dropped'], errors='coerce')
+
+    summary = df.groupby('stream_id').agg(
+        avg_bitrate_kbps=('bitrate_kbps', 'mean'),
+        avg_frames_decoded=('frames_decoded', 'mean'),
+        avg_frames_dropped=('frames_dropped', 'mean')
+    ).reset_index()
+
+    latest_meta = df.drop_duplicates(subset='stream_id', keep='last')
+    summary = pd.merge(
+        summary,
+        latest_meta.drop(columns=['bitrate_kbps', 'frames_decoded', 'frames_dropped']),
+        on='stream_id'
+    )
+
+    summary['dropped_frame_percentage'] = (
+        summary['avg_frames_dropped'] / summary['avg_frames_decoded'] * 100
+    ).fillna(0)
+
+    for col in ('err_decode', 'err_discontinuity', 'err_timeout'):
+        summary[col] = pd.to_numeric(summary[col], errors='coerce').fillna(0)
+
+    summary['score'] = summary.apply(
+        lambda row: _calculate_legacy_score(row, scoring_cfg), axis=1
+    )
+    summary['ordering_score'] = summary['score']
+
+    df_sorted = summary.sort_values(
+        by=['channel_number', 'ordering_score'],
+        ascending=[True, False]
+    )
+
+    final_columns = [
+        'stream_id', 'channel_number', 'channel_id', 'channel_group_id', 'stream_name',
+        'stream_url', 'm3u_account',
+    ]
+    if include_provider_name:
+        final_columns.append('m3u_account_name')
+    final_columns += [
+        'avg_bitrate_kbps', 'avg_frames_decoded', 'avg_frames_dropped',
+        'dropped_frame_percentage', 'fps', 'resolution', 'video_codec', 'audio_codec',
+        'interlaced_status', 'status', 'score', 'ordering_score'
+    ]
+    for col in final_columns:
+        if col not in df_sorted.columns:
+            df_sorted[col] = 'N/A'
+
+    df_sorted = df_sorted[final_columns]
+    df_sorted.to_csv(output_csv, index=False, na_rep='N/A')
+    logging.info(f"Scored streams saved to {output_csv}")
+
+    if update_stats:
+        logging.info("Updating stream stats on server...")
+        for _, row in df_sorted.iterrows():
+            stream_id = row.get("stream_id")
+            if not stream_id or pd.isna(stream_id):
+                continue
+
+            stats = {
+                "resolution": row.get("resolution"),
+                "source_fps": row.get("fps"),
+                "video_codec": row.get("video_codec"),
+                "audio_codec": row.get("audio_codec"),
+                "ffmpeg_output_bitrate": int(row.get("avg_bitrate_kbps"))
+                    if pd.notna(row.get("avg_bitrate_kbps")) else None,
+            }
+
+            stats = {k: v for k, v in stats.items() if pd.notna(v)}
+
+            if stats:
+                try:
+                    api.update_stream_stats(int(stream_id), stats)
+                except Exception as e:
+                    logging.warning(f"Could not update stats for stream {stream_id}: {e}")
+
+
+def score_streams(api, config, input_csv=None,
+                 output_csv=None,
+                 update_stats=False):
+    """Calculate scores and sort streams"""
+
+    logging.info("Scoring streams...")
+
+    input_csv = input_csv or config.resolve_path('csv/03_iptv_stream_measurements.csv')
+    output_csv = output_csv or config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
+
+    try:
+        df = pd.read_csv(input_csv)
+    except FileNotFoundError:
+        logging.error(f"Input CSV not found: {input_csv}")
+        return
+
+    filters = config.get('filters') or {}
+    scoring_cfg = config.get('scoring') or {}
+    # Apply filters
+    group_ids_list = filters.get('channel_group_ids', [])
+    specific_channel_ids = filters.get('specific_channel_ids')
+
+    if specific_channel_ids:
+        specific_ids_set = set(specific_channel_ids)
+        df['channel_id'] = pd.to_numeric(df['channel_id'], errors='coerce')
+        df = df[df['channel_id'].isin(specific_ids_set)]
+    elif group_ids_list:
+        target_group_ids = set(group_ids_list)
+        df['channel_group_id'] = pd.to_numeric(df['channel_group_id'], errors='coerce')
+        df = df[df['channel_group_id'].isin(target_group_ids)]
+
+    start_range = filters.get('start_channel', 1)
+    end_range = filters.get('end_channel', 99999)
+    df['channel_number'] = pd.to_numeric(df['channel_number'], errors='coerce')
+    df = df[df['channel_number'].between(start_range, end_range)]
+
+    if df.empty:
+        logging.warning("No streams to score")
+        return
+
+    include_provider_name = 'm3u_account_name' in df.columns
+    proxy_first = bool(scoring_cfg.get('proxy_first', scoring_cfg.get('proxy_startup_bias', False)))
+
+    if proxy_first:
+        _score_streams_proxy_first(df, include_provider_name, output_csv, update_stats, api)
+    else:
+        _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, update_stats, api)
 
 
 def _interleave_by_provider(records, provider_fn, score_fn):
@@ -1287,12 +1415,14 @@ def order_streams_for_channel(
     fallback_depth=3,
     similar_score_delta=5,
     provider_fn=None,
+    validation_dominant=True,
 ):
     """Order streams so proxy playback starts on the most stable option.
 
-    Validation failures are always demoted behind clean streams. Provider
-    diversification is applied only within the validated set so that a failed
-    stream can never leapfrog a stable one.
+    Validation failures are always demoted behind clean streams when
+    validation_dominant is True. Provider diversification is applied only
+    within the validated set so that a failed stream can never leapfrog a
+    stable one.
     """
 
     provider_fn = provider_fn or (lambda r: r.get('m3u_account_name') or r.get('m3u_account') or 'unknown_provider')
@@ -1433,16 +1563,19 @@ def order_streams_for_channel(
 
         return diversified
 
-    clean_records = [r for r in records if str(r.get('validation_result', 'pass')).lower() == 'pass']
-    failed_records = [r for r in records if r not in clean_records]
+    if validation_dominant:
+        clean_records = [r for r in records if str(r.get('validation_result', 'pass')).lower() == 'pass']
+        failed_records = [r for r in records if r not in clean_records]
 
-    ordered_clean = _resilience_order(clean_records) if clean_records else []
-    ordered_failed = _interleave_by_provider(failed_records, provider_fn, _score) if failed_records else []
+        ordered_clean = _resilience_order(clean_records) if clean_records else []
+        ordered_failed = _interleave_by_provider(failed_records, provider_fn, _score) if failed_records else []
 
-    if clean_records:
-        ordered = ordered_clean + ordered_failed
+        if clean_records:
+            ordered = ordered_clean + ordered_failed
+        else:
+            # When everything failed validation, keep legacy behaviour for ordering.
+            ordered = _resilience_order(records)
     else:
-        # When everything failed validation, keep legacy behaviour for ordering.
         ordered = _resilience_order(records)
 
     return [r.get('stream_id') for r in ordered]
@@ -1463,9 +1596,11 @@ def reorder_streams(api, config, input_csv=None):
 
     filters = config.get('filters') or {}
     ordering_cfg = config.get('ordering') or {}
+    scoring_cfg = config.get('scoring') or {}
     resilience_mode = bool(ordering_cfg.get('resilience_mode', False))
     fallback_depth = int(ordering_cfg.get('fallback_depth', 3) or 3)
     similar_score_delta = float(ordering_cfg.get('similar_score_delta', 5) or 5)
+    validation_dominant = bool(scoring_cfg.get('proxy_first', scoring_cfg.get('proxy_startup_bias', False)))
 
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])
@@ -1507,6 +1642,7 @@ def reorder_streams(api, config, input_csv=None):
             fallback_depth=fallback_depth,
             similar_score_delta=similar_score_delta,
             provider_fn=_provider,
+            validation_dominant=validation_dominant,
         )
 
         # Get current streams from API

@@ -71,18 +71,35 @@ Scoring vs. ordering
 - **Scoring** probes each stream independently; scores are not tied to provider order.
 - **Ordering** applies a resilience-aware, tiered policy after scoring. `streams_per_provider` is a **limit**, not a round-robin ordering rule. Providers are not treated as failure domains.
 
-## Proxy-first scoring (validation-led)
+## Scoring modes
 
-The scoring algorithm now focuses on Dispatcharr proxy survival instead of
-device-specific tuning. Streams are ranked using:
-- **Validation outcome first** (startup failures, decode/discontinuity/timeouts drop below clean streams)
-- **Fast startup** (lower startup bitrate is preferred when validation is equal)
-- **Early stability** (error and drop penalties)
+There are two selectable scoring behaviours:
 
-Configuration is intentionally minimal:
+- **Proxy-first (validation-led)**: focuses on Dispatcharr proxy survival. It
+  always demotes streams that fail validation (timeouts, decode errors,
+  discontinuities, missing frames) beneath clean streams and prefers fast
+  startup/stability metrics.
+- **Legacy**: preserves the original resolution/bitrate/fps-driven scoring
+  without validation dominance.
+
+Enable proxy-first when streams are served through the Dispatcharr proxy and
+startup reliability matters more than device-specific tuning. Keep legacy mode
+when you want the original scoring that prioritises resolution weighting, fps
+bonuses, bitrate scoring, and error penalties without forcing failed
+validation streams to the bottom.
+
+Configuration is explicit:
 ```yaml
 scoring:
-  proxy_startup_bias: true  # keep enabled for proxy-focused ordering
+  proxy_first: true  # set false to restore legacy scoring
+  # Legacy-specific tuning (only used when proxy_first is false)
+  fps_bonus_points: 100
+  hevc_boost: 1.5
+  resolution_scores:
+    "3840x2160": 100
+    "1920x1080": 80
+    "1280x720": 50
+    "960x540": 20
 
 ordering:
   resilience_mode: true
