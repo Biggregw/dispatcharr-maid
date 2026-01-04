@@ -3014,6 +3014,12 @@
                 'running': 'status-running',
                 'queued': 'status-running'
             }[job.status] || '';
+
+            const planReminderStatuses = ['queued', 'running', 'completed'];
+            const showPlanReminder = job.job_type === 'full_cleanup_plan' && planReminderStatuses.includes(job.status);
+            const planReminderCopy = job.status === 'completed'
+                ? 'Preview Plan finished. Open Results → Planned Changes to review and commit the plan.'
+                : 'Preview Plan runs do not apply changes. Open Results → Planned Changes to review and commit when it finishes.';
             
             const processed = typeof job.stage_progress === 'number'
                 ? job.stage_progress
@@ -3041,6 +3047,14 @@
                     </span>
                 </div>
             `;
+
+            if (showPlanReminder) {
+                html += `
+                    <div class="alert alert-info" style="margin-bottom: 12px;">
+                        ${planReminderCopy}
+                    </div>
+                `;
+            }
 
             if (overall !== null && isActive) {
                 html += `
