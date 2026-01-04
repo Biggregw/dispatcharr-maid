@@ -1278,6 +1278,11 @@
                             <span style="display: block; margin-top: 5px; color: #9a3412; font-size: 0.9em;">
                                 Use regex only when simple matching cannot express what you need.
                             </span>
+                            <div style="margin-top: 6px; color: #9a3412; font-size: 0.9em; line-height: 1.4;">
+                                <div>• Start with Include / Exclude filters when wildcards are enough.</div>
+                                <div>• Layer Advanced Regex on top only to refine those results.</div>
+                                <div>• Switch on "Use regex as the only match rule" only when regex should replace every other filter.</div>
+                            </div>
                             <div id="regex-only-container" style="margin-top: 10px; display: none;">
                                 <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: #4b5563; font-weight: 500;">
                                     <input type="checkbox" id="regexOnlyMode" style="width: 18px; height: 18px; cursor: pointer;">
@@ -1303,7 +1308,8 @@
                                 <div class="regex-preset-dropdown__menu hidden" id="saved-regex-menu" role="listbox" aria-label="Saved Jobs for Advanced Regex"></div>
                             </div>
                             <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                                Selecting a Saved Job fills Advanced Regex (and whether it is exclusive). Jobs are saved automatically when you run them.
+                                Jobs save automatically when you run them. They capture your regex, filters, +1 choice, Streams Per Provider, and group/channel picks.
+                                Loading a Saved Job fills those fields (best-effort) so you can tweak or rerun with the current selection.
                             </span>
                         </div>
                     </div>
