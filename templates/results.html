@@ -114,7 +114,26 @@
             <h2>🧾 Run Details</h2>
             <div id="run-meta-body" class="muted small"></div>
         </div>
-        
+
+        <div class="card" id="refresh-breakdown-card" style="display:none;">
+            <h2>🔄 Refresh Stream Changes</h2>
+            <div class="muted small">Comparison of the channel before and after refresh. Status is derived from the original list and the final replacement list.</div>
+            <div class="stream-table-wrap">
+                <table id="refresh-change-table">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>Stream</th>
+                            <th>Provider</th>
+                            <th>Resolution</th>
+                            <th>Bitrate</th>
+                        </tr>
+                    </thead>
+                    <tbody id="refresh-change-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+
         <div class="card" id="detailed-breakdown-card">
             <h2>🔍 Detailed Breakdown</h2>
             <div class="tabs">
@@ -248,8 +267,48 @@
                 <div id="streams-loading" class="muted small" style="margin-top:10px;"></div>
             </div>
         </div>
+
+        <div class="card" id="ordering-visibility-card" style="display:none;">
+            <h2>✅ Final Channel Stream Order</h2>
+            <div class="muted small">Displays the exact order written back to Dispatcharr and the streams that were excluded with their reasons.</div>
+            <div class="stream-table-wrap">
+                <table id="final-order-table">
+                    <thead>
+                        <tr>
+                            <th>Channel</th>
+                            <th>#</th>
+                            <th>Stream</th>
+                            <th>Provider</th>
+                            <th>Resolution</th>
+                            <th>Codec</th>
+                            <th>Bitrate</th>
+                            <th>Validation</th>
+                            <th>Final Score</th>
+                        </tr>
+                    </thead>
+                    <tbody id="final-order-tbody"></tbody>
+                </table>
+            </div>
+
+            <h3 style="margin-top: 20px;">🚫 Excluded Streams</h3>
+            <div class="stream-table-wrap">
+                <table id="excluded-stream-table">
+                    <thead>
+                        <tr>
+                            <th>Channel</th>
+                            <th>Stream</th>
+                            <th>Provider</th>
+                            <th>Resolution</th>
+                            <th>Bitrate</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody id="excluded-stream-tbody"></tbody>
+                </table>
+            </div>
+        </div>
     </div>
-    
+
     <script>
         const params = new URLSearchParams(window.location.search);
         const jobId = params.get('job_id');
@@ -306,6 +365,23 @@
             } catch {
                 return String(iso);
             }
+        }
+
+        function fmtBitrate(kbps) {
+            if (kbps === null || kbps === undefined || kbps === 'N/A') return '—';
+            const num = Number(kbps);
+            if (Number.isNaN(num)) return escapeHtml(String(kbps));
+            return `${num.toLocaleString()} kbps`;
+        }
+
+        function channelLabelFrom(row) {
+            if (!row || typeof row !== 'object') return 'Unknown channel';
+            const labelRow = {
+                channel_number: row.channel_number,
+                channel_name: row.channel_name,
+                channel_id: row.channel_id
+            };
+            return fmtChannelLabel(labelRow);
         }
 
         function renderJobMeta(meta) {
@@ -414,6 +490,143 @@
             });
         }
 
+        function renderRefreshBreakdown(summary) {
+            const card = document.getElementById('refresh-breakdown-card');
+            const tbody = document.getElementById('refresh-change-tbody');
+            if (!card || !tbody) return;
+
+            const previous = Array.isArray(summary?.previous_streams) ? summary.previous_streams : [];
+            const finalStreams = Array.isArray(summary?.final_streams)
+                ? summary.final_streams
+                : (Array.isArray(summary?.streams) ? summary.streams : []);
+
+            const finalIds = new Set(finalStreams.map((s) => String(s?.id ?? s?.stream_id ?? '')));
+            const previousIds = new Set(previous.map((s) => String(s?.id ?? s?.stream_id ?? '')));
+
+            const rows = [];
+
+            finalStreams.forEach((s) => {
+                const id = String(s?.id ?? s?.stream_id ?? '');
+                const status = previousIds.has(id) ? 'Kept' : 'Added';
+                rows.push({ ...s, status });
+            });
+
+            previous.forEach((s) => {
+                const id = String(s?.id ?? s?.stream_id ?? '');
+                if (!finalIds.has(id)) {
+                    rows.push({ ...s, status: 'Removed' });
+                }
+            });
+
+            rows.sort((a, b) => {
+                const order = a.status === b.status ? 0 : (a.status === 'Removed' ? 1 : -1);
+                if (order !== 0) return order;
+                const nameA = (a?.name || a?.stream_name || '').toString().toLowerCase();
+                const nameB = (b?.name || b?.stream_name || '').toString().toLowerCase();
+                return nameA.localeCompare(nameB);
+            });
+
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="5" class="muted">No stream details available for this refresh.</td></tr>';
+                card.style.display = '';
+                return;
+            }
+
+            tbody.innerHTML = rows.map((row) => {
+                const name = row?.name || row?.stream_name || `Stream ${row?.id ?? ''}`;
+                const pid = row?.provider_id ?? row?.providerid ?? row?.provider;
+                const providerCell = providerLabelHtml(pid ?? row?.provider_name) || escapeHtml(row?.provider_name || '');
+                const resolution = escapeHtml(row?.resolution || '—');
+                const bitrate = fmtBitrate(row?.bitrate_kbps);
+                const statusClass = row.status === 'Removed' ? 'badge removed' : (row.status === 'Added' ? 'badge added' : 'badge unchanged');
+                return `
+                    <tr>
+                        <td><span class="${statusClass}">${escapeHtml(row.status || '')}</span></td>
+                        <td>${escapeHtml(String(name))}</td>
+                        <td>${providerCell}</td>
+                        <td>${resolution}</td>
+                        <td>${bitrate}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            card.style.display = '';
+        }
+
+        function renderOrderingTables(ordering) {
+            const card = document.getElementById('ordering-visibility-card');
+            if (!card) return;
+            const finalBody = document.getElementById('final-order-tbody');
+            const excludedBody = document.getElementById('excluded-stream-tbody');
+            if (!finalBody || !excludedBody) return;
+
+            const finalOrders = Array.isArray(ordering?.final_orders) ? ordering.final_orders : [];
+            const excluded = Array.isArray(ordering?.excluded_streams) ? ordering.excluded_streams : [];
+
+            if (!finalOrders.length && !excluded.length) {
+                card.style.display = 'none';
+                return;
+            }
+
+            const sortedFinal = [...finalOrders].sort((a, b) => {
+                const chanA = `${a?.channel_number ?? ''}`.padStart(6, '0');
+                const chanB = `${b?.channel_number ?? ''}`.padStart(6, '0');
+                if (chanA !== chanB) return chanA.localeCompare(chanB);
+                const orderA = Number(a?.order ?? 0);
+                const orderB = Number(b?.order ?? 0);
+                return orderA - orderB;
+            });
+
+            finalBody.innerHTML = sortedFinal.map((row) => {
+                const providerCell = providerLabelHtml(row?.provider_id) || escapeHtml(row?.provider_name || '');
+                const validation = row?.validation_result ? escapeHtml(String(row.validation_result)) : '—';
+                const score = row?.final_score;
+                const scoreText = score === null || score === undefined ? '—' : escapeHtml(Number(score).toFixed ? Number(score).toFixed(1) : String(score));
+                return `
+                    <tr>
+                        <td>${channelLabelFrom(row)}</td>
+                        <td class="mono">${escapeHtml(row?.order ?? '')}</td>
+                        <td>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)}</td>
+                        <td>${providerCell}</td>
+                        <td>${escapeHtml(row?.resolution || '—')}</td>
+                        <td>${escapeHtml(row?.video_codec || '—')}</td>
+                        <td>${fmtBitrate(row?.bitrate_kbps)}</td>
+                        <td>${validation}</td>
+                        <td>${scoreText}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            const sortedExcluded = [...excluded].sort((a, b) => {
+                const chanA = `${a?.channel_number ?? ''}`.padStart(6, '0');
+                const chanB = `${b?.channel_number ?? ''}`.padStart(6, '0');
+                if (chanA !== chanB) return chanA.localeCompare(chanB);
+                const nameA = (a?.stream_name || '').toString().toLowerCase();
+                const nameB = (b?.stream_name || '').toString().toLowerCase();
+                return nameA.localeCompare(nameB);
+            });
+
+            excludedBody.innerHTML = sortedExcluded.map((row) => {
+                const providerCell = providerLabelHtml(row?.provider_id) || escapeHtml(row?.provider_name || '');
+                return `
+                    <tr>
+                        <td>${channelLabelFrom(row)}</td>
+                        <td>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)}</td>
+                        <td>${providerCell}</td>
+                        <td>${escapeHtml(row?.resolution || '—')}</td>
+                        <td>${fmtBitrate(row?.bitrate_kbps)}</td>
+                        <td>${escapeHtml(row?.reason || '—')}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            if (!excluded.length) {
+                excludedBody.innerHTML = '<tr><td colspan="6" class="muted">No streams were excluded.</td></tr>';
+            }
+
+            card.style.display = '';
+        }
+
         fetch(resultsUrl)
             .then(r => r.json())
             .then(data => {
@@ -469,7 +682,9 @@
                         `;
                         document.querySelectorAll('.card')[0].after(filterCard);
                     }
-                    
+
+                    renderRefreshBreakdown(r);
+
                     return;
                 }
 
@@ -494,7 +709,10 @@
                     capacityEl.textContent = capacitySummary.warning;
                     capacityEl.style.display = 'block';
                 }
-                
+
+                const orderingVisibility = data.ordering_visibility || r.ordering_visibility;
+                renderOrderingTables(orderingVisibility);
+
                 // Providers
                 const tbody = document.getElementById('provider-tbody');
                 const providerCountNote = document.getElementById('provider-count-note');
