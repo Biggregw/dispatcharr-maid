@@ -1087,6 +1087,218 @@ def _build_results_payload(results, analysis_ran, job_type, provider_names=None,
     return payload
 
 
+def _load_channel_lookup(config):
+    try:
+        path = config.resolve_path('csv/01_channels_metadata.csv')
+        if not os.path.exists(path):
+            return {}
+        df = pd.read_csv(path)
+        if 'id' not in df.columns:
+            return {}
+        df['id'] = pd.to_numeric(df['id'], errors='coerce')
+        lookup = {}
+        for _, row in df.iterrows():
+            cid = row.get('id')
+            if pd.isna(cid):
+                continue
+            try:
+                cid_int = int(cid)
+            except Exception:
+                cid_int = cid
+            lookup[cid_int] = {
+                'channel_number': row.get('channel_number'),
+                'channel_name': row.get('name')
+            }
+        return lookup
+    except Exception:
+        logging.debug("Failed to load channel metadata for ordering visibility", exc_info=True)
+        return {}
+
+
+def _load_scored_lookup(config):
+    try:
+        path = config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
+        if not os.path.exists(path):
+            return {}
+        df = pd.read_csv(path)
+        if 'stream_id' not in df.columns:
+            return {}
+        df['stream_id'] = pd.to_numeric(df['stream_id'], errors='coerce')
+        lookup = {}
+        for _, row in df.iterrows():
+            sid = row.get('stream_id')
+            if pd.isna(sid):
+                continue
+            try:
+                sid_int = int(sid)
+            except Exception:
+                sid_int = sid
+            lookup[sid_int] = {
+                'stream_name': row.get('stream_name'),
+                'provider_id': row.get('m3u_account'),
+                'provider_name': row.get('m3u_account_name'),
+                'resolution': row.get('resolution'),
+                'video_codec': row.get('video_codec'),
+                'bitrate_kbps': row.get('avg_bitrate_kbps'),
+                'validation_result': row.get('validation_result') or row.get('status'),
+                'validation_reason': row.get('validation_reason'),
+                'final_score': row.get('ordering_score') if row.get('ordering_score') not in (None, 'N/A') else row.get('score')
+            }
+        return lookup
+    except Exception:
+        logging.debug("Failed to load scored lookup for ordering visibility", exc_info=True)
+        return {}
+
+
+def _provider_name_from_lookup(entry, provider_names=None):
+    if not isinstance(entry, dict):
+        return None
+    provider_name = entry.get('provider_name')
+    provider_id = entry.get('provider_id')
+    if provider_name:
+        return provider_name
+    if provider_id and provider_names and isinstance(provider_names, dict):
+        name = provider_names.get(str(provider_id))
+        if name:
+            return name
+    return provider_id
+
+
+def _merge_stream_details(stream_id, base_info, scored_lookup, provider_names=None):
+    try:
+        sid_key = int(stream_id)
+    except Exception:
+        sid_key = stream_id
+    scored = scored_lookup.get(sid_key) if isinstance(scored_lookup, dict) else {}
+    merged = {
+        'stream_id': stream_id,
+        'stream_name': base_info.get('stream_name') if isinstance(base_info, dict) else None,
+        'provider_id': None,
+        'provider_name': None,
+        'resolution': None,
+        'video_codec': None,
+        'bitrate_kbps': None,
+        'validation_result': None,
+        'validation_reason': None,
+        'final_score': None,
+    }
+
+    for key in ['provider_id', 'provider_name', 'resolution', 'video_codec', 'bitrate_kbps', 'validation_result', 'validation_reason', 'final_score']:
+        value = None
+        if isinstance(base_info, dict):
+            value = base_info.get(key)
+        if value in (None, 'N/A') and isinstance(scored, dict):
+            value = scored.get(key)
+        merged[key] = value
+
+    if not merged.get('stream_name') and isinstance(scored, dict):
+        merged['stream_name'] = scored.get('stream_name')
+
+    merged['provider_name'] = _provider_name_from_lookup(merged, provider_names)
+    return merged
+
+
+def _build_ordering_visibility(results, config, provider_names=None):
+    if not results or not config:
+        return None
+
+    cleanup_rows = results.get('cleanup_plan_rows') if isinstance(results, dict) else None
+    ordering_summary = results.get('ordering_summary') if isinstance(results, dict) else None
+
+    if not cleanup_rows and not ordering_summary:
+        return None
+
+    channel_lookup = _load_channel_lookup(config)
+    scored_lookup = _load_scored_lookup(config)
+
+    final_orders = []
+    excluded_streams = []
+
+    def _channel_meta(cid, fallback=None):
+        try:
+            key = int(cid)
+        except Exception:
+            key = cid
+        meta = channel_lookup.get(key) if isinstance(channel_lookup, dict) else None
+        if meta:
+            return meta
+        return fallback or {}
+
+    if cleanup_rows:
+        for row in cleanup_rows:
+            if not isinstance(row, dict):
+                continue
+            after_ids = row.get('after_stream_ids') or []
+            before_ids = row.get('before_stream_ids') or []
+            removed_ids = row.get('removed_stream_ids')
+            if removed_ids is None:
+                removed_ids = [sid for sid in before_ids if sid not in set(after_ids)]
+            channel_id = row.get('channel_id')
+            channel_info = _channel_meta(channel_id, {'channel_number': row.get('channel_number'), 'channel_name': row.get('channel_name')})
+            for idx, sid in enumerate(after_ids, start=1):
+                merged = _merge_stream_details(sid, {}, scored_lookup, provider_names)
+                merged.update({
+                    'order': idx,
+                    'channel_id': channel_id,
+                    'channel_number': channel_info.get('channel_number'),
+                    'channel_name': channel_info.get('channel_name'),
+                })
+                final_orders.append(merged)
+
+            for sid in removed_ids:
+                merged = _merge_stream_details(sid, {}, scored_lookup, provider_names)
+                val_res = str(merged.get('validation_result') or '').lower()
+                val_reason = merged.get('validation_reason')
+                reason = 'Excluded by provider limit'
+                if val_res and val_res != 'pass':
+                    reason = f"Validation failed ({val_reason or val_res})"
+                excluded_streams.append({
+                    **merged,
+                    'channel_id': channel_id,
+                    'channel_number': channel_info.get('channel_number'),
+                    'channel_name': channel_info.get('channel_name'),
+                    'reason': reason
+                })
+
+    elif ordering_summary:
+        channels = ordering_summary.get('channels') if isinstance(ordering_summary, dict) else None
+        if channels:
+            for ch in channels:
+                if not isinstance(ch, dict):
+                    continue
+                channel_id = ch.get('channel_id')
+                channel_info = _channel_meta(channel_id, {'channel_number': ch.get('channel_number'), 'channel_name': ch.get('channel_name')})
+                for row in ch.get('final_order') or []:
+                    if not isinstance(row, dict):
+                        continue
+                    merged = _merge_stream_details(row.get('stream_id'), row, scored_lookup, provider_names)
+                    merged.update({
+                        'order': row.get('order'),
+                        'channel_id': channel_id,
+                        'channel_number': channel_info.get('channel_number'),
+                        'channel_name': channel_info.get('channel_name'),
+                    })
+                    final_orders.append(merged)
+
+                for row in ch.get('excluded_streams') or []:
+                    if not isinstance(row, dict):
+                        continue
+                    merged = _merge_stream_details(row.get('stream_id'), row, scored_lookup, provider_names)
+                    reason = row.get('reason') or 'Scored lower than cutoff'
+                    excluded_streams.append({
+                        **merged,
+                        'channel_id': channel_id,
+                        'channel_number': channel_info.get('channel_number'),
+                        'channel_name': channel_info.get('channel_name'),
+                        'reason': reason
+                    })
+
+    return {
+        'final_orders': final_orders,
+        'excluded_streams': excluded_streams
+    }
+
+
 def _safe_int(value):
     try:
         return int(value)
@@ -1809,8 +2021,12 @@ def run_job_worker(job, api, config):
                 job.current_step = 'Quality: reordering streams...'
                 _job_advance_stage(job)  # reorder
                 _job_set_stage(job, 'reorder', 'Reorder', total=1)
-                reorder_streams(api, config)
+                reorder_summary = reorder_streams(api, config, collect_summary=True)
                 _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
+
+                if reorder_summary:
+                    job.result_summary = job.result_summary or {}
+                    job.result_summary['ordering_summary'] = reorder_summary
 
                 if job.cancel_requested:
                     job.status = 'cancelled'
@@ -1825,14 +2041,15 @@ def run_job_worker(job, api, config):
                     progress_callback(job, pdata)
                     return not job.cancel_requested
 
-                cleanup_stats = cleanup_streams_by_provider(
+                cleanup_stats, cleanup_plan_rows = cleanup_streams_by_provider(
                     api,
                     job.groups,
                     config,
                     job.streams_per_provider,
                     job.channels,
                     progress_callback=cleanup_progress,
-                    should_continue=lambda: not job.cancel_requested
+                    should_continue=lambda: not job.cancel_requested,
+                    return_plan=True
                 )
                 # Ensure stage completion if we know the total.
                 if getattr(job, 'stage_total', 0):
@@ -1846,6 +2063,7 @@ def run_job_worker(job, api, config):
                 }
                 job.result_summary['cleanup_stats'] = cleanup_stats
                 job.result_summary['final_stream_count'] = cleanup_stats.get('total_streams_after', 0)
+                job.result_summary['cleanup_plan_rows'] = cleanup_plan_rows
             finally:
                 logging.info("TASK_END: %s", quality_task_name)
 
@@ -2050,9 +2268,13 @@ def run_job_worker(job, api, config):
             job.current_step = 'Reordering streams...'
             _job_advance_stage(job)  # reorder
             _job_set_stage(job, 'reorder', 'Reorder', total=1)
-            reorder_streams(api, config)
+            reorder_summary = reorder_streams(api, config, collect_summary=True)
             _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
-            
+
+            if reorder_summary:
+                job.result_summary = job.result_summary or {}
+                job.result_summary['ordering_summary'] = reorder_summary
+
             # Step 5: Cleanup (if requested)
             if job.job_type == 'full_cleanup':
                 if job.cancel_requested:
@@ -2068,24 +2290,26 @@ def run_job_worker(job, api, config):
                     progress_callback(job, pdata)
                     return not job.cancel_requested
 
-                cleanup_stats = cleanup_streams_by_provider(
+                cleanup_stats, cleanup_plan_rows = cleanup_streams_by_provider(
                     api,
                     job.groups,
                     config,
                     job.streams_per_provider,
                     job.channels,
                     progress_callback=cleanup_progress,
-                    should_continue=lambda: not job.cancel_requested
+                    should_continue=lambda: not job.cancel_requested,
+                    return_plan=True
                 )
                 # Ensure stage completion if we know the total.
                 if getattr(job, 'stage_total', 0):
                     _job_update_stage_progress(job, processed=job.stage_total, total=job.stage_total, failed=job.failed)
-                
+
                 # Add cleanup stats to result summary
                 if not job.result_summary:
                     job.result_summary = {}
                 job.result_summary['cleanup_stats'] = cleanup_stats
                 job.result_summary['final_stream_count'] = cleanup_stats.get('total_streams_after', 0)
+                job.result_summary['cleanup_plan_rows'] = cleanup_plan_rows
         
         elif job.job_type == 'fetch':
             job.current_step = 'Fetching streams...'
@@ -2116,8 +2340,11 @@ def run_job_worker(job, api, config):
         elif job.job_type == 'reorder':
             job.current_step = 'Reordering streams...'
             _job_set_stage(job, 'reorder', 'Reorder', total=1)
-            reorder_streams(api, config)
+            reorder_summary = reorder_streams(api, config, collect_summary=True)
             _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
+            if reorder_summary:
+                job.result_summary = job.result_summary or {}
+                job.result_summary['ordering_summary'] = reorder_summary
         
         elif job.job_type == 'refresh_optimize':
             task_name = "Refresh Channel Streams"
@@ -2177,7 +2404,11 @@ def run_job_worker(job, api, config):
                 'exclude_filter': effective_exclude_filter,
                 'base_search_text': refresh_result.get('base_search_text'),
                 'stream_name_regex': getattr(job, 'stream_name_regex', None),
-                'stream_name_regex_override': job.stream_name_regex_override
+                'stream_name_regex_override': job.stream_name_regex_override,
+                'previous_streams': refresh_result.get('previous_streams'),
+                'final_streams': refresh_result.get('final_streams'),
+                'final_stream_ids': refresh_result.get('final_stream_ids'),
+                'streams': refresh_result.get('streams')
             }
             
             # Small delay to ensure frontend polling catches the final status
@@ -4009,7 +4240,8 @@ def api_job_results(job_id):
         provider_metadata = _load_provider_metadata(config) if config else {}
         capacity_summary = results.get('capacity_summary') if isinstance(results, dict) else None
         job_meta = _build_job_meta(job_id, job_type, config)
-        return jsonify(_build_results_payload(
+        ordering_visibility = _build_ordering_visibility(results, config, provider_names)
+        payload = _build_results_payload(
             results,
             analysis_ran,
             job_type,
@@ -4017,7 +4249,10 @@ def api_job_results(job_id):
             provider_metadata,
             capacity_summary,
             job_meta=job_meta
-        ))
+        )
+        if ordering_visibility:
+            payload['ordering_visibility'] = ordering_visibility
+        return jsonify(payload)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -4034,7 +4269,8 @@ def api_job_scoped_results(job_id):
         provider_metadata = _load_provider_metadata(config) if config else {}
         capacity_summary = results.get('capacity_summary') if isinstance(results, dict) else None
         job_meta = _build_job_meta(job_id, job_type, config)
-        return jsonify(_build_results_payload(
+        ordering_visibility = _build_ordering_visibility(results, config, provider_names)
+        payload = _build_results_payload(
             results,
             analysis_ran,
             job_type,
@@ -4042,7 +4278,10 @@ def api_job_scoped_results(job_id):
             provider_metadata,
             capacity_summary,
             job_meta=job_meta
-        ))
+        )
+        if ordering_visibility:
+            payload['ordering_visibility'] = ordering_visibility
+        return jsonify(payload)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -4063,7 +4302,8 @@ def api_detailed_results():
                     capacity_summary = latest_job.result_summary.get('capacity_summary')
                 provider_metadata = _load_provider_metadata(_build_config_from_job(latest_job))
                 job_meta = _build_job_meta(latest_job.job_id, latest_job.job_type, _build_config_from_job(latest_job))
-                return jsonify(_build_results_payload(
+                ordering_visibility = _build_ordering_visibility(latest_job.result_summary, _build_config_from_job(latest_job), provider_names)
+                payload = _build_results_payload(
                     latest_job.result_summary,
                     _job_ran_analysis(latest_job.job_type),
                     latest_job.job_type,
@@ -4071,7 +4311,10 @@ def api_detailed_results():
                     provider_metadata,
                     capacity_summary,
                     job_meta=job_meta
-                ))
+                )
+                if ordering_visibility:
+                    payload['ordering_visibility'] = ordering_visibility
+                return jsonify(payload)
         
         # Fall back to CSV-based summary if no recent jobs
         latest_job = _get_latest_job_with_workspace()
@@ -4091,7 +4334,8 @@ def api_detailed_results():
         provider_names = _load_provider_names(config)
         provider_metadata = _load_provider_metadata(config)
         capacity_summary = summary.get('capacity_summary') if isinstance(summary, dict) else None
-        return jsonify(_build_results_payload(
+        ordering_visibility = _build_ordering_visibility(summary, config, provider_names)
+        payload = _build_results_payload(
             summary,
             True,
             job_type,
@@ -4099,7 +4343,10 @@ def api_detailed_results():
             provider_metadata,
             capacity_summary,
             job_meta=job_meta
-        ))
+        )
+        if ordering_visibility:
+            payload['ordering_visibility'] = ordering_visibility
+        return jsonify(payload)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

@@ -1581,7 +1581,7 @@ def order_streams_for_channel(
     return [r.get('stream_id') for r in ordered]
 
 
-def reorder_streams(api, config, input_csv=None):
+def reorder_streams(api, config, input_csv=None, collect_summary=False):
     """Reorder streams in Dispatcharr based on scores"""
 
     logging.info("Reordering streams in Dispatcharr...")
@@ -1592,7 +1592,7 @@ def reorder_streams(api, config, input_csv=None):
         df = pd.read_csv(input_csv)
     except FileNotFoundError:
         logging.error(f"Input CSV not found: {input_csv}")
-        return
+        return None
 
     filters = config.get('filters') or {}
     ordering_cfg = config.get('ordering') or {}
@@ -1632,6 +1632,25 @@ def reorder_streams(api, config, input_csv=None):
 
     grouped = df.groupby("channel_id")
 
+    summary = {'channels': []} if collect_summary else None
+
+    channel_lookup = {}
+    if collect_summary:
+        try:
+            channel_lookup = {
+                int(ch.get('id')): ch
+                for ch in (api.fetch_channels() or [])
+                if isinstance(ch, dict) and ch.get('id') is not None
+            }
+        except Exception:
+            logging.debug("Could not fetch channel metadata for ordering summary", exc_info=True)
+
+    def _safe_int(value):
+        try:
+            return int(value)
+        except Exception:
+            return value
+
     def _provider(row):
         return row.get('m3u_account_name') or row.get('m3u_account') or 'unknown_provider'
 
@@ -1653,12 +1672,73 @@ def reorder_streams(api, config, input_csv=None):
         
         current_ids_set = {s['id'] for s in current_streams}
         validated_ids = [sid for sid in sorted_stream_ids if sid in current_ids_set]
-        
+
         # Add any new streams not in CSV
         csv_ids_set = set(sorted_stream_ids)
         new_ids = [sid for sid in current_ids_set if sid not in csv_ids_set]
         final_ids = validated_ids + new_ids
-        
+
+        channel_entry = None
+        if collect_summary:
+            record_lookup = {}
+            for record in group.to_dict('records'):
+                sid = record.get('stream_id')
+                if sid in (None, 'N/A'):
+                    continue
+                try:
+                    sid_int = int(sid)
+                except Exception:
+                    sid_int = sid
+                record_lookup[sid_int] = record
+
+            channel_meta = channel_lookup.get(_safe_int(channel_id), {}) if channel_lookup else {}
+            channel_entry = {
+                'channel_id': _safe_int(channel_id),
+                'channel_number': channel_meta.get('channel_number'),
+                'channel_name': channel_meta.get('name'),
+                'final_order': [],
+                'excluded_streams': []
+            }
+
+            final_set = set(final_ids)
+            for idx, sid in enumerate(final_ids, start=1):
+                record = record_lookup.get(sid, {})
+                channel_entry['final_order'].append({
+                    'order': idx,
+                    'stream_id': sid,
+                    'stream_name': record.get('stream_name'),
+                    'provider_id': record.get('m3u_account'),
+                    'provider_name': record.get('m3u_account_name'),
+                    'resolution': record.get('resolution'),
+                    'video_codec': record.get('video_codec'),
+                    'bitrate_kbps': record.get('avg_bitrate_kbps'),
+                    'validation_result': record.get('validation_result') or record.get('status'),
+                    'validation_reason': record.get('validation_reason'),
+                    'final_score': record.get('ordering_score') if record.get('ordering_score') not in (None, 'N/A') else record.get('score')
+                })
+
+            for sid, record in record_lookup.items():
+                if sid in final_set:
+                    continue
+                validation_result = str(record.get('validation_result') or '').lower()
+                validation_reason = record.get('validation_reason') or record.get('status')
+                if validation_result and validation_result != 'pass':
+                    reason = f"Validation failed ({validation_reason or validation_result})"
+                elif (record.get('ordering_score') in (None, 'N/A')) and (record.get('score') in (None, 'N/A')):
+                    reason = 'Missing required metrics'
+                else:
+                    reason = 'Scored lower than cutoff'
+
+                channel_entry['excluded_streams'].append({
+                    'stream_id': sid,
+                    'stream_name': record.get('stream_name'),
+                    'provider_id': record.get('m3u_account'),
+                    'provider_name': record.get('m3u_account_name'),
+                    'resolution': record.get('resolution'),
+                    'bitrate_kbps': record.get('avg_bitrate_kbps'),
+                    'reason': reason
+                })
+
         if not final_ids:
             logging.warning(f"No valid streams for channel {channel_id}")
             continue
@@ -1668,7 +1748,12 @@ def reorder_streams(api, config, input_csv=None):
             logging.info(f"Reordered channel {channel_id}")
         except Exception as e:
             logging.error(f"Failed to reorder channel {channel_id}: {e}")
-    
+
+        if collect_summary and channel_entry is not None:
+            summary['channels'].append(channel_entry)
+
+    if collect_summary:
+        return summary
     logging.info("Reordering complete!")
 
 def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None):
@@ -1821,6 +1906,18 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     # Get current streams for this channel
     current_streams = api.fetch_channel_streams(channel_id)
     current_stream_ids = {s['id'] for s in current_streams} if current_streams else set()
+
+    def _stream_snapshot(stream):
+        if not isinstance(stream, dict):
+            return {}
+        return {
+            'id': stream.get('id'),
+            'name': stream.get('name'),
+            'provider_id': stream.get('m3u_account'),
+            'provider_name': stream.get('m3u_account_name'),
+            'resolution': stream.get('resolution'),
+            'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate')
+        }
     logging.info(f"Channel currently has {len(current_stream_ids)} streams")
     
     # Fetch ALL streams from ALL providers (paginated) unless a shared cache is provided.
@@ -1893,7 +1990,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             'provider_id': provider_id,
             'provider_name': provider_name,
             # URL is not used by the UI and can be large/sensitive; omit.
-            'resolution': None
+            'resolution': stream.get('resolution'),
+            'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate')
         }
 
         if preview:
@@ -1907,6 +2005,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     logging.info(f"Found {total_matching} matching streams")
 
     final_stream_ids = [s['id'] for s in filtered_streams] if not preview else []
+    previous_streams = [_stream_snapshot(s) for s in (current_streams or [])]
+    final_streams = filtered_streams if not preview else preview_streams
     
     if (not preview and not final_stream_ids) or (preview and filtered_count == 0):
         logging.info("No streams remaining after filtering - channel will be emptied")
@@ -1923,7 +2023,10 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         'channel_name': channel_name,
         'base_search_text': search_name,
         'preview_limit': _PREVIEW_STREAM_LIMIT if preview else None,
-        'preview_truncated': bool(preview_truncated) if preview else False
+        'preview_truncated': bool(preview_truncated) if preview else False,
+        'previous_streams': previous_streams,
+        'final_streams': final_streams,
+        'final_stream_ids': final_stream_ids
     }
 
     if preview:
