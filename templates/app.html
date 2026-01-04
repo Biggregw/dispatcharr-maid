@@ -1098,6 +1098,20 @@
                         Next: Select Channels →
                     </button>
                 </div>
+                <div style="margin-top: 12px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #f9fafb;">
+                    <div style="font-weight: 700; color: #1f2937;">Saved jobs (quick access)</div>
+                    <div style="color: #4b5563; font-size: 0.95em; margin: 6px 0 10px 0;">
+                        Load a saved job and switch to Run Jobs without starting it. You’ll review and run it from the Run Jobs step.
+                    </div>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                        <select id="saved-pattern-quick-select" style="flex: 1; min-width: 240px; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em;">
+                            <option value="">— Select saved job —</option>
+                        </select>
+                        <button class="btn btn-next" id="btn-load-saved-pattern" type="button" onclick="loadSavedPatternIntoRunStep(event)" disabled>
+                            Load into Run Jobs
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -1928,13 +1942,23 @@
 
         function renderSavedPatterns() {
             const select = document.getElementById('saved-pattern-select');
-            if (!select) return;
-            const current = select.value;
+            const quickSelect = document.getElementById('saved-pattern-quick-select');
+            if (!select && !quickSelect) return;
+            const desiredSelection = select?.value || quickSelect?.value || '';
 
             if (!Array.isArray(savedPatterns) || savedPatterns.length === 0) {
-            select.innerHTML = '<option value="">— Select saved job —</option><option value="" disabled>(No saved jobs yet — run a job to auto-save it)</option>';
-                select.value = '';
-                select.onchange = () => onSavedPatternSelected();
+                const emptyOptions = '<option value="">— Select saved job —</option><option value="" disabled>(No saved jobs yet — run a job to auto-save it)</option>';
+                if (select) {
+                    select.innerHTML = emptyOptions;
+                    select.value = '';
+                    select.onchange = () => setSavedPatternSelection(select.value);
+                }
+                if (quickSelect) {
+                    quickSelect.innerHTML = emptyOptions;
+                    quickSelect.value = '';
+                    quickSelect.onchange = () => onQuickSavedPatternSelected();
+                }
+                onQuickSavedPatternSelected();
                 onSavedPatternSelected();
                 // If there was no explicit error shown, show a helpful hint.
                 const status = document.getElementById('saved-pattern-status');
@@ -1945,14 +1969,20 @@
             }
 
             hideSavedPatternStatus();
-            select.innerHTML = '<option value="">— Select saved job —</option>' + savedPatterns.map(p => {
+            const options = '<option value="">— Select saved job —</option>' + savedPatterns.map(p => {
                 const name = p.name || 'Unnamed';
                 const created = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
                 return `<option value="${p.id}">${name}${created ? ` • ${created}` : ''}</option>`;
             }).join('');
-            select.value = current || '';
-            select.onchange = () => onSavedPatternSelected();
-            onSavedPatternSelected();
+            if (select) {
+                select.innerHTML = options;
+                select.onchange = () => setSavedPatternSelection(select.value);
+            }
+            if (quickSelect) {
+                quickSelect.innerHTML = options;
+                quickSelect.onchange = () => setSavedPatternSelection(quickSelect.value);
+            }
+            setSavedPatternSelection(desiredSelection);
         }
 
         function showSavedPatternStatus(message, isError) {
@@ -1971,6 +2001,22 @@
             el.textContent = '';
             el.classList.remove('alert-error');
             el.classList.add('alert-info');
+        }
+
+        function onQuickSavedPatternSelected() {
+            const select = document.getElementById('saved-pattern-quick-select');
+            const btn = document.getElementById('btn-load-saved-pattern');
+            if (!btn) return;
+            btn.disabled = !(select && select.value);
+        }
+
+        function setSavedPatternSelection(patternId) {
+            const select = document.getElementById('saved-pattern-select');
+            const quickSelect = document.getElementById('saved-pattern-quick-select');
+            if (select) select.value = patternId || '';
+            if (quickSelect) quickSelect.value = patternId || '';
+            onQuickSavedPatternSelected();
+            onSavedPatternSelected();
         }
 
         async function onSavedPatternSelected() {
@@ -2016,6 +2062,18 @@
             } catch (e) {
                 if (countEl) countEl.textContent = `Unable to resolve: ${e.message}`;
             }
+        }
+
+        function loadSavedPatternIntoRunStep(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            const patternId = document.getElementById('saved-pattern-quick-select')?.value || '';
+            if (!patternId) return;
+
+            setSavedPatternSelection(patternId);
+            goToStep3();
         }
 
         async function runSavedPatternPipeline(event) {
@@ -2330,11 +2388,14 @@
         // Go to step 3
         function goToStep3() {
             // Update step indicators
+            document.getElementById('step-indicator-1').classList.remove('active');
+            document.getElementById('step-indicator-1').classList.add('completed');
             document.getElementById('step-indicator-2').classList.remove('active');
             document.getElementById('step-indicator-2').classList.add('completed');
             document.getElementById('step-indicator-3').classList.add('active');
-            
+
             // Switch cards
+            document.getElementById('step-1').classList.add('hidden');
             document.getElementById('step-2').classList.add('hidden');
             document.getElementById('step-3').classList.remove('hidden');
             
