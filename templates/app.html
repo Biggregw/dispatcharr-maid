@@ -545,6 +545,12 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            transition: background-color 0.6s ease, box-shadow 0.4s ease;
+        }
+
+        .history-item--new {
+            background: #f0f4ff;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.12);
         }
 
         .history-item.clickable {
@@ -1566,6 +1572,8 @@
         let refreshJobId = null;
         let lastTerminalJobId = null;
         const terminalStatuses = ['completed', 'failed', 'cancelled'];
+        let pendingHistoryHighlightJobId = null;
+        const lastRenderedStatuses = {};
         let hasRunPreviewPlan = false;
         let pendingApplyButton = null;
 
@@ -3012,6 +3020,22 @@
             return job;
         }
 
+        function handleJobStatusChange(job) {
+            if (!job || !job.job_id) return;
+
+            const previousStatus = lastRenderedStatuses[job.job_id];
+            lastRenderedStatuses[job.job_id] = job.status;
+
+            const becameTerminal = !terminalStatuses.includes(previousStatus)
+                && terminalStatuses.includes(job.status);
+
+            if (becameTerminal && lastTerminalJobId !== job.job_id) {
+                lastTerminalJobId = job.job_id;
+                pendingHistoryHighlightJobId = job.job_id;
+                loadJobHistory();
+            }
+        }
+
         // Check job status
         async function checkJob(jobId) {
             try {
@@ -3025,6 +3049,7 @@
 
                     renderCurrentJob(reconciledJob);
                     updateRefreshProgress(reconciledJob);
+                    handleJobStatusChange(job);
                     maybeAutoScrollToCurrentJob(job.job_id);
 
                     // If completed, stop checking
@@ -3033,10 +3058,6 @@
                         if (jobCheckInterval) {
                             clearInterval(jobCheckInterval);
                             jobCheckInterval = null;
-                        }
-                        if (lastTerminalJobId !== job.job_id) {
-                            lastTerminalJobId = job.job_id;
-                            loadJobHistory();
                         }
                     }
                 }
@@ -3361,16 +3382,13 @@
                         const reconciledJob = reconcileJobForRender(normalizedJob);
                         renderCurrentJob(reconciledJob);
                         updateRefreshProgress(reconciledJob);
+                        handleJobStatusChange(normalizedJob);
 
                         if (terminalStatuses.includes(normalizedJob.status)) {
                             resetActionButtons();
                             if (jobCheckInterval) {
                                 clearInterval(jobCheckInterval);
                                 jobCheckInterval = null;
-                            }
-                            if (lastTerminalJobId !== normalizedJob.job_id) {
-                                lastTerminalJobId = normalizedJob.job_id;
-                                loadJobHistory();
                             }
                         }
                     } else {
@@ -3654,8 +3672,10 @@
                     }
                 }
                 
+                const isHighlighted = pendingHistoryHighlightJobId && pendingHistoryHighlightJobId === job.job_id;
+
                 return `
-                    <div class="history-item clickable" onclick="viewJobResults('${job.job_id}')">
+                    <div class="history-item clickable ${isHighlighted ? 'history-item--new' : ''}" data-job-id="${job.job_id}" onclick="viewJobResults('${job.job_id}')">
                         <div class="history-info">
                             <div class="history-type">${typeLabel}</div>
                             <div class="history-time" style="font-size: 0.85em; color: #718096;">${context}</div>
@@ -3672,6 +3692,16 @@
                     </div>
                 `;
             }).join('');
+
+            if (pendingHistoryHighlightJobId) {
+                const highlighted = list.querySelector(`[data-job-id="${pendingHistoryHighlightJobId}"]`);
+                if (highlighted) {
+                    setTimeout(() => {
+                        highlighted.classList.remove('history-item--new');
+                    }, 2500);
+                }
+                pendingHistoryHighlightJobId = null;
+            }
         }
         
         // Show error
