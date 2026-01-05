@@ -132,6 +132,10 @@ class Config:
         if not os.path.exists(self.config_file):
             # Create default config
             default_config = self._get_default_config()
+            logging.warning(
+                "Config file %s not found. Auto-created with defaults; please review config.yaml.example.",
+                self.config_file,
+            )
             with open(self.config_file, 'w') as f:
                 yaml.dump(default_config, f, default_flow_style=False)
             return default_config
@@ -145,10 +149,10 @@ class Config:
             'analysis': {
                 'duration': 10,
                 'idet_frames': 500,
-                'timeout': 30,
-                'workers': 8,
                 'retries': 1,
                 'retry_delay': 10,
+                'timeout': 30,
+                'workers': 8,
             },
             'scoring': {
                 'proxy_first': True,
@@ -163,16 +167,32 @@ class Config:
             },
             'filters': {
                 'channel_group_ids': [],
-                'start_channel': 1,
-                'end_channel': 99999,
-                'stream_last_measured_days': 1,
-                'remove_duplicates': True
+                'remove_duplicates': True,
+                'specific_channel_ids': [],
+                'channel_name_regex': '',
+                'channel_number_regex': '',
+                'stream_last_measured_days': 0,
             },
             'ordering': {
                 'resilience_mode': False,
                 'fallback_depth': 3,
                 'similar_score_delta': 5,
-            }
+            },
+            'dispatcharr': {
+                'm3u_accounts_endpoint': '/api/channels/m3u-accounts/',
+                'manage_py_path': '',
+                'container_name': 'dispatcharr',
+                'refresh_provider_data': False,
+            },
+            'web': {
+                'results_retention_days': 0,
+            },
+            'usage': {
+                'access_log_dir': '/app/npm_logs',
+                'access_log_glob': 'proxy-host-*_access.log*',
+                'lookback_days': 7,
+                'session_gap_seconds': 30,
+            },
         }
     
     def get(self, section, key=None, default=None):
