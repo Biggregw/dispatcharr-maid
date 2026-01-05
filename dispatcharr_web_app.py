@@ -4111,15 +4111,15 @@ def api_cancel_job(job_id):
     """Cancel a running job"""
     with job_lock:
         job = jobs.get(job_id)
-    
-    if not job:
-        return jsonify({'success': False, 'error': 'Job not found'}), 404
-    
-    if job.status == 'running':
-        job.cancel_requested = True
-        return jsonify({'success': True, 'message': 'Cancellation requested'})
-    else:
-        return jsonify({'success': False, 'error': 'Job is not running'}), 400
+
+        if not job:
+            return jsonify({'success': False, 'error': 'Job not found'}), 404
+
+        if job.status == 'running':
+            job.cancel_requested = True
+            return jsonify({'success': True, 'message': 'Cancellation requested'})
+        else:
+            return jsonify({'success': False, 'error': 'Job is not running'}), 400
 
 
 @app.route('/api/jobs')
