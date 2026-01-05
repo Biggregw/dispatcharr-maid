@@ -1714,6 +1714,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
     grouped = df.groupby("channel_id")
 
     summary = {'channels': []} if collect_summary else None
+    any_final_streams = False if collect_summary else None
 
     channel_lookup = {}
     if collect_summary:
@@ -1777,6 +1778,25 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
                     sid_int = sid
                 record_lookup[sid_int] = record
 
+            current_lookup = {}
+            for stream in current_streams:
+                if not isinstance(stream, dict):
+                    continue
+                sid = stream.get('id')
+                if sid is None:
+                    continue
+                try:
+                    sid_key = int(sid)
+                except Exception:
+                    sid_key = sid
+                current_lookup[sid_key] = {
+                    'stream_name': stream.get('name'),
+                    'provider_id': stream.get('m3u_account'),
+                    'provider_name': stream.get('m3u_account_name'),
+                    'resolution': stream.get('resolution'),
+                    'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate')
+                }
+
             channel_meta = channel_lookup.get(_safe_int(channel_id), {}) if channel_lookup else {}
             channel_entry = {
                 'channel_id': _safe_int(channel_id),
@@ -1787,38 +1807,52 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
                 'excluded_streams': []
             }
 
+            def _merge_entry(sid, source_record=None):
+                source_record = source_record or {}
+                fallback = current_lookup.get(sid) or {}
+                entry = {
+                    'stream_id': sid,
+                    'stream_name': source_record.get('stream_name') or fallback.get('stream_name'),
+                    'provider_id': source_record.get('m3u_account') if isinstance(source_record, dict) else None,
+                    'provider_name': source_record.get('m3u_account_name') if isinstance(source_record, dict) else None,
+                    'resolution': source_record.get('resolution'),
+                    'video_codec': source_record.get('video_codec'),
+                    'bitrate_kbps': source_record.get('avg_bitrate_kbps'),
+                    'validation_result': source_record.get('validation_result') or source_record.get('status'),
+                    'validation_reason': source_record.get('validation_reason'),
+                    'final_score': source_record.get('ordering_score') if source_record.get('ordering_score') not in (None, 'N/A') else source_record.get('score')
+                }
+
+                if entry.get('provider_id') is None and isinstance(fallback, dict):
+                    entry['provider_id'] = fallback.get('provider_id')
+                if entry.get('provider_name') is None and isinstance(fallback, dict):
+                    entry['provider_name'] = fallback.get('provider_name')
+                if entry.get('resolution') is None and isinstance(fallback, dict):
+                    entry['resolution'] = fallback.get('resolution')
+                if entry.get('bitrate_kbps') is None and isinstance(fallback, dict):
+                    entry['bitrate_kbps'] = fallback.get('bitrate_kbps')
+
+                return entry
+
             final_set = set(tier1_stream_ids)
+
             for idx, sid in enumerate(tier1_stream_ids, start=1):
                 record = record_lookup.get(sid, {})
-                channel_entry['final_order'].append({
+                merged = _merge_entry(sid, record)
+                merged.update({
                     'order': idx,
-                    'stream_id': sid,
-                    'stream_name': record.get('stream_name'),
-                    'provider_id': record.get('m3u_account'),
-                    'provider_name': record.get('m3u_account_name'),
-                    'resolution': record.get('resolution'),
-                    'video_codec': record.get('video_codec'),
-                    'bitrate_kbps': record.get('avg_bitrate_kbps'),
-                    'validation_result': record.get('validation_result') or record.get('status'),
-                    'validation_reason': record.get('validation_reason'),
-                    'final_score': record.get('ordering_score') if record.get('ordering_score') not in (None, 'N/A') else record.get('score')
+                    'quality_tier': 'tier1',
                 })
+                channel_entry['final_order'].append(merged)
 
             for idx, sid in enumerate(tier2_stream_ids, start=1):
                 record = record_lookup.get(sid, {})
-                channel_entry['tier2_order'].append({
+                merged = _merge_entry(sid, record)
+                merged.update({
                     'order': idx,
-                    'stream_id': sid,
-                    'stream_name': record.get('stream_name'),
-                    'provider_id': record.get('m3u_account'),
-                    'provider_name': record.get('m3u_account_name'),
-                    'resolution': record.get('resolution'),
-                    'video_codec': record.get('video_codec'),
-                    'bitrate_kbps': record.get('avg_bitrate_kbps'),
-                    'validation_result': record.get('validation_result') or record.get('status'),
-                    'validation_reason': record.get('validation_reason'),
-                    'final_score': record.get('ordering_score') if record.get('ordering_score') not in (None, 'N/A') else record.get('score')
+                    'quality_tier': 'tier2',
                 })
+                channel_entry['tier2_order'].append(merged)
 
             for sid, record in record_lookup.items():
                 if sid in final_set:
@@ -1842,10 +1876,45 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
                     'reason': reason
                 })
 
+            # Persist final stream metadata for history/UI rendering.
+            final_ids_ordered = list(final_ids)
+            final_streams = []
+            if final_ids_ordered:
+                any_final_streams = True
+                for sid in final_ids_ordered:
+                    record = record_lookup.get(sid)
+                    merged = _merge_entry(sid, record)
+                    is_tier1 = sid in tier1_stream_ids
+                    if record is None:
+                        validation_result = 'fallback'
+                        validation_reason = 'no_streams_passed_validation'
+                    else:
+                        validation_result = merged.get('validation_result')
+                        validation_reason = merged.get('validation_reason')
+                    final_streams.append({
+                        'id': sid,
+                        'name': merged.get('stream_name'),
+                        'provider_id': merged.get('provider_id'),
+                        'provider_name': merged.get('provider_name'),
+                        'resolution': merged.get('resolution'),
+                        'bitrate_kbps': merged.get('bitrate_kbps'),
+                        'validation': validation_result,
+                        'validation_reason': validation_reason,
+                        'quality_tier': 'tier1' if is_tier1 else 'tier2',
+                    })
+            else:
+                final_streams = []
+
+            # When final_ids are empty, still persist the channel entry and mark Tier 1 empty.
             if not tier1_stream_ids:
                 channel_entry['tier1_empty'] = True
 
+            channel_entry['final_streams'] = final_streams
+            channel_entry['final_stream_ids'] = final_ids_ordered
+
         if not final_ids:
+            if collect_summary and channel_entry is not None:
+                summary['channels'].append(channel_entry)
             logging.warning(f"No valid streams for channel {channel_id}")
             continue
         
@@ -1859,6 +1928,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
             summary['channels'].append(channel_entry)
 
     if collect_summary:
+        if any_final_streams is False:
+            summary['tier1_empty'] = True
         return summary
     logging.info("Reordering complete!")
 
