@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import uuid
+import fcntl
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
@@ -1714,6 +1715,7 @@ def save_job_to_history(job):
     history = history[:50]
 
     with open(history_file, 'w') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
         json.dump(history, f, indent=2, allow_nan=False)
 
 
