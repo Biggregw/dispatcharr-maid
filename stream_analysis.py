@@ -1224,11 +1224,34 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
         on='stream_id'
     )
 
-    # Calculate dropped frame percentage
-    # Avoid division by zero: if no frames decoded, percentage is 0
-    summary['dropped_frame_percentage'] = (
-        summary['avg_frames_dropped'] / summary['avg_frames_decoded'].replace(0, float('nan')) * 100
-    ).fillna(0).replace([float('inf'), float('-inf')], 0)
+    def _compute_dropped_frame_percentage(row):
+        decoded = row.get('avg_frames_decoded')
+        dropped = row.get('avg_frames_dropped')
+
+        try:
+            decoded = float(decoded)
+        except (TypeError, ValueError):
+            decoded = float('nan')
+
+        try:
+            dropped = float(dropped)
+        except (TypeError, ValueError):
+            dropped = float('nan')
+
+        if pd.isna(decoded) or decoded <= 0:
+            return 100.0
+        if pd.isna(dropped):
+            return 100.0
+
+        pct = (dropped / decoded) * 100
+        if pd.isna(pct) or pct in (float('inf'), float('-inf')):
+            return 100.0
+
+        return pct
+
+    summary['dropped_frame_percentage'] = summary.apply(
+        _compute_dropped_frame_percentage, axis=1
+    )
 
     # Proxy-first scoring: prioritize fast startup and early stability.
     logging.info("Using proxy-optimized scoring (validation-first)")
