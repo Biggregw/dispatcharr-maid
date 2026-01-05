@@ -1647,7 +1647,13 @@ def order_streams_for_channel(
 
         return diversified
 
-    clean_records = [r for r in records if str(r.get('validation_result', 'pass')).lower() == 'pass']
+    def _is_validation_pass(record):
+        validation_result = record.get('validation_result')
+        if validation_result is None:
+            return False
+        return str(validation_result).lower() == 'pass'
+
+    clean_records = [r for r in records if _is_validation_pass(r)]
     failed_records = [r for r in records if r not in clean_records]
 
     ordered_clean = _resilience_order(clean_records) if clean_records else []
