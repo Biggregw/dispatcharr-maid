@@ -2,6 +2,7 @@ import pandas as pd
 
 from stream_analysis import (
     Config,
+    _determine_validation,
     _interleave_by_provider,
     order_streams_for_channel,
     score_streams,
@@ -44,15 +45,36 @@ def test_clean_stream_ranked_first(tmp_path):
             "channel_id": 1,
             "channel_group_id": 1,
             "stream_id": 102,
-            "stream_name": "buffered",
-            "stream_url": "http://example/buffered",
+            "stream_name": "hd_single_timeout",
+            "stream_url": "http://example/hd_single_timeout",
             "m3u_account": "provB",
-            "bitrate_kbps": 12000,
-            "frames_decoded": 100,
-            "frames_dropped": 10,
+            "bitrate_kbps": 9500,
+            "frames_decoded": 600,
+            "frames_dropped": 12,
             "fps": 25,
             "resolution": "1920x1080",
             "video_codec": "h264",
+            "audio_codec": "aac",
+            "interlaced_status": "N/A",
+            "status": "Timeout",
+            "err_decode": 0,
+            "err_discontinuity": 0,
+            "err_timeout": 1,
+        },
+        {
+            "channel_number": 1,
+            "channel_id": 1,
+            "channel_group_id": 1,
+            "stream_id": 103,
+            "stream_name": "hd_timeout_high_bitrate",
+            "stream_url": "http://example/hd_timeout_high_bitrate",
+            "m3u_account": "provC",
+            "bitrate_kbps": 18500,
+            "frames_decoded": 400,
+            "frames_dropped": 8,
+            "fps": 25,
+            "resolution": "1920x1080",
+            "video_codec": "h265",
             "audio_codec": "aac",
             "interlaced_status": "N/A",
             "status": "Timeout",
@@ -68,9 +90,12 @@ def test_clean_stream_ranked_first(tmp_path):
     scored = pd.read_csv(output_csv)
 
     # The clean stream should be first with a passing validation result.
-    assert list(scored["stream_id"]) == [101, 102]
+    assert list(scored["stream_id"])[:2] == [101, 102]
     assert scored.loc[0, "validation_result"].lower() == "pass"
-    assert scored.loc[1, "validation_result"].lower() == "fail"
+    assert scored.loc[1, "validation_result"].lower() == "pass"
+    # High bitrate + timeout should still fail validation to protect Tier-1.
+    assert scored.loc[2, "stream_id"] == 103
+    assert scored.loc[2, "validation_result"].lower() == "fail"
 
 
 def test_failed_stream_demotion_outweighs_bitrate():
@@ -147,6 +172,40 @@ def test_provider_diversification_keeps_failed_last():
     tier1, tier2 = order_streams_for_channel(records, resilience_mode=True, fallback_depth=2, similar_score_delta=5)
     assert tier1[:2] == [11, 12]
     assert tier2 == [13]
+
+
+def test_validation_allows_single_hd_timeout_with_sane_bitrate():
+    result, reason = _determine_validation(
+        {
+            "resolution": "1280x720",
+            "avg_bitrate_kbps": 9000,
+            "err_timeout": 1,
+            "err_decode": 0,
+            "err_discontinuity": 0,
+            "avg_frames_decoded": 1200,
+            "status": "timeout",
+        }
+    )
+
+    assert result == "pass"
+    assert reason == "clean"
+
+
+def test_validation_flags_high_bitrate_timeout():
+    result, reason = _determine_validation(
+        {
+            "resolution": "1920x1080",
+            "avg_bitrate_kbps": 18000,
+            "err_timeout": 1,
+            "err_decode": 0,
+            "err_discontinuity": 0,
+            "avg_frames_decoded": 1500,
+            "status": "timeout",
+        }
+    )
+
+    assert result == "fail"
+    assert "err_timeout_high_bitrate" in reason
 
 
 def test_legacy_scoring_orders_by_resolution_and_bitrate(tmp_path):
