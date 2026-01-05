@@ -49,9 +49,16 @@ class ProgressTracker:
             try:
                 with open(self.checkpoint_file, 'r') as f:
                     data = json.load(f)
-                    return set(data.get('processed_ids', []))
-            except:
-                return set()
+                    if isinstance(data, dict) and isinstance(data.get('processed_ids'), list):
+                        processed_ids = set()
+                        for sid in data.get('processed_ids', []):
+                            normalized = self._normalize_stream_id(sid)
+                            if normalized is not None:
+                                processed_ids.add(normalized)
+                        return processed_ids
+                    logging.warning("Invalid checkpoint structure in %s; ignoring checkpoint", self.checkpoint_file)
+            except Exception:
+                logging.warning("Failed to load checkpoint from %s; ignoring checkpoint", self.checkpoint_file)
         return set()
     
     def save_checkpoint(self):
@@ -73,7 +80,9 @@ class ProgressTracker:
             self.processed += 1
             if not success:
                 self.failed += 1
-            self.processed_ids.add(stream_id)
+            normalized_id = self._normalize_stream_id(stream_id)
+            if normalized_id is not None:
+                self.processed_ids.add(normalized_id)
             
             # Checkpoint every 10 streams
             if self.processed % 10 == 0:
@@ -81,7 +90,17 @@ class ProgressTracker:
     
     def is_processed(self, stream_id):
         """Check if stream was already processed"""
-        return stream_id in self.processed_ids
+        normalized_id = self._normalize_stream_id(stream_id)
+        return normalized_id in self.processed_ids if normalized_id is not None else False
+
+    def _normalize_stream_id(self, stream_id):
+        """Normalize stream IDs for consistent comparison"""
+        if stream_id is None:
+            return None
+        try:
+            return str(int(stream_id))
+        except (TypeError, ValueError):
+            return str(stream_id)
     
     def get_progress(self):
         """Get current progress statistics"""
