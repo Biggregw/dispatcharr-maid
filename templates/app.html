@@ -3380,6 +3380,7 @@
                         ? `${response.status} ${response.statusText}: ${text}`
                         : `${response.status} ${response.statusText}`);
                 }
+                const data = await response.json();
 
                 if (data.success) {
                     renderJobHistory(data.history);
