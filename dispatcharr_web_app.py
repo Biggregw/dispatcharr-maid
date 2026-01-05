@@ -2524,15 +2524,13 @@ def run_job_worker(job, api, config):
                     job.result_summary.update(summary)
                 else:
                     job.result_summary = summary
-        
     except Exception as e:
-        # Critical: without this, failures in background threads are "silent" in
-        # container logs, making Saved Pipeline issues hard to debug.
         logging.exception("Job failed (job_id=%s, job_type=%s)", getattr(job, 'job_id', None), getattr(job, 'job_type', None))
-        job.status = 'failed'
-        job.error = str(e)
-        job.completed_at = datetime.now().isoformat()
-    
+        with job_lock:
+            job.status = 'failed'
+            job.error = str(e)
+            job.completed_at = datetime.now().isoformat()
+
     finally:
         if task_name:
             logging.info(f"TASK_END: {task_name}")
