@@ -1883,8 +1883,8 @@ def _job_recompute_overall(job):
 
 def run_job_worker(job, api, config):
     """Background worker that executes the job"""
-    task_name = None
     try:
+        task_name = None
         job.status = 'running'
         _job_init_stages(job)
         
