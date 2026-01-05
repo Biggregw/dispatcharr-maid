@@ -1120,6 +1120,19 @@ def _determine_validation(row):
     except (ValueError, TypeError):
         bitrate = None
 
+    # Guard against "fake" high-resolution streams that advertise HD/UHD but
+    # ship sub-SD bitrates. Bitrate below the minimum for its resolution class
+    # is treated as a hard validation failure to keep Tier-1 honest.
+    min_bitrate_thresholds = {
+        'sd': 800,
+        'hd': 3500,
+        'uhd': 25000,
+    }
+    if bitrate is not None:
+        min_required = min_bitrate_thresholds.get(category)
+        if min_required is not None and bitrate < min_required:
+            reasons.append(f"err_bitrate_too_low_{category}")
+
     try:
         timeout_count = int(row.get('err_timeout', 0) or 0)
     except Exception:
