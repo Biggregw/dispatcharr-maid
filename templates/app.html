@@ -3356,19 +3356,33 @@
         
         // Load job history
         async function loadJobHistory() {
+            const loading = document.getElementById('history-loading');
+            const container = document.getElementById('history-container');
+            const list = document.getElementById('history-list');
+
             try {
-                const response = await fetch('/api/job-history');
+                if (list) list.innerHTML = '';
+
+                const response = await fetch('/api/job-history', { cache: 'no-store' });
                 const data = await response.json();
-                
+
                 if (data.success) {
                     renderJobHistory(data.history);
-                    document.getElementById('history-loading').classList.add('hidden');
-                    document.getElementById('history-container').classList.remove('hidden');
                     // Provider ranking is tied to the most recent analysis results.
                     loadProviderRanking();
+                } else if (list) {
+                    const msg = escapeHtml(data.error || 'Unable to load job history.');
+                    list.innerHTML = `<div class="alert alert-error">${msg}</div>`;
                 }
             } catch (error) {
                 console.error('Failed to load history:', error);
+                if (list) {
+                    const msg = escapeHtml(error?.message || String(error));
+                    list.innerHTML = `<div class="alert alert-error">Unable to load job history: ${msg}</div>`;
+                }
+            } finally {
+                if (loading) loading.classList.add('hidden');
+                if (container) container.classList.remove('hidden');
             }
         }
 
