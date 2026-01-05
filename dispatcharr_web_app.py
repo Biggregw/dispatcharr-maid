@@ -9,6 +9,7 @@ import json
 import html
 import hashlib
 import logging
+import math
 import os
 import re
 import shutil
@@ -1630,6 +1631,11 @@ def get_job_history():
         with open(history_file, 'r') as f:
             history = json.load(f)
 
+        if not isinstance(history, list):
+            history = []
+
+        history = _make_json_safe(history)
+
         # Optional retention: prune old jobs/workspaces.
         pruned, changed = _maybe_prune_job_history(history if isinstance(history, list) else [])
         if changed:
@@ -1641,6 +1647,19 @@ def get_job_history():
         return pruned if isinstance(pruned, list) else []
     except Exception:
         return []
+
+
+def _make_json_safe(value):
+    """Ensure values are JSON-serializable by replacing NaN/inf and coercing unsupported types."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (str, int, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        return [_make_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _make_json_safe(v) for k, v in value.items()}
+    return str(value)
 
 
 def _sanitize_result_summary(result_summary):
@@ -1657,13 +1676,11 @@ def _sanitize_result_summary(result_summary):
     }
 
     def _coerce(value):
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            return value
         if isinstance(value, (list, tuple)):
             return [_coerce(v) for v in value]
         if isinstance(value, dict):
             return {k: _coerce(v) for k, v in value.items() if k not in drop_keys}
-        return str(value)
+        return _make_json_safe(value)
 
     if isinstance(result_summary, dict):
         return {k: _coerce(v) for k, v in result_summary.items() if k not in drop_keys}
@@ -1687,17 +1704,17 @@ def save_job_to_history(job):
     """Save completed job to history"""
     history_file = 'logs/job_history.json'
     Path(history_file).parent.mkdir(parents=True, exist_ok=True)
-    
-    history = get_job_history()
-    
+
+    history = _make_json_safe(get_job_history())
+
     # Add this job
-    history.insert(0, job.to_dict())
-    
+    history.insert(0, _make_json_safe(job.to_dict()))
+
     # Keep only last 50 jobs
     history = history[:50]
-    
+
     with open(history_file, 'w') as f:
-        json.dump(history, f, indent=2)
+        json.dump(history, f, indent=2, allow_nan=False)
 
 
 def progress_callback(job, progress_data):
