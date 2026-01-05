@@ -1225,9 +1225,10 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
     )
 
     # Calculate dropped frame percentage
+    # Avoid division by zero: if no frames decoded, percentage is 0
     summary['dropped_frame_percentage'] = (
-        summary['avg_frames_dropped'] / summary['avg_frames_decoded'] * 100
-    ).fillna(0)
+        summary['avg_frames_dropped'] / summary['avg_frames_decoded'].replace(0, float('nan')) * 100
+    ).fillna(0).replace([float('inf'), float('-inf')], 0)
 
     # Proxy-first scoring: prioritize fast startup and early stability.
     logging.info("Using proxy-optimized scoring (validation-first)")
@@ -1335,9 +1336,10 @@ def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, up
         on='stream_id'
     )
 
+    # Avoid division by zero: if no frames decoded, percentage is 0
     summary['dropped_frame_percentage'] = (
-        summary['avg_frames_dropped'] / summary['avg_frames_decoded'] * 100
-    ).fillna(0)
+        summary['avg_frames_dropped'] / summary['avg_frames_decoded'].replace(0, float('nan')) * 100
+    ).fillna(0).replace([float('inf'), float('-inf')], 0)
 
     for col in ('err_decode', 'err_discontinuity', 'err_timeout'):
         summary[col] = pd.to_numeric(summary[col], errors='coerce').fillna(0)
