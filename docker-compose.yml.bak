@@ -2,8 +2,6 @@
 services:
   # Interactive Web Application (always running)
   dispatcharr-maid-web:
-    env_file:
-      - .env
     networks:
       - dispatcharr_default
     build: .
@@ -16,6 +14,7 @@ services:
       - ./logs:/app/logs         # Logs and checkpoints
       - ./jobs:/app/jobs         # Per-job workspaces (persist results)
       - ./config.yaml:/app/config.yaml  # Configuration
+      - ./.env:/app/.env         # Credentials
       # Optional: mount reverse-proxy access logs for provider usage stats
       # (e.g. Nginx Proxy Manager /data/logs). Update config.yaml usage.access_log_dir accordingly.
       # - /path/on/host/npm-data/logs:/app/npm_logs:ro
