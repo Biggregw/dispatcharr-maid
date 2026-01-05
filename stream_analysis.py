@@ -1677,8 +1677,14 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
     ordering_cfg = config.get('ordering') or {}
     scoring_cfg = config.get('scoring') or {}
     resilience_mode = bool(ordering_cfg.get('resilience_mode', False))
-    fallback_depth = int(ordering_cfg.get('fallback_depth', 3) or 3)
-    similar_score_delta = float(ordering_cfg.get('similar_score_delta', 5) or 5)
+    try:
+        fallback_depth = int(ordering_cfg.get('fallback_depth', 3) or 3)
+    except (ValueError, TypeError):
+        fallback_depth = 3
+    try:
+        similar_score_delta = float(ordering_cfg.get('similar_score_delta', 5) or 5)
+    except (ValueError, TypeError):
+        similar_score_delta = 5.0
     validation_dominant = bool(scoring_cfg.get('proxy_first', scoring_cfg.get('proxy_startup_bias', False)))
 
     # Apply filters
