@@ -2527,6 +2527,18 @@ def run_job_worker(job, api, config):
     finally:
         if task_name:
             logging.info(f"TASK_END: {task_name}")
+        # Ensure jobs that exit early still record completion timestamps/progress
+        if not getattr(job, 'completed_at', None):
+            job.completed_at = datetime.now().isoformat()
+        if getattr(job, 'status', None) in {'completed', 'failed', 'cancelled'}:
+            try:
+                # If the job stopped early we still want the UI to treat it as finished.
+                if not isinstance(job.overall_progress, (int, float)) or job.overall_progress < 100:
+                    job.overall_progress = 100.0
+            except Exception:
+                job.overall_progress = 100.0
+            if not job.current_step:
+                job.current_step = job.status.capitalize()
         # Save to history
         save_job_to_history(job)
 
