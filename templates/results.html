@@ -284,11 +284,6 @@
             </div>
         </div>
 
-        <div class="card" id="run-meta-card" style="display:none;">
-            <h2>🧾 Run Details</h2>
-            <div id="run-meta-body" class="muted small"></div>
-        </div>
-
         <div class="card" id="refresh-breakdown-card" style="display:none;">
             <h2>🔄 Refresh Stream Changes</h2>
             <div class="muted small">Comparison of the channel before and after refresh. Status is derived from the original list and the final replacement list.</div>
@@ -306,6 +301,11 @@
                     <tbody id="refresh-change-tbody"></tbody>
                 </table>
             </div>
+        </div>
+
+        <div class="card" id="run-meta-card" style="display:none;">
+            <h2>🧾 Run Details</h2>
+            <div id="run-meta-body" class="muted small"></div>
         </div>
     </div>
 
@@ -516,14 +516,6 @@
                 if (!finalIds.has(id)) {
                     rows.push({ ...s, status: 'Removed' });
                 }
-            });
-
-            rows.sort((a, b) => {
-                const order = a.status === b.status ? 0 : (a.status === 'Removed' ? 1 : -1);
-                if (order !== 0) return order;
-                const nameA = (a?.name || a?.stream_name || '').toString().toLowerCase();
-                const nameB = (b?.name || b?.stream_name || '').toString().toLowerCase();
-                return nameA.localeCompare(nameB);
             });
 
             if (!rows.length) {
