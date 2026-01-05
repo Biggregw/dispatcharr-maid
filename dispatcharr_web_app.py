@@ -1883,8 +1883,8 @@ def _job_recompute_overall(job):
 
 def run_job_worker(job, api, config):
     """Background worker that executes the job"""
-    task_name = None
     try:
+        task_name = None
         job.status = 'running'
         _job_init_stages(job)
         
@@ -2510,11 +2510,12 @@ def run_job_worker(job, api, config):
             }
         
         # Job completed successfully
-        job.status = 'completed' if not job.cancel_requested else 'cancelled'
-        job.current_step = 'Completed' if not job.cancel_requested else 'Cancelled'
-        job.completed_at = datetime.now().isoformat()
-        if not job.cancel_requested:
-            job.overall_progress = 100.0
+        with job_lock:
+            job.status = 'completed' if not job.cancel_requested else 'cancelled'
+            job.current_step = 'Completed' if not job.cancel_requested else 'Cancelled'
+            job.completed_at = datetime.now().isoformat()
+            if not job.cancel_requested:
+                job.overall_progress = 100.0
         
         # Generate analysis summary when analysis ran
         if _job_ran_analysis(job.job_type):
@@ -2524,12 +2525,12 @@ def run_job_worker(job, api, config):
                     job.result_summary.update(summary)
                 else:
                     job.result_summary = summary
+
     except Exception as e:
         logging.exception("Job failed (job_id=%s, job_type=%s)", getattr(job, 'job_id', None), getattr(job, 'job_type', None))
-        with job_lock:
-            job.status = 'failed'
-            job.error = str(e)
-            job.completed_at = datetime.now().isoformat()
+        job.status = 'failed'
+        job.error = str(e)
+        job.completed_at = datetime.now().isoformat()
 
     finally:
         if task_name:
@@ -4109,15 +4110,15 @@ def api_cancel_job(job_id):
     """Cancel a running job"""
     with job_lock:
         job = jobs.get(job_id)
-    
-    if not job:
-        return jsonify({'success': False, 'error': 'Job not found'}), 404
-    
-    if job.status == 'running':
-        job.cancel_requested = True
-        return jsonify({'success': True, 'message': 'Cancellation requested'})
-    else:
-        return jsonify({'success': False, 'error': 'Job is not running'}), 400
+
+        if not job:
+            return jsonify({'success': False, 'error': 'Job not found'}), 404
+
+        if job.status == 'running':
+            job.cancel_requested = True
+            return jsonify({'success': True, 'message': 'Cancellation requested'})
+        else:
+            return jsonify({'success': False, 'error': 'Job is not running'}), 400
 
 
 @app.route('/api/jobs')
