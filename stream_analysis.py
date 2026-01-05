@@ -1419,10 +1419,9 @@ def order_streams_for_channel(
 ):
     """Order streams so proxy playback starts on the most stable option.
 
-    Validation failures are always demoted behind clean streams when
-    validation_dominant is True. Provider diversification is applied only
-    within the validated set so that a failed stream can never leapfrog a
-    stable one.
+    Tier 1 contains only validation-passing streams. Tier 2 is reserved for
+    failed/low-quality streams and is only returned when Tier 1 is empty.
+    Provider diversification is applied exclusively within Tier 1.
     """
 
     provider_fn = provider_fn or (lambda r: r.get('m3u_account_name') or r.get('m3u_account') or 'unknown_provider')
@@ -1563,22 +1562,16 @@ def order_streams_for_channel(
 
         return diversified
 
-    if validation_dominant:
-        clean_records = [r for r in records if str(r.get('validation_result', 'pass')).lower() == 'pass']
-        failed_records = [r for r in records if r not in clean_records]
+    clean_records = [r for r in records if str(r.get('validation_result', 'pass')).lower() == 'pass']
+    failed_records = [r for r in records if r not in clean_records]
 
-        ordered_clean = _resilience_order(clean_records) if clean_records else []
-        ordered_failed = _interleave_by_provider(failed_records, provider_fn, _score) if failed_records else []
+    ordered_clean = _resilience_order(clean_records) if clean_records else []
+    ordered_failed = sorted(failed_records, key=_score, reverse=True) if failed_records else []
 
-        if clean_records:
-            ordered = ordered_clean + ordered_failed
-        else:
-            # When everything failed validation, keep legacy behaviour for ordering.
-            ordered = _resilience_order(records)
-    else:
-        ordered = _resilience_order(records)
+    tier1_ids = [r.get('stream_id') for r in ordered_clean]
+    tier2_ids = [r.get('stream_id') for r in ordered_failed]
 
-    return [r.get('stream_id') for r in ordered]
+    return tier1_ids, tier2_ids
 
 
 def reorder_streams(api, config, input_csv=None, collect_summary=False):
@@ -1655,7 +1648,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
         return row.get('m3u_account_name') or row.get('m3u_account') or 'unknown_provider'
 
     for channel_id, group in grouped:
-        sorted_stream_ids = order_streams_for_channel(
+        tier1_stream_ids, tier2_stream_ids = order_streams_for_channel(
             group.to_dict('records'),
             resilience_mode=resilience_mode,
             fallback_depth=fallback_depth,
@@ -1664,6 +1657,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
             validation_dominant=validation_dominant,
         )
 
+        playback_order = tier1_stream_ids if tier1_stream_ids else tier2_stream_ids
+
         # Get current streams from API
         current_streams = api.fetch_channel_streams(channel_id)
         if not current_streams:
@@ -1671,7 +1666,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
             continue
         
         current_ids_set = {s['id'] for s in current_streams}
-        validated_ids = [sid for sid in sorted_stream_ids if sid in current_ids_set]
+        validated_ids = [sid for sid in playback_order if sid in current_ids_set]
 
         # Add any new streams not in CSV
         csv_ids_set = set(sorted_stream_ids)
@@ -1697,13 +1692,30 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
                 'channel_number': channel_meta.get('channel_number'),
                 'channel_name': channel_meta.get('name'),
                 'final_order': [],
+                'tier2_order': [],
                 'excluded_streams': []
             }
 
-            final_set = set(final_ids)
-            for idx, sid in enumerate(final_ids, start=1):
+            final_set = set(tier1_stream_ids)
+            for idx, sid in enumerate(tier1_stream_ids, start=1):
                 record = record_lookup.get(sid, {})
                 channel_entry['final_order'].append({
+                    'order': idx,
+                    'stream_id': sid,
+                    'stream_name': record.get('stream_name'),
+                    'provider_id': record.get('m3u_account'),
+                    'provider_name': record.get('m3u_account_name'),
+                    'resolution': record.get('resolution'),
+                    'video_codec': record.get('video_codec'),
+                    'bitrate_kbps': record.get('avg_bitrate_kbps'),
+                    'validation_result': record.get('validation_result') or record.get('status'),
+                    'validation_reason': record.get('validation_reason'),
+                    'final_score': record.get('ordering_score') if record.get('ordering_score') not in (None, 'N/A') else record.get('score')
+                })
+
+            for idx, sid in enumerate(tier2_stream_ids, start=1):
+                record = record_lookup.get(sid, {})
+                channel_entry['tier2_order'].append({
                     'order': idx,
                     'stream_id': sid,
                     'stream_name': record.get('stream_name'),
@@ -1738,6 +1750,9 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
                     'bitrate_kbps': record.get('avg_bitrate_kbps'),
                     'reason': reason
                 })
+
+            if not tier1_stream_ids:
+                channel_entry['tier1_empty'] = True
 
         if not final_ids:
             logging.warning(f"No valid streams for channel {channel_id}")

@@ -90,8 +90,9 @@ def test_failed_stream_demotion_outweighs_bitrate():
         },
     ]
 
-    ordered = order_streams_for_channel(records, resilience_mode=False, fallback_depth=2, similar_score_delta=5)
-    assert ordered == [1, 2]
+    tier1, tier2 = order_streams_for_channel(records, resilience_mode=False, fallback_depth=2, similar_score_delta=5)
+    assert tier1 == [1]
+    assert tier2 == [2]
 
 
 def test_legacy_ordering_ignores_validation_dominance():
@@ -110,14 +111,15 @@ def test_legacy_ordering_ignores_validation_dominance():
         },
     ]
 
-    ordered = order_streams_for_channel(
+    tier1, tier2 = order_streams_for_channel(
         records,
         resilience_mode=False,
         fallback_depth=2,
         similar_score_delta=5,
         validation_dominant=False,
     )
-    assert ordered == [32, 31]
+    assert tier1 == [31]
+    assert tier2 == [32]
 
 
 def test_provider_diversification_keeps_failed_last():
@@ -142,9 +144,9 @@ def test_provider_diversification_keeps_failed_last():
         },
     ]
 
-    ordered = order_streams_for_channel(records, resilience_mode=True, fallback_depth=2, similar_score_delta=5)
-    assert ordered[:2] == [11, 12]
-    assert ordered[-1] == 13
+    tier1, tier2 = order_streams_for_channel(records, resilience_mode=True, fallback_depth=2, similar_score_delta=5)
+    assert tier1[:2] == [11, 12]
+    assert tier2 == [13]
 
 
 def test_legacy_scoring_orders_by_resolution_and_bitrate(tmp_path):
@@ -215,7 +217,8 @@ def test_all_failed_follows_legacy_provider_interleave():
         {"stream_id": 23, "m3u_account": "provA", "ordering_score": 150, "validation_result": "fail"},
     ]
 
-    expected = [r["stream_id"] for r in _interleave_by_provider(records, lambda r: r.get("m3u_account"), lambda r: r.get("ordering_score"))]
-    ordered = order_streams_for_channel(records, resilience_mode=False, fallback_depth=2, similar_score_delta=5)
+    expected = [r["stream_id"] for r in sorted(records, key=lambda r: r.get("ordering_score"), reverse=True)]
+    tier1, tier2 = order_streams_for_channel(records, resilience_mode=False, fallback_depth=2, similar_score_delta=5)
 
-    assert ordered == expected
+    assert tier1 == []
+    assert tier2 == expected
