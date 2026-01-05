@@ -208,6 +208,74 @@ def test_validation_flags_high_bitrate_timeout():
     assert "err_timeout_high_bitrate" in reason
 
 
+def test_validation_rejects_fake_hd_bitrate():
+    result, reason = _determine_validation(
+        {
+            "resolution": "1920x1080",
+            "avg_bitrate_kbps": 700,
+            "err_timeout": 0,
+            "err_decode": 0,
+            "err_discontinuity": 0,
+            "avg_frames_decoded": 1500,
+            "status": "ok",
+        }
+    )
+
+    assert result == "fail"
+    assert "err_bitrate_too_low_hd" in reason
+
+
+def test_validation_allows_sane_hd_bitrate():
+    result, reason = _determine_validation(
+        {
+            "resolution": "1920x1080",
+            "avg_bitrate_kbps": 6000,
+            "err_timeout": 0,
+            "err_decode": 0,
+            "err_discontinuity": 0,
+            "avg_frames_decoded": 1500,
+            "status": "ok",
+        }
+    )
+
+    assert result == "pass"
+    assert reason == "clean"
+
+
+def test_validation_allows_sd_with_sane_bitrate():
+    result, reason = _determine_validation(
+        {
+            "resolution": "704x480",
+            "avg_bitrate_kbps": 900,
+            "err_timeout": 0,
+            "err_decode": 0,
+            "err_discontinuity": 0,
+            "avg_frames_decoded": 1200,
+            "status": "ok",
+        }
+    )
+
+    assert result == "pass"
+    assert reason == "clean"
+
+
+def test_validation_timeout_fails_when_bitrate_unsafely_low():
+    result, reason = _determine_validation(
+        {
+            "resolution": "1280x720",
+            "avg_bitrate_kbps": 1200,
+            "err_timeout": 1,
+            "err_decode": 0,
+            "err_discontinuity": 0,
+            "avg_frames_decoded": 900,
+            "status": "timeout",
+        }
+    )
+
+    assert result == "fail"
+    assert "err_bitrate_too_low_hd" in reason
+
+
 def test_legacy_scoring_orders_by_resolution_and_bitrate(tmp_path):
     cfg = _make_config(tmp_path)
     cfg.set("scoring", "proxy_first", False)
