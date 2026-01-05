@@ -1568,6 +1568,9 @@ def order_streams_for_channel(
     ordered_clean = _resilience_order(clean_records) if clean_records else []
     ordered_failed = sorted(failed_records, key=_score, reverse=True) if failed_records else []
 
+    # Tier 2 should only provide a small safety net to avoid empty channels
+    ordered_failed = ordered_failed[:3]
+
     tier1_ids = [r.get('stream_id') for r in ordered_clean]
     tier2_ids = [r.get('stream_id') for r in ordered_failed]
 
@@ -1623,6 +1626,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
     df['stream_id'] = df['stream_id'].astype(int)
     df['channel_id'] = df['channel_id'].astype(int)
 
+    sorted_stream_ids = df['stream_id'].tolist()
+
     grouped = df.groupby("channel_id")
 
     summary = {'channels': []} if collect_summary else None
@@ -1668,10 +1673,13 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
         current_ids_set = {s['id'] for s in current_streams}
         validated_ids = [sid for sid in playback_order if sid in current_ids_set]
 
-        # Add any new streams not in CSV
+        # Add any new streams not in CSV only when Tier 1 is empty
         csv_ids_set = set(sorted_stream_ids)
         new_ids = [sid for sid in current_ids_set if sid not in csv_ids_set]
-        final_ids = validated_ids + new_ids
+        if tier1_stream_ids:
+            final_ids = validated_ids
+        else:
+            final_ids = validated_ids + new_ids
 
         channel_entry = None
         if collect_summary:
