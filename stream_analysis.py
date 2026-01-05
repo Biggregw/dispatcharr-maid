@@ -1049,6 +1049,39 @@ def _calculate_proxy_stability_score(dropped_frame_pct, errors):
     return max(stability, 0)
 
 
+def _resolution_category(resolution_value):
+    """Return a coarse resolution bucket used for validation strictness.
+
+    - sd:    resolutions up to PAL/NTSC (<= 720x576)
+    - hd:    720p/1080p class streams that can tolerate a brief hiccup
+    - uhd:   1440p/4K and above remain strict
+    """
+    if not resolution_value:
+        return "unknown"
+
+    resolution = str(resolution_value).lower()
+    numbers = [p for p in re.split(r"[^0-9]+", resolution) if p]
+    if not numbers:
+        return "unknown"
+
+    try:
+        if len(numbers) >= 2:
+            width, height = int(numbers[0]), int(numbers[1])
+        else:
+            width, height = 0, int(numbers[0])
+    except ValueError:
+        return "unknown"
+
+    height_dim = height or max(width, height)
+    if width and height and width <= 720 and height <= 576:
+        return "sd"
+    if height_dim >= 1440:
+        return "uhd"
+    if height_dim >= 720:
+        return "hd"
+    return "unknown"
+
+
 def _determine_validation(row):
     """Classify validation outcome before scoring.
 
@@ -1058,10 +1091,9 @@ def _determine_validation(row):
     reasons = []
 
     status = str(row.get('status', '')).strip().lower()
-    if status and status != 'ok':
-        reasons.append(f"status:{status}")
+    status_reason = f"status:{status}" if status and status != 'ok' else None
 
-    for err_key in ('err_decode', 'err_discontinuity', 'err_timeout'):
+    for err_key in ('err_decode', 'err_discontinuity'):
         err_val = row.get(err_key)
         try:
             has_error = bool(int(err_val))
@@ -1076,6 +1108,44 @@ def _determine_validation(row):
         frames_decoded = 0
     if frames_decoded == 0:
         reasons.append('no_frames_decoded')
+
+    # Resolution-aware timeout handling: HD can tolerate a single transient
+    # timeout when paired with a sane bitrate. This keeps Tier-1 available for
+    # realistically watchable HD while preserving strictness elsewhere.
+    category = _resolution_category(row.get('resolution'))
+
+    bitrate = row.get('avg_bitrate_kbps', row.get('bitrate_kbps'))
+    try:
+        bitrate = float(bitrate)
+    except (ValueError, TypeError):
+        bitrate = None
+
+    try:
+        timeout_count = int(row.get('err_timeout', 0) or 0)
+    except Exception:
+        timeout_count = 0
+    if status == 'timeout' and timeout_count == 0:
+        timeout_count = 1
+
+    timeout_allowance = 1 if category == 'hd' else 0
+    bitrate_upper_bounds = {
+        'sd': 6000,
+        'hd': 15000,
+        'uhd': 20000,
+    }
+    bitrate_upper = bitrate_upper_bounds.get(category, 12000)
+
+    timeout_reason = None
+    if timeout_count > timeout_allowance:
+        timeout_reason = 'err_timeout_excess'
+    elif timeout_count > 0 and bitrate is not None and bitrate > bitrate_upper:
+        timeout_reason = 'err_timeout_high_bitrate'
+
+    if timeout_reason:
+        reasons.append(timeout_reason)
+    elif status_reason and status != 'timeout':
+        # Non-timeout status failures stay strict.
+        reasons.append(status_reason)
 
     if reasons:
         return 'fail', ';'.join(sorted(set(reasons)))
