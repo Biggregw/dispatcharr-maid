@@ -1917,6 +1917,7 @@
 
         // Saved job selection
         let savedPatterns = [];
+        let skippedSavedPatterns = 0;
 
         async function loadSavedPatterns() {
             try {
@@ -1925,16 +1926,21 @@
                 const data = await resp.json();
                 if (!data.success) {
                     showSavedPatternStatus(data.error || 'Unable to load saved patterns.', true);
+                    skippedSavedPatterns = 0;
                     savedPatterns = [];
                     renderSavedPatterns();
                     return;
                 }
                 const presets = Array.isArray(data.presets) ? data.presets : [];
+                skippedSavedPatterns = 0;
                 // Only show saved jobs that can drive the workflow (must have groups saved).
-                savedPatterns = presets.filter(p => Array.isArray(p?.groups) && p.groups.length > 0);
+                const usablePresets = presets.filter(p => Array.isArray(p?.groups) && p.groups.length > 0);
+                skippedSavedPatterns = presets.length - usablePresets.length;
+                savedPatterns = usablePresets;
                 renderSavedPatterns();
             } catch (e) {
                 showSavedPatternStatus(`Unable to load saved patterns: ${e.message}`, true);
+                skippedSavedPatterns = 0;
                 savedPatterns = [];
                 renderSavedPatterns();
             }
@@ -1958,6 +1964,9 @@
                     quickSelect.value = '';
                     quickSelect.onchange = () => onQuickSavedPatternSelected();
                 }
+                if (skippedSavedPatterns > 0) {
+                    showSavedPatternStatus('Some saved jobs are missing their group selections. Re-open and save them again (no need to delete).', false);
+                }
                 onQuickSavedPatternSelected();
                 onSavedPatternSelected();
                 // If there was no explicit error shown, show a helpful hint.
@@ -1968,7 +1977,11 @@
                 return;
             }
 
-            hideSavedPatternStatus();
+            if (skippedSavedPatterns > 0) {
+                showSavedPatternStatus('Some saved jobs are missing their group selections. Re-open and save them again (no need to delete).', false);
+            } else {
+                hideSavedPatternStatus();
+            }
             const options = '<option value="">— Select saved job —</option>' + savedPatterns.map(p => {
                 const name = p.name || 'Unnamed';
                 const created = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
@@ -2017,6 +2030,21 @@
             if (quickSelect) quickSelect.value = patternId || '';
             onQuickSavedPatternSelected();
             onSavedPatternSelected();
+            applySavedPatternSelection(patternId);
+        }
+
+        function applySavedPatternSelection(patternId) {
+            const pattern = savedPatterns.find(p => String(p?.id) === String(patternId));
+            if (!pattern) return;
+
+            if (Array.isArray(pattern.groups) && pattern.groups.length > 0) {
+                selectedGroups = [...pattern.groups];
+                renderGroups();
+                updateStep1Button();
+
+                selectedChannels = Array.isArray(pattern.channels) ? [...pattern.channels] : null;
+                loadChannels(selectedChannels);
+            }
         }
 
         async function onSavedPatternSelected() {
@@ -2245,9 +2273,9 @@
             // Load channels
             await loadChannels();
         }
-        
+
         // Load channels for selected groups
-        async function loadChannels() {
+        async function loadChannels(prefillSelectedChannels = selectedChannels) {
             try {
                 document.getElementById('channel-loading').classList.remove('hidden');
                 document.getElementById('channel-container').classList.add('hidden');
@@ -2257,11 +2285,12 @@
                 
                 if (data.success) {
                     allChannels = data.channels;
-                    renderChannels();
+                    renderChannels(prefillSelectedChannels);
                     updateChannelCounts();
-                    
+
                     document.getElementById('channel-loading').classList.add('hidden');
                     document.getElementById('channel-container').classList.remove('hidden');
+                    updateChannelSelection();
                 } else {
                     showError('channel-error', data.error);
                 }
@@ -2269,12 +2298,16 @@
                 showError('channel-error', 'Failed to load channels: ' + error.message);
             }
         }
-        
+
         // Render channels
-        function renderChannels() {
+        function renderChannels(prefillSelectedChannels = null) {
             const container = document.getElementById('channel-container');
             container.innerHTML = '';
-            
+
+            const selectedChannelSet = Array.isArray(prefillSelectedChannels)
+                ? new Set(prefillSelectedChannels.map(ch => Number(ch)))
+                : null;
+
             // Render each group
             for (const [groupId, channels] of Object.entries(allChannels)) {
                 const group = allGroups.find(g => g.id == groupId);
@@ -2295,7 +2328,7 @@
                     <div class="channel-list" id="channel-list-${groupId}">
                         ${channels.map(ch => `
                             <div class="channel-item" data-channel-id="${ch.id}" data-channel-name="${ch.name.toLowerCase()}" data-channel-number="${ch.channel_number}" data-base-search-text="${ch.base_search_text || ch.name}">
-                                <input type="checkbox" id="channel-${ch.id}" onchange="updateChannelSelection()">
+                                <input type="checkbox" id="channel-${ch.id}" onchange="updateChannelSelection()" ${selectedChannelSet?.has(Number(ch.id)) ? 'checked' : ''}>
                                 <span class="channel-number">${ch.channel_number}</span>
                                 <span class="channel-name">${ch.name}</span>
                             </div>
