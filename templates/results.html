@@ -110,26 +110,42 @@
             <div id="capacity-warning" class="capacity-warning" style="display:none;"></div>
         </div>
 
-        <div class="card" id="run-meta-card" style="display:none;">
-            <h2>🧾 Run Details</h2>
-            <div id="run-meta-body" class="muted small"></div>
-        </div>
-
-        <div class="card" id="refresh-breakdown-card" style="display:none;">
-            <h2>🔄 Refresh Stream Changes</h2>
-            <div class="muted small">Comparison of the channel before and after refresh. Status is derived from the original list and the final replacement list.</div>
+        <div class="card" id="ordering-visibility-card" style="display:none;">
+            <h2>✅ Final Channel Stream Order</h2>
+            <div class="muted small">Displays the exact order written back to Dispatcharr and the streams that were excluded with their reasons.</div>
             <div class="stream-table-wrap">
-                <table id="refresh-change-table">
+                <table id="final-order-table">
                     <thead>
                         <tr>
-                            <th>Status</th>
+                            <th>Channel</th>
+                            <th>#</th>
+                            <th>Stream</th>
+                            <th>Provider</th>
+                            <th>Resolution</th>
+                            <th>Codec</th>
+                            <th>Bitrate</th>
+                            <th>Validation</th>
+                            <th>Final Score</th>
+                        </tr>
+                    </thead>
+                    <tbody id="final-order-tbody"></tbody>
+                </table>
+            </div>
+
+            <h3 style="margin-top: 20px;">🚫 Excluded Streams</h3>
+            <div class="stream-table-wrap">
+                <table id="excluded-stream-table">
+                    <thead>
+                        <tr>
+                            <th>Channel</th>
                             <th>Stream</th>
                             <th>Provider</th>
                             <th>Resolution</th>
                             <th>Bitrate</th>
+                            <th>Reason</th>
                         </tr>
                     </thead>
-                    <tbody id="refresh-change-tbody"></tbody>
+                    <tbody id="excluded-stream-tbody"></tbody>
                 </table>
             </div>
         </div>
@@ -268,42 +284,26 @@
             </div>
         </div>
 
-        <div class="card" id="ordering-visibility-card" style="display:none;">
-            <h2>✅ Final Channel Stream Order</h2>
-            <div class="muted small">Displays the exact order written back to Dispatcharr and the streams that were excluded with their reasons.</div>
-            <div class="stream-table-wrap">
-                <table id="final-order-table">
-                    <thead>
-                        <tr>
-                            <th>Channel</th>
-                            <th>#</th>
-                            <th>Stream</th>
-                            <th>Provider</th>
-                            <th>Resolution</th>
-                            <th>Codec</th>
-                            <th>Bitrate</th>
-                            <th>Validation</th>
-                            <th>Final Score</th>
-                        </tr>
-                    </thead>
-                    <tbody id="final-order-tbody"></tbody>
-                </table>
-            </div>
+        <div class="card" id="run-meta-card" style="display:none;">
+            <h2>🧾 Run Details</h2>
+            <div id="run-meta-body" class="muted small"></div>
+        </div>
 
-            <h3 style="margin-top: 20px;">🚫 Excluded Streams</h3>
+        <div class="card" id="refresh-breakdown-card" style="display:none;">
+            <h2>🔄 Refresh Stream Changes</h2>
+            <div class="muted small">Comparison of the channel before and after refresh. Status is derived from the original list and the final replacement list.</div>
             <div class="stream-table-wrap">
-                <table id="excluded-stream-table">
+                <table id="refresh-change-table">
                     <thead>
                         <tr>
-                            <th>Channel</th>
+                            <th>Status</th>
                             <th>Stream</th>
                             <th>Provider</th>
                             <th>Resolution</th>
                             <th>Bitrate</th>
-                            <th>Reason</th>
                         </tr>
                     </thead>
-                    <tbody id="excluded-stream-tbody"></tbody>
+                    <tbody id="refresh-change-tbody"></tbody>
                 </table>
             </div>
         </div>
