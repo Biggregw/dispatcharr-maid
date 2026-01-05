@@ -834,7 +834,10 @@ def analyze_streams(config, input_csv=None,
         return analyzed_count
     
     # Prune recently analyzed streams
-    days_to_keep = filters.get('stream_last_measured_days', 7)
+    try:
+        days_to_keep = int(filters.get('stream_last_measured_days', 7))
+    except (ValueError, TypeError):
+        days_to_keep = 7
     if not force_full_analysis and days_to_keep > 0 and os.path.exists(output_csv):
         try:
             df_processed = pd.read_csv(output_csv)
@@ -1553,6 +1556,16 @@ def order_streams_for_channel(
     """
 
     provider_fn = provider_fn or (lambda r: r.get('m3u_account_name') or r.get('m3u_account') or 'unknown_provider')
+
+    try:
+        fallback_depth = int(fallback_depth)
+    except (ValueError, TypeError):
+        fallback_depth = 3
+
+    try:
+        similar_score_delta = float(similar_score_delta)
+    except (ValueError, TypeError):
+        similar_score_delta = 5.0
 
     if not records:
         return []
