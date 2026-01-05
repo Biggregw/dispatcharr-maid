@@ -2510,11 +2510,12 @@ def run_job_worker(job, api, config):
             }
         
         # Job completed successfully
-        job.status = 'completed' if not job.cancel_requested else 'cancelled'
-        job.current_step = 'Completed' if not job.cancel_requested else 'Cancelled'
-        job.completed_at = datetime.now().isoformat()
-        if not job.cancel_requested:
-            job.overall_progress = 100.0
+        with job_lock:
+            job.status = 'completed' if not job.cancel_requested else 'cancelled'
+            job.current_step = 'Completed' if not job.cancel_requested else 'Cancelled'
+            job.completed_at = datetime.now().isoformat()
+            if not job.cancel_requested:
+                job.overall_progress = 100.0
         
         # Generate analysis summary when analysis ran
         if _job_ran_analysis(job.job_type):
