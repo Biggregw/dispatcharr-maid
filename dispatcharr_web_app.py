@@ -2036,7 +2036,10 @@ def run_job_worker(job, api, config):
 
                 job.current_step = 'Quality: analyzing streams (forcing fresh analysis)...'
                 _job_advance_stage(job)  # analyze
-                original_days = config.get('filters', 'stream_last_measured_days', 1)
+                try:
+                    original_days = int(config.get('filters', 'stream_last_measured_days', 1))
+                except (ValueError, TypeError):
+                    original_days = 1
                 config.set('filters', 'stream_last_measured_days', 0)
                 config.save()
 
@@ -2152,7 +2155,10 @@ def run_job_worker(job, api, config):
             job.current_step = 'Analyzing streams (forcing fresh analysis)...'
             _job_advance_stage(job)  # analyze
 
-            original_days = config.get('filters', 'stream_last_measured_days', 1)
+            try:
+                original_days = int(config.get('filters', 'stream_last_measured_days', 1))
+            except (ValueError, TypeError):
+                original_days = 1
             config.set('filters', 'stream_last_measured_days', 0)
             config.save()
 
@@ -2280,7 +2286,10 @@ def run_job_worker(job, api, config):
             _job_advance_stage(job)  # analyze
             
             # Save original setting and force re-analysis
-            original_days = config.get('filters', 'stream_last_measured_days', 1)
+            try:
+                original_days = int(config.get('filters', 'stream_last_measured_days', 1))
+            except (ValueError, TypeError):
+                original_days = 1
             config.set('filters', 'stream_last_measured_days', 0)
             config.save()
             
@@ -2696,7 +2705,7 @@ def cleanup_streams_by_provider(
                 return stats, plan_rows
             return stats
 
-        provider_map_budget_s = int(os.getenv('DISPATCHARR_CLEANUP_PROVIDER_MAP_MAX_SECONDS', '90') or 90)
+        provider_map_budget_s = max(1, int(os.getenv('DISPATCHARR_CLEANUP_PROVIDER_MAP_MAX_SECONDS', '90') or 90))
         provider_map_start = time.time()
 
         # Build a scoped list of stream IDs we actually need to map.
