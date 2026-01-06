@@ -15,6 +15,11 @@
         .nav-buttons { text-align: center; margin-bottom: 20px; }
         .btn { padding: 12px 30px; border: none; border-radius: 8px; font-size: 1em; font-weight: 600; cursor: pointer; background: white; color: #667eea; margin: 0 10px; transition: all 0.3s; text-decoration: none; display: inline-block; }
         .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
+        .top-bar { display:flex; justify-content: space-between; align-items:center; margin-bottom:12px; gap:12px; flex-wrap:wrap; }
+        .auth-banner { flex:1; background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:10px 12px; border-radius:10px; font-weight:700; }
+        .session-info { display:flex; align-items:center; gap:10px; background:#eef2ff; border:1px solid #c7d2fe; color:#3730a3; padding:10px 12px; border-radius:10px; font-weight:700; }
+        .logout-form { margin:0; }
+        .logout-btn { padding:8px 14px; border-radius:8px; border:none; background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); color:#fff; font-weight:700; cursor:pointer; }
         .card { background: white; border-radius: 15px; padding: 25px; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
         .card h2 { color: #667eea; margin-bottom: 20px; font-size: 1.5em; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
@@ -70,6 +75,16 @@
 </head>
 <body>
     <div class="container">
+        <div class="top-bar">
+            {% if auth_disabled %}
+                <div class="auth-banner">Authentication is disabled. This instance is running insecurely.</div>
+            {% else %}
+                <div class="session-info">Signed in as <strong>{{ current_user }}</strong></div>
+                <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+                    <button class="logout-btn" type="submit">Logout</button>
+                </form>
+            {% endif %}
+        </div>
         <div class="header">
             <div class="brand">
                 <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="Dispatcharr Maid">

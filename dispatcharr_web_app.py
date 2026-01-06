@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import shutil
 import sys
 import threading
@@ -21,11 +22,13 @@ import fcntl
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
+from urllib.parse import urlparse
 
 import pandas as pd
 import yaml
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, redirect, url_for, make_response, g
 from flask_cors import CORS
+import requests
 
 from api_utils import DispatcharrAPI
 from provider_data import refresh_provider_data
@@ -57,9 +60,44 @@ _dispatcharr_auth_state = {
     'last_error': None
 }
 
+# Authentication and session configuration
+AUTH_DISABLED = str(os.getenv('AUTH_DISABLED', '')).lower() == 'true'
+SESSION_TTL_SECONDS = 60 * 60 * 12  # 12 hours
+_SESSION_COOKIE_NAME = 'maid_session'
+_sessions = {}
+
+
+def _load_auth_config():
+    """Validate mandatory auth configuration when authentication is enabled."""
+    base_url = os.getenv('DISPATCHARR_BASE_URL', '').rstrip('/')
+    validate_endpoint = os.getenv('DISPATCHARR_AUTH_VALIDATE_ENDPOINT', '')
+
+    if AUTH_DISABLED:
+        return None, None
+
+    if not base_url or not validate_endpoint:
+        raise RuntimeError(
+            'Authentication is enabled but DISPATCHARR_BASE_URL or '
+            'DISPATCHARR_AUTH_VALIDATE_ENDPOINT is missing.'
+        )
+
+    if not validate_endpoint.startswith('/'):
+        validate_endpoint = '/' + validate_endpoint
+
+    return base_url, validate_endpoint
+
+
+_AUTH_BASE_URL, _AUTH_VALIDATE_ENDPOINT = _load_auth_config()
+
+if AUTH_DISABLED:
+    logging.warning('Authentication is disabled. This instance is running without login protection.')
+
 # Check authentication lazily on first UI request to avoid crashing when Dispatcharr is temporarily unavailable.
 def _ensure_dispatcharr_ready():
     """Lazily validate Dispatcharr auth on first UI request to avoid startup crashes."""
+    if not AUTH_DISABLED:
+        return True, None
+
     if _dispatcharr_auth_state['authenticated']:
         return True, None
 
@@ -74,6 +112,42 @@ def _ensure_dispatcharr_ready():
         _dispatcharr_auth_state['last_error'] = str(exc)
         logging.error("Dispatcharr authentication check failed: %s", exc)
         return False, _dispatcharr_auth_state['last_error']
+
+
+@app.before_request
+def _require_authentication():
+    """Protect all routes except login and static assets."""
+    g.auth_disabled = AUTH_DISABLED
+    g.current_user = None
+
+    # Allow static assets and login page through without a session.
+    if request.path == '/login' or request.path.startswith('/static/'):
+        return None
+
+    if AUTH_DISABLED:
+        return None
+
+    _purge_expired_sessions()
+    session_id = request.cookies.get(_SESSION_COOKIE_NAME)
+    username = _get_session_user(session_id)
+    g.current_user = username
+
+    if username:
+        return None
+
+    next_url = request.full_path or request.path
+    if next_url.endswith('?'):
+        next_url = next_url[:-1]
+
+    return redirect(url_for('login', next=next_url))
+
+
+@app.context_processor
+def _inject_auth_context():
+    return {
+        'current_user': getattr(g, 'current_user', None),
+        'auth_disabled': AUTH_DISABLED,
+    }
 
 
 def _render_auth_error(error_message):
@@ -200,6 +274,70 @@ def _render_auth_error(error_message):
         </html>""",
         503
     )
+
+
+def _auth_cookie_secure():
+    """Determine whether the session cookie should be marked secure."""
+    override = os.getenv('AUTH_COOKIE_SECURE')
+    if override is not None:
+        return str(override).lower() in ('1', 'true', 'yes', 'on')
+
+    https_env = str(os.getenv('HTTPS', '')).lower() in ('on', '1', 'true')
+    try:
+        return bool(request.is_secure or https_env)
+    except Exception:
+        return https_env
+
+
+def _purge_expired_sessions():
+    """Remove expired sessions lazily to enforce TTL."""
+    now = time.time()
+    expired = [sid for sid, data in _sessions.items() if now - data.get('created_at', 0) > SESSION_TTL_SECONDS]
+    for sid in expired:
+        _sessions.pop(sid, None)
+
+
+def _get_session_user(session_id):
+    """Return the username for a valid session or None."""
+    if not session_id:
+        return None
+
+    session_data = _sessions.get(session_id)
+    if not session_data:
+        return None
+
+    if time.time() - session_data.get('created_at', 0) > SESSION_TTL_SECONDS:
+        _sessions.pop(session_id, None)
+        return None
+
+    return session_data.get('username')
+
+
+def _safe_next_url(next_url):
+    """Prevent open redirects by ensuring next_url is local."""
+    if next_url:
+        parsed = urlparse(next_url)
+        if not parsed.netloc and next_url.startswith('/'):
+            return next_url
+    return url_for('index')
+
+
+def _validate_dispatcharr_credentials(username, password):
+    """Validate credentials against Dispatcharr without storing them."""
+    if not _AUTH_BASE_URL or not _AUTH_VALIDATE_ENDPOINT:
+        return False, 'Dispatcharr authentication is not configured.'
+
+    url = f"{_AUTH_BASE_URL}{_AUTH_VALIDATE_ENDPOINT}"
+    try:
+        response = requests.get(url, auth=(username, password), timeout=15)
+    except requests.exceptions.RequestException as exc:
+        logging.error('Dispatcharr authentication request failed: %s', exc)
+        return False, 'Unable to reach Dispatcharr. Please try again later.'
+
+    if response.status_code == 200:
+        return True, None
+
+    return False, 'Invalid username or password.'
 
 # Job management
 jobs = {}  # {job_id: Job}
@@ -3352,6 +3490,76 @@ def _aggregate_provider_stats(provider_stats_list):
             'weighted_score': round(weighted_score, 1),
         }
     return aggregated
+
+
+# Authentication endpoints
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Render login form and validate against Dispatcharr."""
+    if AUTH_DISABLED:
+        target = _safe_next_url(request.args.get('next') or request.form.get('next'))
+        return redirect(target)
+
+    error = None
+    next_url = request.args.get('next') or request.form.get('next')
+
+    _purge_expired_sessions()
+    active_user = _get_session_user(request.cookies.get(_SESSION_COOKIE_NAME))
+    if active_user and request.method == 'GET':
+        return redirect(_safe_next_url(next_url))
+
+    if request.method == 'POST':
+        username = (request.form.get('username') or '').strip()
+        password = request.form.get('password') or ''
+
+        if not username or not password:
+            error = 'Username and password are required.'
+        else:
+            valid, validation_error = _validate_dispatcharr_credentials(username, password)
+            if valid:
+                session_id = secrets.token_urlsafe(32)
+                _sessions[session_id] = {
+                    'username': username,
+                    'created_at': time.time(),
+                }
+
+                response = make_response(redirect(_safe_next_url(next_url)))
+                response.set_cookie(
+                    _SESSION_COOKIE_NAME,
+                    session_id,
+                    httponly=True,
+                    secure=_auth_cookie_secure(),
+                    samesite='Lax',
+                    max_age=SESSION_TTL_SECONDS,
+                    path='/',
+                )
+                g.current_user = username
+                return response
+
+            error = validation_error
+
+    return render_template('login.html', error=error)
+
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    """Invalidate the session and clear the cookie."""
+    session_id = request.cookies.get(_SESSION_COOKIE_NAME)
+    if session_id:
+        _sessions.pop(session_id, None)
+
+    response = make_response(redirect(url_for('login')))
+    response.set_cookie(
+        _SESSION_COOKIE_NAME,
+        '',
+        expires=0,
+        httponly=True,
+        secure=_auth_cookie_secure(),
+        samesite='Lax',
+        path='/',
+    )
+    return response
 
 
 # API Endpoints
