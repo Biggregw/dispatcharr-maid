@@ -1539,7 +1539,8 @@ def _get_job_results(job_id):
     if analysis_expected and not _has_analysis_summary(results):
         try:
             summary = generate_job_summary(config, specific_channel_ids=specific_channel_ids)
-        except Exception:
+        except Exception as e:
+            logging.error(f"Failed to generate job summary for job {job_id}: {e}", exc_info=True)
             summary = None
 
         if isinstance(summary, dict) and summary:
@@ -1552,8 +1553,9 @@ def _get_job_results(job_id):
                 results = merged
             else:
                 results = summary
-        elif results is None:
-            return None, None, None, None, 'No results available'
+        elif results is None or (isinstance(results, dict) and not results):
+            # If summary generation failed and we have no results, return an error
+            return None, None, None, None, 'No results available - analysis summary could not be generated'
 
     return results, analysis_expected, job_type, config, None
 
@@ -4383,6 +4385,14 @@ def api_job_results(job_id):
         if error:
             return jsonify({'success': False, 'error': error}), 404
 
+        # Ensure we have valid results
+        if results is None:
+            return jsonify({'success': False, 'error': 'No results available'}), 404
+        
+        # If analysis ran but we don't have analysis summary, that's an error
+        if analysis_ran and not _has_analysis_summary(results):
+            return jsonify({'success': False, 'error': 'Analysis was completed but results could not be generated. Check job workspace CSV files.'}), 404
+
         provider_names = _load_provider_names(config) if config else {}
         provider_metadata = _load_provider_metadata(config) if config else {}
         capacity_summary = results.get('capacity_summary') if isinstance(results, dict) else None
@@ -4401,6 +4411,7 @@ def api_job_results(job_id):
             payload['ordering_visibility'] = ordering_visibility
         return jsonify(payload)
     except Exception as e:
+        logging.error(f"Error in api_job_results for job {job_id}: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -4412,6 +4423,14 @@ def api_job_scoped_results(job_id):
         results, analysis_ran, job_type, config, error = _get_job_results(job_id)
         if error:
             return jsonify({'success': False, 'error': error}), 404
+
+        # Ensure we have valid results
+        if results is None:
+            return jsonify({'success': False, 'error': 'No results available'}), 404
+        
+        # If analysis ran but we don't have analysis summary, that's an error
+        if analysis_ran and not _has_analysis_summary(results):
+            return jsonify({'success': False, 'error': 'Analysis was completed but results could not be generated. Check job workspace CSV files.'}), 404
 
         provider_names = _load_provider_names(config) if config else {}
         provider_metadata = _load_provider_metadata(config) if config else {}
