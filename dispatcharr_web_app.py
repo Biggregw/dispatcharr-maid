@@ -26,6 +26,19 @@ from queue import Queue
 import pandas as pd
 import yaml
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
+
+# Fix for NaN values in JSON responses
+import math
+from flask import json
+from flask.json.provider import DefaultJSONProvider
+
+class NaNSafeJSONProvider(DefaultJSONProvider):
+    def default(self, obj):
+        if isinstance(obj, float):
+            if math.isnan(obj) or math.isinf(obj):
+                return None
+        return super().default(obj)
+
 from flask_cors import CORS
 
 from api_utils import DispatcharrAPI
@@ -50,6 +63,7 @@ logging.basicConfig(
 )
 
 app = Flask(__name__)
+app.json = NaNSafeJSONProvider(app)
 app.secret_key = (
     os.getenv("DISPATCHARR_SECRET_KEY")
     or os.getenv("FLASK_SECRET_KEY")
@@ -4632,6 +4646,16 @@ def api_results_streams():
                         value = float(value)
                     except Exception:
                         pass
+                # Final check: convert any NaN or Inf to None before assignment
+
+                import math
+
+                if isinstance(value, float):
+
+                    if math.isnan(value) or math.isinf(value):
+
+                        value = None
+
                 item[key] = value
             rows.append(item)
 
