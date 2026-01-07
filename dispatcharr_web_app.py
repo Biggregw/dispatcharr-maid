@@ -1916,7 +1916,8 @@ def run_job_worker(job, api, config):
             # Clear any previous specific selections
             filters = config.get('filters')
             if filters and 'specific_channel_ids' in filters:
-                del config.config['filters']['specific_channel_ids']
+                if 'filters' in config.config and 'specific_channel_ids' in config.config['filters']:
+                    del config.config['filters']['specific_channel_ids']
         
         config.save()
         
@@ -3699,9 +3700,10 @@ def api_save_channel_selection_regex():
         if not channel_ids:
             filters = config.get('filters') or {}
             if isinstance(filters, dict):
-                for key in ('specific_channel_ids', 'channel_name_regex', 'channel_number_regex'):
-                    if key in filters:
-                        del config.config['filters'][key]
+                if 'filters' in config.config:
+                    for key in ('specific_channel_ids', 'channel_name_regex', 'channel_number_regex'):
+                        if key in config.config['filters']:
+                            del config.config['filters'][key]
             config.save()
             return jsonify({
                 'success': True,
@@ -4669,8 +4671,12 @@ def api_dispatcharr_plan(job_id):
         if not plan_path.exists():
             return jsonify({'success': False, 'error': 'No dispatcharr plan available for this job'}), 404
 
-        with open(plan_path, 'r', encoding='utf-8') as f:
-            payload = json.load(f)
+        try:
+            with open(plan_path, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logging.error(f"Failed to load plan JSON: {e}")
+            return jsonify({'success': False, 'error': 'Failed to load dispatcharr plan (corrupted JSON)'}), 500
 
         rows = payload.get('rows') if isinstance(payload, dict) else None
         if not isinstance(rows, list):
@@ -4961,8 +4967,12 @@ def api_dispatcharr_plan_commit(job_id):
         if not plan_path.exists():
             return jsonify({'success': False, 'error': 'No dispatcharr plan available for this job'}), 404
 
-        with open(plan_path, 'r', encoding='utf-8') as f:
-            payload = json.load(f)
+        try:
+            with open(plan_path, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logging.error(f"Failed to load plan JSON: {e}")
+            return jsonify({'success': False, 'error': 'Failed to load dispatcharr plan (corrupted JSON)'}), 500
 
         if isinstance(payload, dict):
             payload_job_id = str(payload.get('job_id') or '').strip()
