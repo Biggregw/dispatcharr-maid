@@ -2538,12 +2538,19 @@ def run_job_worker(job, api, config):
         
         # Generate analysis summary when analysis ran
         if _job_ran_analysis(job.job_type):
-            summary = generate_job_summary(config, specific_channel_ids=job.channels)
-            if summary:
-                if job.result_summary:
-                    job.result_summary.update(summary)
+            try:
+                summary = generate_job_summary(config, specific_channel_ids=job.channels)
+                if summary:
+                    if job.result_summary:
+                        job.result_summary.update(summary)
+                    else:
+                        job.result_summary = summary
                 else:
-                    job.result_summary = summary
+                    # If summary generation failed, log a warning but don't fail the job
+                    logging.warning(f"Job {job.job_id} completed but generate_job_summary returned None - CSV files may be missing or empty")
+            except Exception as e:
+                # Log error but don't fail the job - it may have completed successfully
+                logging.error(f"Failed to generate job summary for job {job.job_id}: {e}", exc_info=True)
 
     except Exception as e:
         logging.exception("Job failed (job_id=%s, job_type=%s)", getattr(job, 'job_id', None), getattr(job, 'job_type', None))
