@@ -1587,6 +1587,22 @@ def _normalize_numeric(value):
         return 0.0
 
 
+def _quality_sort_key(record):
+    ordering = record.get('ordering_score')
+    if ordering in (None, 'N/A'):
+        ordering = record.get('score')
+    ordering_score = _normalize_numeric(ordering)
+    parsed = _parse_resolution(record.get('resolution'))
+    if parsed:
+        width, height = parsed
+        total_pixels = int(width) * int(height)
+    else:
+        total_pixels = 0
+    fps = _normalize_numeric(record.get('fps'))
+    avg_bitrate_kbps = _normalize_numeric(record.get('avg_bitrate_kbps'))
+    return (ordering_score, total_pixels, fps, avg_bitrate_kbps)
+
+
 def order_streams_for_channel(
     records,
     resilience_mode=False,
@@ -1642,7 +1658,7 @@ def order_streams_for_channel(
         if not resilience_mode:
             return base_interleaved
 
-        scored_records = sorted(ordered_records, key=_score, reverse=True)
+        scored_records = sorted(ordered_records, key=_quality_sort_key, reverse=True)
 
         provider_best = {}
         tier1 = []
