@@ -1260,9 +1260,14 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
 
     # Merge with latest metadata
     latest_meta = df.drop_duplicates(subset='stream_id', keep='last')
+    # Only drop columns that exist to avoid KeyError
+    cols_to_drop = ['bitrate_kbps', 'frames_decoded', 'frames_dropped']
+    cols_to_drop = [col for col in cols_to_drop if col in latest_meta.columns]
+    if cols_to_drop:
+        latest_meta = latest_meta.drop(columns=cols_to_drop)
     summary = pd.merge(
         summary,
-        latest_meta.drop(columns=['bitrate_kbps', 'frames_decoded', 'frames_dropped']),
+        latest_meta,
         on='stream_id'
     )
 
@@ -1395,9 +1400,14 @@ def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, up
     ).reset_index()
 
     latest_meta = df.drop_duplicates(subset='stream_id', keep='last')
+    # Only drop columns that exist to avoid KeyError
+    cols_to_drop = ['bitrate_kbps', 'frames_decoded', 'frames_dropped']
+    cols_to_drop = [col for col in cols_to_drop if col in latest_meta.columns]
+    if cols_to_drop:
+        latest_meta = latest_meta.drop(columns=cols_to_drop)
     summary = pd.merge(
         summary,
-        latest_meta.drop(columns=['bitrate_kbps', 'frames_decoded', 'frames_dropped']),
+        latest_meta,
         on='stream_id'
     )
 
