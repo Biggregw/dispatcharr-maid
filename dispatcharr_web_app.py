@@ -2652,16 +2652,18 @@ def cleanup_streams_by_provider(
     measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
     if os.path.exists(measurements_file):
         try:
-            df_map = pd.read_csv(measurements_file, usecols=['stream_id', 'm3u_account'])
-            sid_series = pd.to_numeric(df_map.get('stream_id'), errors='coerce')
-            if sid_series is not None and 'm3u_account' in df_map.columns:
+            # Read CSV first, then check for required columns (usecols raises ValueError if columns are missing)
+            df_map = pd.read_csv(measurements_file)
+            if 'stream_id' in df_map.columns and 'm3u_account' in df_map.columns:
+                sid_series = pd.to_numeric(df_map['stream_id'], errors='coerce')
                 mask = sid_series.notna()
-                sid_series = sid_series[mask].astype(int)
-                provider_series = df_map['m3u_account'].reindex(df_map.index)[mask]
-                for sid, provider_id in zip(sid_series.tolist(), provider_series.tolist()):
-                    if provider_id in ("", None) or (isinstance(provider_id, float) and pd.isna(provider_id)):
-                        continue
-                    stream_provider_map.setdefault(int(sid), provider_id)
+                if mask.any():
+                    sid_series = sid_series[mask].astype(int)
+                    provider_series = df_map['m3u_account'].reindex(df_map.index)[mask]
+                    for sid, provider_id in zip(sid_series.tolist(), provider_series.tolist()):
+                        if provider_id in ("", None) or (isinstance(provider_id, float) and pd.isna(provider_id)):
+                            continue
+                        stream_provider_map.setdefault(int(sid), provider_id)
         except Exception:
             logging.debug("Could not load provider IDs from measurements CSV", exc_info=True)
 
