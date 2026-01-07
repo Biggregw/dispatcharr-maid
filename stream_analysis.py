@@ -1026,9 +1026,27 @@ def analyze_streams(config, input_csv=None,
         
         # Deduplicate final results
         logging.info("Deduplicating results...")
-        df_final = pd.read_csv(output_csv)
+        try:
+            df_final = pd.read_csv(output_csv)
+        except (FileNotFoundError, pd.errors.EmptyDataError):
+            # File doesn't exist or is empty - nothing to deduplicate
+            logging.warning(f"Output CSV is empty or doesn't exist: {output_csv}")
+            return analyzed_count
+        
+        if df_final.empty:
+            logging.warning("Output CSV contains no data")
+            return analyzed_count
+            
         df_final['stream_id'] = pd.to_numeric(df_final['stream_id'], errors='coerce')
         df_final.dropna(subset=['stream_id'], inplace=True)
+        
+        if df_final.empty:
+            # All rows were dropped - write empty CSV with headers
+            df_empty = pd.DataFrame(columns=final_columns)
+            df_empty.to_csv(output_csv, index=False, na_rep='N/A')
+            logging.warning("All rows dropped during deduplication")
+            return analyzed_count
+            
         df_final['stream_id'] = df_final['stream_id'].astype(int)
         df_final.sort_values(by='timestamp', ascending=True, inplace=True)
         df_final.drop_duplicates(subset=['stream_id'], keep='last', inplace=True)
