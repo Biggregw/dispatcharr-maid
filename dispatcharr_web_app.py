@@ -4807,13 +4807,15 @@ def api_dispatcharr_plan(job_id):
                     sid_col = 'stream_id' if 'stream_id' in dfm.columns else ('id' if 'id' in dfm.columns else None)
                     if sid_col:
                         dfm[sid_col] = pd.to_numeric(dfm[sid_col], errors='coerce')
-                        dfm = dfm[dfm[sid_col].notna()]
-                        dfm[sid_col] = dfm[sid_col].astype(int)
-                        dfm = dfm[dfm[sid_col].isin(list(missing))]
-                        # Prefer newest timestamp if present.
-                        if 'timestamp' in dfm.columns:
-                            dfm = dfm.sort_values(by=['timestamp'], ascending=[False])
-                        dfm = dfm.drop_duplicates(subset=[sid_col], keep='first')
+                        dfm = dfm[dfm[sid_col].notna()].copy()  # Use copy() to avoid SettingWithCopyWarning
+                        if not dfm.empty:
+                            dfm[sid_col] = dfm[sid_col].astype(int)
+                            dfm = dfm[dfm[sid_col].isin(list(missing))]
+                            # Prefer newest timestamp if present.
+                            if not dfm.empty and 'timestamp' in dfm.columns:
+                                dfm = dfm.sort_values(by=['timestamp'], ascending=[False])
+                            if not dfm.empty:
+                                dfm = dfm.drop_duplicates(subset=[sid_col], keep='first')
 
                         name_col = 'stream_name' if 'stream_name' in dfm.columns else ('name' if 'name' in dfm.columns else None)
                         provider_col = 'm3u_account' if 'm3u_account' in dfm.columns else None
