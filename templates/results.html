@@ -153,11 +153,11 @@
         <div class="card" id="detailed-breakdown-card">
             <h2>🔍 Detailed Breakdown</h2>
             <div class="tabs">
-                <button class="tab active" onclick="showTab('streams')">Streams</button>
-                <button class="tab" onclick="showTab('providers')">Providers</button>
-                <button class="tab" onclick="showTab('channels')">Channels</button>
-                <button class="tab" onclick="showTab('errors')">Errors</button>
-                <button class="tab" onclick="showTab('plan')">Planned Changes</button>
+                <button class="tab active" onclick="showTab('streams', this)">Streams</button>
+                <button class="tab" onclick="showTab('providers', this)">Providers</button>
+                <button class="tab" onclick="showTab('channels', this)">Channels</button>
+                <button class="tab" onclick="showTab('errors', this)">Errors</button>
+                <button class="tab" onclick="showTab('plan', this)">Planned Changes</button>
             </div>
             
             <div id="providers-tab" class="tab-content">
@@ -743,31 +743,35 @@
                     providerCountNote.textContent = `Showing ${providerStatsEntries.length} provider${providerStatsEntries.length === 1 ? '' : 's'} in this run` +
                         (configuredProviderIds.length > 0 ? ` (configured: ${configuredProviderIds.length})` : '');
 
-                    tbody.innerHTML = rows.map(([id, stats]) => {
-                        const rate = typeof stats.success_rate === 'number' ? stats.success_rate : 0;
-                        const badgeClass = rate >= 90 ? 'excellent' : rate >= 70 ? 'good' : rate >= 50 ? 'fair' : 'poor';
-                        const providerLabel = Object.prototype.hasOwnProperty.call(providerNames, id)
-                            ? providerNames[id]
-                            : `Provider ${id}`;
-                        const providerMeta = providerMetadata[id] || {};
-                        const maxStreams = typeof providerMeta.max_streams === 'number'
-                            ? providerMeta.max_streams
-                            : (providerMeta.max_streams === 0 ? 0 : '—');
-                        const avgQuality = (stats.avg_quality === undefined || stats.avg_quality === null) ? '—' : stats.avg_quality;
-                        const total = typeof stats.total === 'number' ? stats.total : 0;
-                        const successful = typeof stats.successful === 'number' ? stats.successful : 0;
-                        const failed = typeof stats.failed === 'number' ? stats.failed : 0;
+                    if (rows.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">No provider data available.</td></tr>';
+                    } else {
+                        tbody.innerHTML = rows.map(([id, stats]) => {
+                            const rate = typeof stats.success_rate === 'number' ? stats.success_rate : 0;
+                            const badgeClass = rate >= 90 ? 'excellent' : rate >= 70 ? 'good' : rate >= 50 ? 'fair' : 'poor';
+                            const providerLabel = Object.prototype.hasOwnProperty.call(providerNames, id)
+                                ? providerNames[id]
+                                : `Provider ${id}`;
+                            const providerMeta = providerMetadata[id] || {};
+                            const maxStreams = typeof providerMeta.max_streams === 'number'
+                                ? providerMeta.max_streams
+                                : (providerMeta.max_streams === 0 ? 0 : '—');
+                            const avgQuality = (stats.avg_quality === undefined || stats.avg_quality === null) ? '—' : stats.avg_quality;
+                            const total = typeof stats.total === 'number' ? stats.total : 0;
+                            const successful = typeof stats.successful === 'number' ? stats.successful : 0;
+                            const failed = typeof stats.failed === 'number' ? stats.failed : 0;
 
-                        return `<tr>
-                            <td>${providerLabel}</td>
-                            <td>${total}</td>
-                            <td style="color: #38a169;">${successful}</td>
-                            <td style="color: #e53e3e;">${failed}</td>
-                            <td><span class="success-badge ${badgeClass}">${rate}%</span></td>
-                            <td>${avgQuality}</td>
-                            <td>${maxStreams}</td>
-                        </tr>`;
-                    }).join('');
+                            return `<tr>
+                                <td>${providerLabel}</td>
+                                <td>${total}</td>
+                                <td style="color: #38a169;">${successful}</td>
+                                <td style="color: #e53e3e;">${failed}</td>
+                                <td><span class="success-badge ${badgeClass}">${rate}%</span></td>
+                                <td>${avgQuality}</td>
+                                <td>${maxStreams}</td>
+                            </tr>`;
+                        }).join('');
+                    }
                 }
 
                 // Default view matches prior behavior (only providers present in this run).
@@ -781,16 +785,20 @@
                 const chanTbody = document.getElementById('channel-tbody');
                 const channels = Object.entries(r.channel_stats || {}).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
                 
-                chanTbody.innerHTML = channels.map(([num, stats]) => {
-                    const badgeClass = stats.success_rate >= 90 ? 'excellent' : stats.success_rate >= 70 ? 'good' : stats.success_rate >= 50 ? 'fair' : 'poor';
-                    return `<tr>
-                        <td><strong>#${num}</strong> ${stats.name}</td>
-                        <td>${stats.total}</td>
-                        <td style="color: #38a169;">${stats.successful}</td>
-                        <td style="color: #e53e3e;">${stats.failed}</td>
-                        <td><span class="success-badge ${badgeClass}">${stats.success_rate}%</span></td>
-                    </tr>`;
-                }).join('');
+                if (channels.length === 0) {
+                    chanTbody.innerHTML = '<tr><td colspan="5" class="muted" style="text-align:center;padding:20px;">No channel data available.</td></tr>';
+                } else {
+                    chanTbody.innerHTML = channels.map(([num, stats]) => {
+                        const badgeClass = stats.success_rate >= 90 ? 'excellent' : stats.success_rate >= 70 ? 'good' : stats.success_rate >= 50 ? 'fair' : 'poor';
+                        return `<tr>
+                            <td><strong>#${num}</strong> ${stats.name}</td>
+                            <td>${stats.total}</td>
+                            <td style="color: #38a169;">${stats.successful}</td>
+                            <td style="color: #e53e3e;">${stats.failed}</td>
+                            <td><span class="success-badge ${badgeClass}">${stats.success_rate}%</span></td>
+                        </tr>`;
+                    }).join('');
+                }
                 
                 // Errors
                 const errors = Object.entries(r.error_types || {}).sort((a, b) => b[1] - a[1]);
@@ -808,15 +816,37 @@
                 }
 
                 // If Streams is the default active tab, load it immediately.
-                if (document.getElementById('streams-tab')?.classList.contains('active') && !streamsLoaded) {
-                    loadStreams();
-                }
+                // Use setTimeout to ensure DOM is ready and all rendering is complete
+                setTimeout(() => {
+                    const streamsTab = document.getElementById('streams-tab');
+                    if (streamsTab && streamsTab.classList.contains('active') && !streamsLoaded) {
+                        loadStreams();
+                    }
+                }, 50);
+            })
+            .catch(err => {
+                console.error('Failed to load results:', err);
+                showWarning('Failed to load results', 'An error occurred while loading the analysis results.');
             });
         
-        function showTab(tabName) {
+        function showTab(tabName, eventElement) {
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-            event.target.classList.add('active');
+            if (eventElement) {
+                eventElement.classList.add('active');
+            } else {
+                // Find the button by text content if eventElement not provided
+                document.querySelectorAll('.tab').forEach(tab => {
+                    if (tab.textContent.trim().toLowerCase() === tabName.toLowerCase() || 
+                        (tabName === 'streams' && tab.textContent.includes('Streams')) ||
+                        (tabName === 'providers' && tab.textContent.includes('Providers')) ||
+                        (tabName === 'channels' && tab.textContent.includes('Channels')) ||
+                        (tabName === 'errors' && tab.textContent.includes('Errors')) ||
+                        (tabName === 'plan' && tab.textContent.includes('Planned'))) {
+                        tab.classList.add('active');
+                    }
+                });
+            }
             document.getElementById(tabName + '-tab').classList.add('active');
 
             if (tabName === 'streams' && !streamsLoaded) {
@@ -859,24 +889,28 @@
                 const tbody = document.getElementById('stream-tbody');
                 if (!tbody) return;
 
-                tbody.innerHTML = rows.map((s) => {
-                    const name = escapeHtml(s.stream_name || '(unnamed)');
-                    const status = escapeHtml(s.status || '');
-                    const quality = (typeof s.quality_score === 'number') ? s.quality_score.toFixed(1) : (s.quality_score ?? '');
-                    const resolution = escapeHtml(s.resolution || '');
-                    const provider = providerLabelHtml(s.provider_id);
-                    const checkboxId = `use-stream-${escapeHtml(String(s.stream_id ?? Math.random()))}`;
-                    return `
-                        <tr class="stream-row" data-stream-name="${escapeHtml(String(s.stream_name || '')).toLowerCase()}" data-provider-id="${escapeHtml(String(s.provider_id ?? ''))}">
-                            <td><input type="checkbox" id="${checkboxId}" class="stream-use-cb" checked onchange="updateStreamsCount()" /></td>
-                            <td><label for="${checkboxId}" style="cursor:pointer;"><strong>${name}</strong></label></td>
-                            <td>${status}</td>
-                            <td>${escapeHtml(String(quality))}</td>
-                            <td>${resolution}</td>
-                            <td>${provider}</td>
-                        </tr>
-                    `;
-                }).join('');
+                if (rows.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:20px;">No streams found.</td></tr>';
+                } else {
+                    tbody.innerHTML = rows.map((s) => {
+                        const name = escapeHtml(s.stream_name || '(unnamed)');
+                        const status = escapeHtml(s.status || '');
+                        const quality = (typeof s.quality_score === 'number') ? s.quality_score.toFixed(1) : (s.quality_score ?? '');
+                        const resolution = escapeHtml(s.resolution || '');
+                        const provider = providerLabelHtml(s.provider_id);
+                        const checkboxId = `use-stream-${escapeHtml(String(s.stream_id ?? Math.random()))}`;
+                        return `
+                            <tr class="stream-row" data-stream-name="${escapeHtml(String(s.stream_name || '')).toLowerCase()}" data-provider-id="${escapeHtml(String(s.provider_id ?? ''))}">
+                                <td><input type="checkbox" id="${checkboxId}" class="stream-use-cb" checked onchange="updateStreamsCount()" /></td>
+                                <td><label for="${checkboxId}" style="cursor:pointer;"><strong>${name}</strong></label></td>
+                                <td>${status}</td>
+                                <td>${escapeHtml(String(quality))}</td>
+                                <td>${resolution}</td>
+                                <td>${provider}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
 
                 if (loadingEl) loadingEl.textContent = rows.length ? `Loaded ${rows.length} stream rows.` : 'No streams found.';
                 updateStreamsCount();
