@@ -4280,6 +4280,9 @@ def api_provider_ranking():
                     return jsonify({'success': False, 'error': 'No analysis results available yet. Run a Quality Check first.'}), 404
 
                 # Use most recent run as the "base" for names/metadata.
+                # Ensure selected[0] is a dict to avoid AttributeError
+                if not isinstance(selected[0], dict):
+                    return jsonify({'success': False, 'error': 'Invalid job history data format'}), 500
                 resolved_job_id = selected[0].get('job_id')
                 config = _build_config_from_history_job(selected[0])
 
