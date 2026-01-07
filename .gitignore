@@ -35,3 +35,4 @@ csv/
 
 # User-specific configuration
 config.yaml
+*.backup
