@@ -244,6 +244,18 @@ provider_semaphores = {}
 semaphore_lock = threading.Lock()
 
 
+def _normalize_id_set(values):
+    if not values:
+        return None
+    normalized = set()
+    for value in values:
+        try:
+            normalized.add(int(value))
+        except Exception:
+            continue
+    return normalized
+
+
 def _get_provider_from_url(url):
     """Extract provider identifier from URL"""
     try:
@@ -635,13 +647,23 @@ def fetch_streams(api, config, output_file=None, progress_callback=None, stream_
     
     # Filter channels
     if specific_channel_ids:
-        # Use specific channel IDs if provided
-        specific_ids_set = set(specific_channel_ids)
-        filtered_channels = [
-            ch for ch in all_channels 
-            if ch.get('id') in specific_ids_set
-        ]
-        logging.info(f"Using {len(filtered_channels)} specific channels")
+        # Use specific channel IDs if provided (normalize types).
+        specific_ids_set = _normalize_id_set(specific_channel_ids) or set()
+        if not specific_ids_set:
+            logging.error("No valid specific channel IDs found in filters; skipping channel selection.")
+            filtered_channels = []
+        else:
+            filtered_channels = []
+            for ch in all_channels:
+                if ch.get('id') is None:
+                    continue
+                try:
+                    cid = int(ch.get('id'))
+                except Exception:
+                    continue
+                if cid in specific_ids_set:
+                    filtered_channels.append(ch)
+            logging.info(f"Using {len(filtered_channels)} specific channels")
     else:
         # Start from group filter (if any), then optionally apply regex filters.
         if group_ids_list:
@@ -835,7 +857,7 @@ def analyze_streams(config, input_csv=None,
     specific_channel_ids = filters.get('specific_channel_ids')
     
     if specific_channel_ids:
-        specific_ids_set = set(specific_channel_ids)
+        specific_ids_set = _normalize_id_set(specific_channel_ids) or set()
         df['channel_id'] = pd.to_numeric(df['channel_id'], errors='coerce')
         df = df[df['channel_id'].isin(specific_ids_set)]
     elif group_ids_list:
@@ -1486,7 +1508,7 @@ def score_streams(api, config, input_csv=None,
     specific_channel_ids = filters.get('specific_channel_ids')
 
     if specific_channel_ids:
-        specific_ids_set = set(specific_channel_ids)
+        specific_ids_set = _normalize_id_set(specific_channel_ids) or set()
         df['channel_id'] = pd.to_numeric(df['channel_id'], errors='coerce')
         df = df[df['channel_id'].isin(specific_ids_set)]
     elif group_ids_list:
@@ -1775,7 +1797,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
     specific_channel_ids = filters.get('specific_channel_ids')
     
     if specific_channel_ids:
-        specific_ids_set = set(specific_channel_ids)
+        specific_ids_set = _normalize_id_set(specific_channel_ids) or set()
         df['channel_id'] = pd.to_numeric(df['channel_id'], errors='coerce')
         df = df[df['channel_id'].isin(specific_ids_set)]
     elif group_ids_list:

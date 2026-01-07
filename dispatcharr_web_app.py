@@ -1324,6 +1324,18 @@ def _safe_int(value):
         return None
 
 
+def _normalize_channel_ids(values):
+    if not values:
+        return None
+    normalized = []
+    for value in values:
+        try:
+            normalized.append(int(value))
+        except Exception:
+            continue
+    return normalized
+
+
 def _read_results_retention_days():
     """
     Optional retention policy for old job workspaces/history.
@@ -3035,15 +3047,16 @@ def generate_job_summary(config, specific_channel_ids=None):
             scored_df = None
         
         # Filter by specific channels if provided
-        if specific_channel_ids:
+        normalized_ids = _normalize_channel_ids(specific_channel_ids)
+        if normalized_ids:
             df['channel_id'] = pd.to_numeric(df['channel_id'], errors='coerce')
-            df = df[df['channel_id'].isin(specific_channel_ids)]
+            df = df[df['channel_id'].isin(normalized_ids)]
             
             if len(df) == 0:
                 return None
             if scored_df is not None and 'channel_id' in scored_df.columns:
                 scored_df['channel_id'] = pd.to_numeric(scored_df['channel_id'], errors='coerce')
-                scored_df = scored_df[scored_df['channel_id'].isin(specific_channel_ids)]
+                scored_df = scored_df[scored_df['channel_id'].isin(normalized_ids)]
         
         total = len(df)
         successful = len(df[df['status'] == 'OK'])
