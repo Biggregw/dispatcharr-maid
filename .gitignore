@@ -36,3 +36,6 @@ csv/
 # User-specific configuration
 config.yaml
 *.backup
+debug_quality_check_results.sh
+diagnostic_endpoints.py
+quality_check_results_bug_analysis.md
