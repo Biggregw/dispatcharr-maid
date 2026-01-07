@@ -26,7 +26,16 @@ from urllib.parse import urlparse
 
 import pandas as pd
 import yaml
-from flask import Flask, render_template, jsonify, request, redirect, url_for, make_response, g
+from flask import (
+    Flask,
+    render_template,
+    jsonify,
+    request,
+    redirect,
+    url_for,
+    make_response,
+    g,
+)
 from flask_cors import CORS
 import requests
 
