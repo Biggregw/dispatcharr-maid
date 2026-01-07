@@ -4437,6 +4437,7 @@ def api_job_results(job_id):
         )
         if ordering_visibility:
             payload['ordering_visibility'] = ordering_visibility
+        payload = _make_json_safe(payload)
         return jsonify(payload)
     except Exception as e:
         logging.error(f"Error in api_job_results for job {job_id}: {e}", exc_info=True)
@@ -4476,6 +4477,7 @@ def api_job_scoped_results(job_id):
         )
         if ordering_visibility:
             payload['ordering_visibility'] = ordering_visibility
+        payload = _make_json_safe(payload)
         return jsonify(payload)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -4510,6 +4512,7 @@ def api_detailed_results():
                 )
                 if ordering_visibility:
                     payload['ordering_visibility'] = ordering_visibility
+                payload = _make_json_safe(payload)
                 return jsonify(payload)
         
         # Fall back to CSV-based summary if no recent jobs
@@ -4542,6 +4545,7 @@ def api_detailed_results():
         )
         if ordering_visibility:
             payload['ordering_visibility'] = ordering_visibility
+        payload = _make_json_safe(payload)
         return jsonify(payload)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
