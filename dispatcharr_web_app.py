@@ -1741,19 +1741,30 @@ def save_job_to_history(job):
     history_file = 'logs/job_history.json'
     Path(history_file).parent.mkdir(parents=True, exist_ok=True)
 
-    history = _make_json_safe(get_job_history())
+    # Read history directly to avoid races with get_job_history()
+    history = []
+    if history_file and Path(history_file).exists():
+        try:
+            import json
+            with open(history_file, 'r') as f:
+                history = json.load(f)
+        except Exception:
+            history = []
 
-    # Add this job
-    history.insert(0, _make_json_safe(job.to_dict()))
+    payload = job.to_dict() if hasattr(job, "to_dict") else job
+    history.insert(0, _make_json_safe(payload))
 
     # Keep only last 50 jobs
     history = history[:50]
 
-    with open(history_file, 'w') as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+    # Atomic write
+    tmp = history_file + '.tmp'
+    import os, json
+    with open(tmp, 'w') as f:
         json.dump(history, f, indent=2, allow_nan=False)
-
-
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, history_file)
 def progress_callback(job, progress_data):
     """Callback function for progress updates"""
     processed = progress_data.get('processed', 0)
