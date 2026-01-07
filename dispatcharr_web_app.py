@@ -18,13 +18,14 @@ import threading
 import time
 import uuid
 import fcntl
+from functools import wraps
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
 
 import pandas as pd
 import yaml
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, redirect, session, url_for
 from flask_cors import CORS
 
 from api_utils import DispatcharrAPI
@@ -49,6 +50,11 @@ logging.basicConfig(
 )
 
 app = Flask(__name__)
+app.secret_key = (
+    os.getenv("DISPATCHARR_SECRET_KEY")
+    or os.getenv("FLASK_SECRET_KEY")
+    or "dispatcharr-maid"
+)
 
 CORS(app)
 
@@ -56,6 +62,16 @@ _dispatcharr_auth_state = {
     'authenticated': False,
     'last_error': None
 }
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if session.get("logged_in"):
+            return view(*args, **kwargs)
+        return redirect(url_for("login"))
+
+    return wrapped
 
 # Check authentication lazily on first UI request to avoid crashing when Dispatcharr is temporarily unavailable.
 def _ensure_dispatcharr_ready():
@@ -3356,7 +3372,23 @@ def _aggregate_provider_stats(provider_stats_list):
 
 # API Endpoints
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username', '')
+        password = request.form.get('password', '')
+        expected_user = os.getenv('DISPATCHARR_USER', '')
+        expected_pass = os.getenv('DISPATCHARR_PASS', '')
+        if username == expected_user and password == expected_pass:
+            session['logged_in'] = True
+            return redirect(url_for('index'))
+        error = "Invalid username or password."
+    return render_template('login.html', error=error)
+
+
 @app.route('/')
+@login_required
 def index():
     """Main application page"""
     auth_ok, auth_error = _ensure_dispatcharr_ready()
@@ -3366,12 +3398,14 @@ def index():
 
 
 @app.route('/health')
+@login_required
 def health_check():
     """Lightweight health endpoint that does not require Dispatcharr connectivity."""
     return jsonify({'status': 'ok'}), 200
 
 
 @app.route('/results')
+@login_required
 def results():
     """Results dashboard page"""
     auth_ok, auth_error = _ensure_dispatcharr_ready()
@@ -3381,6 +3415,7 @@ def results():
 
 
 @app.route('/api/groups')
+@login_required
 def api_groups():
     """Get all channel groups with channel counts"""
     try:
@@ -3411,6 +3446,7 @@ def api_groups():
 
 
 @app.route('/api/channels')
+@login_required
 def api_channels():
     """Get channels for selected groups"""
     try:
@@ -3476,6 +3512,7 @@ def _build_exact_match_regex(values):
 
 
 @app.route('/api/resolve-saved-channel-selection', methods=['POST'])
+@login_required
 def api_resolve_saved_channel_selection():
     """
     Resolve the saved channel selection (regex and/or IDs in config.yaml) into concrete channel IDs.
@@ -3614,6 +3651,7 @@ def api_resolve_saved_channel_selection():
 
 
 @app.route('/api/save-channel-selection-regex', methods=['POST'])
+@login_required
 def api_save_channel_selection_regex():
     """
     Generate and persist a regex representing the current channel tickbox selection.
@@ -3718,6 +3756,7 @@ def api_save_channel_selection_regex():
 
 
 @app.route('/api/refresh-preview', methods=['POST'])
+@login_required
 def api_refresh_preview():
     """Preview matching streams for a channel before refreshing"""
     try:
@@ -3766,6 +3805,7 @@ def api_refresh_preview():
 
 
 @app.route('/api/start-job', methods=['POST'])
+@login_required
 def api_start_job():
     """Start a new job"""
     try:
@@ -3935,6 +3975,7 @@ def api_start_job():
 
 
 @app.route('/api/channel-selection-patterns', methods=['GET'])
+@login_required
 def api_list_channel_selection_patterns():
     try:
         with _patterns_lock:
@@ -3953,6 +3994,7 @@ def api_list_channel_selection_patterns():
 
 
 @app.route('/api/channel-selection-patterns', methods=['POST'])
+@login_required
 def api_create_channel_selection_pattern():
     """
     Create a saved channel selection pattern.
@@ -4060,6 +4102,7 @@ def api_create_channel_selection_pattern():
 
 
 @app.route('/api/channel-selection-patterns/<pattern_id>', methods=['DELETE'])
+@login_required
 def api_delete_channel_selection_pattern(pattern_id):
     try:
         with _patterns_lock:
@@ -4075,6 +4118,7 @@ def api_delete_channel_selection_pattern(pattern_id):
 
 
 @app.route('/api/channel-selection-patterns/resolve', methods=['POST'])
+@login_required
 def api_resolve_channel_selection_pattern():
     """
     Resolve a saved pattern to concrete channels.
@@ -4096,6 +4140,7 @@ def api_resolve_channel_selection_pattern():
 
 
 @app.route('/api/job/<job_id>')
+@login_required
 def api_get_job(job_id):
     """Get job status"""
     with job_lock:
@@ -4108,6 +4153,7 @@ def api_get_job(job_id):
 
 
 @app.route('/api/job/<job_id>/cancel', methods=['POST'])
+@login_required
 def api_cancel_job(job_id):
     """Cancel a running job"""
     with job_lock:
@@ -4124,6 +4170,7 @@ def api_cancel_job(job_id):
 
 
 @app.route('/api/jobs')
+@login_required
 def api_get_jobs():
     """Get all active jobs"""
     with job_lock:
@@ -4137,6 +4184,7 @@ def api_get_jobs():
 
 
 @app.route('/api/job-history')
+@login_required
 def api_job_history():
     """Get job history"""
     history = get_job_history()
@@ -4144,6 +4192,7 @@ def api_job_history():
 
 
 @app.route('/api/provider-ranking')
+@login_required
 def api_provider_ranking():
     """
     Return provider ranking for the most recent analyzed job.
@@ -4312,6 +4361,7 @@ def api_provider_ranking():
 
 
 @app.route('/api/results/detailed/<job_id>')
+@login_required
 def api_job_results(job_id):
     """Get detailed analysis results for a specific job"""
     try:
@@ -4341,6 +4391,7 @@ def api_job_results(job_id):
 
 
 @app.route('/api/results/job/<job_id>')
+@login_required
 def api_job_scoped_results(job_id):
     """Get detailed analysis results scoped to a specific job."""
     try:
@@ -4370,6 +4421,7 @@ def api_job_scoped_results(job_id):
 
 
 @app.route('/api/results/detailed')
+@login_required
 def api_detailed_results():
     """Get detailed analysis results from the most recent completed job"""
     try:
@@ -4435,6 +4487,7 @@ def api_detailed_results():
 
 
 @app.route('/api/results/csv')
+@login_required
 def api_export_csv():
     """Export results as CSV"""
     job_id = request.args.get('job_id')
@@ -4467,6 +4520,7 @@ def api_export_csv():
 
 
 @app.route('/api/results/streams')
+@login_required
 def api_results_streams():
     """
     Return per-stream rows from the most recent (or job-scoped) analysis CSV.
@@ -4557,6 +4611,7 @@ def api_results_streams():
 
 
 @app.route('/api/dispatcharr-plan/<job_id>')
+@login_required
 def api_dispatcharr_plan(job_id):
     """
     Return a job-scoped Dispatcharr change plan (dry-run output).
@@ -4841,6 +4896,7 @@ def api_dispatcharr_plan(job_id):
 
 
 @app.route('/api/dispatcharr-plan/<job_id>/commit', methods=['POST'])
+@login_required
 def api_dispatcharr_plan_commit(job_id):
     """
     Apply a job-scoped Dispatcharr change plan (created by the plan-only cleanup job).
@@ -5019,6 +5075,7 @@ def api_dispatcharr_plan_commit(job_id):
 
 
 @app.route('/api/regex/generate', methods=['POST'])
+@login_required
 def api_generate_regex():
     """
     Generate a "minimal-ish" regex from include/exclude lists.
@@ -5054,6 +5111,7 @@ def api_generate_regex():
 
 
 @app.route('/api/regex/save', methods=['POST'])
+@login_required
 def api_save_regex():
     """
     Validate and save a stream-name regex preset (for Regex Override).
@@ -5090,6 +5148,7 @@ def api_save_regex():
 
 
 @app.route('/api/regex/presets/resolve', methods=['POST'])
+@login_required
 def api_resolve_regex_preset():
     """
     Resolve a saved regex preset (pipeline preset) to concrete channels.
@@ -5111,6 +5170,7 @@ def api_resolve_regex_preset():
 
 
 @app.route('/api/regex/presets', methods=['GET'])
+@login_required
 def api_list_regex_presets():
     """List saved stream-name regex presets (for Regex Override dropdown)."""
     try:
@@ -5129,6 +5189,7 @@ def api_list_regex_presets():
 
 
 @app.route('/api/regex/presets/<preset_id>', methods=['DELETE'])
+@login_required
 def api_delete_regex_preset(preset_id):
     """Delete a saved stream-name regex preset by id."""
     try:
@@ -5149,6 +5210,7 @@ def api_delete_regex_preset(preset_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/config')
+@login_required
 def api_get_config():
     """Get current configuration"""
     try:
@@ -5167,6 +5229,7 @@ def api_get_config():
 
 
 @app.route('/api/config', methods=['POST'])
+@login_required
 def api_update_config():
     """Update configuration"""
     try:
