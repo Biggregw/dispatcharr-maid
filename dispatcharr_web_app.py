@@ -1500,6 +1500,16 @@ def _build_job_meta(job_id, job_type, config):
     return meta
 
 
+
+def _has_analysis_summary(payload):
+    # We consider an analysis summary present if it includes a numeric total.
+    # (Pattern pipeline jobs may store other keys like "pattern_pipeline" without analysis totals.)
+    if not isinstance(payload, dict):
+        return False
+    total = payload.get('total')
+    return isinstance(total, (int, float))
+
+
 def _get_job_results(job_id):
     with job_lock:
         job = jobs.get(job_id)
@@ -1526,13 +1536,6 @@ def _get_job_results(job_id):
 
     analysis_expected = _job_ran_analysis(job_type) if job_type else False
 
-    def _has_analysis_summary(payload):
-        # We consider an analysis summary present if it includes a numeric total.
-        # (Pattern pipeline jobs may store other keys like "pattern_pipeline" without analysis totals.)
-        if not isinstance(payload, dict):
-            return False
-        total = payload.get('total')
-        return isinstance(total, (int, float))
 
     # If analysis is expected but the saved result payload doesn't contain analysis totals,
     # reconstruct the summary from the job workspace CSVs.
