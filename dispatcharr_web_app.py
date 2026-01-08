@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 import fcntl
+from urllib.parse import urlparse
 from functools import wraps
 from datetime import datetime
 from pathlib import Path
@@ -1783,6 +1784,34 @@ def _coerce_float_value(value):
         return None
 
 
+def _build_stream_url_observation(stream_url):
+    stream_url = _normalize_quality_value(stream_url)
+    if not stream_url:
+        return None
+    parsed = urlparse(stream_url)
+    path = parsed.path or ""
+    extension = os.path.splitext(path)[1].lower().lstrip(".") or None
+    protocol_hint = None
+    if extension in ("m3u8",):
+        protocol_hint = "HLS"
+    elif extension in ("mpd",):
+        protocol_hint = "DASH"
+    elif extension in ("ts", "m2ts"):
+        protocol_hint = "MPEG-TS"
+    elif parsed.scheme:
+        protocol_hint = parsed.scheme.upper()
+
+    return {
+        "scheme": parsed.scheme or None,
+        "host": parsed.hostname or None,
+        "path_length": len(path) if path else 0,
+        "has_query": bool(parsed.query),
+        "extension": extension,
+        "protocol_hint": protocol_hint,
+        "container_hint": extension,
+    }
+
+
 def _append_quality_check_observations(job, config, channels_override=None):
     measurements_path = config.resolve_path('csv/03_iptv_stream_measurements.csv')
     if not os.path.exists(measurements_path):
@@ -1823,13 +1852,16 @@ def _append_quality_check_observations(job, config, channels_override=None):
 
                 stream_id = _coerce_int_value(row.get('stream_id'))
                 record_timestamp = _normalize_quality_value(row.get('timestamp')) or datetime.now().isoformat()
+                url_observations = _build_stream_url_observation(row.get('stream_url'))
 
                 record = {
                     'run_id': run_id,
                     'job_id': job.job_id,
                     'timestamp': record_timestamp,
+                    'channel_number': _coerce_int_value(row.get('channel_number')),
                     'channel_id': channel_id,
                     'channel_name': channel_name_map.get(channel_id),
+                    'channel_group_id': _coerce_int_value(row.get('channel_group_id')),
                     'stream_id': stream_id,
                     'provider_id': _normalize_quality_value(row.get('m3u_account')),
                     'stream_name': _normalize_quality_value(row.get('stream_name')),
@@ -1839,6 +1871,7 @@ def _append_quality_check_observations(job, config, channels_override=None):
                             'audio_codec': _normalize_quality_value(row.get('audio_codec')),
                             'resolution': _normalize_quality_value(row.get('resolution')),
                             'bitrate_kbps': _coerce_float_value(row.get('bitrate_kbps')),
+                            'fps': _coerce_float_value(row.get('fps')),
                             'interlaced_status': _normalize_quality_value(row.get('interlaced_status')),
                         },
                         'measurements': {
@@ -1852,6 +1885,8 @@ def _append_quality_check_observations(job, config, channels_override=None):
                         },
                     },
                 }
+                if url_observations:
+                    record['observations']['stream_url'] = url_observations
 
                 try:
                     f_out.write(json.dumps(_make_json_safe(record), ensure_ascii=False) + "\n")
