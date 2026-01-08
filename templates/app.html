@@ -1373,13 +1373,13 @@
                         <button class="action-btn primary" onclick="startJob('full_cleanup_plan', null, event)"
                                 style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
                             <span>🔎</span>
-                            <span>Quality Check (Preview Plan)</span>
+                            <span>Quality Check (Read-Only)</span>
                         </button>
 
                         <div class="action-help">
                             <div style="font-weight: 700; color: #2d3748; margin-bottom: 6px;">Which one should I use?</div>
                             <div><strong>Apply Changes</strong> will analyze + score, then <strong>order</strong> and <strong>clean up</strong> streams immediately (uses your “Streams Per Provider” limit).</div>
-                            <div style="margin-top: 6px;"><strong>Preview Plan</strong> makes <strong>no changes</strong>. It generates a reviewable plan in Results, where you can commit it later.</div>
+                            <div style="margin-top: 6px;"><strong>Quality Check (Read-Only)</strong> runs read-only checks on the selected channels and logs results for inspection only. It makes no changes, performs no ordering, and applies nothing.</div>
                         </div>
                     </div>
                 </div>
@@ -1546,11 +1546,11 @@
     <div id="apply-confirm-modal" class="modal-overlay hidden">
         <div class="modal">
             <div class="modal-header">
-                <div class="modal-title">Run without Preview?</div>
+                <div class="modal-title">Run Apply Changes now?</div>
                 <button class="btn btn-back" onclick="closeApplyConfirmModal()">✖</button>
             </div>
             <div class="modal-body">
-                <p style="margin: 0; color: #374151;">Preview Plan hasn’t been run this session. Applying changes updates Dispatcharr immediately.</p>
+                <p style="margin: 0; color: #374151;">Applying changes updates Dispatcharr immediately.</p>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-back" onclick="closeApplyConfirmModal()">Cancel</button>
@@ -2787,7 +2787,7 @@
             return {
                 refresh_optimize: 'Refresh Channel Streams',
                 pattern_refresh_full_cleanup: 'Saved Job (Refresh + QC + Cleanup)',
-                full_cleanup_plan: 'Quality Check (Preview Plan)',
+                full_cleanup_plan: 'Quality Check (Read-Only)',
                 full_cleanup: 'Quality Check (Apply Changes)',
                 full: 'Full Job',
                 fetch: 'Fetch Streams',
@@ -2945,10 +2945,6 @@
                 if (data.success) {
                     currentJobId = data.job_id;
                     lastTerminalJobId = null;
-
-                    if (jobType === 'full_cleanup_plan') {
-                        hasRunPreviewPlan = true;
-                    }
 
                     // Show current job card
                     document.getElementById('current-job-card').classList.remove('hidden');
@@ -3139,8 +3135,8 @@
             const planReminderStatuses = ['queued', 'running', 'completed'];
             const showPlanReminder = job.job_type === 'full_cleanup_plan' && planReminderStatuses.includes(job.status);
             const planReminderCopy = job.status === 'completed'
-                ? 'Preview Plan finished. Open Results → Planned Changes to review and commit the plan.'
-                : 'Preview Plan runs do not apply changes. Open Results → Planned Changes to review and commit when it finishes.';
+                ? 'Read-Only Quality Check finished. Open Results to inspect the checks.'
+                : 'Read-Only Quality Check runs do not apply changes. Open Results to inspect the checks when it finishes.';
             
             const processed = typeof job.stage_progress === 'number'
                 ? job.stage_progress
@@ -3642,7 +3638,7 @@
                 let typeLabel = {
                     'refresh_optimize': 'Refresh',
                     'pattern_refresh_full_cleanup': 'Saved Job',
-                    'full_cleanup_plan': 'Quality Check (Preview Plan)',
+                    'full_cleanup_plan': 'Quality Check (Read-Only)',
                     'full_cleanup': 'Quality Check (Apply Changes)',
                     'full': 'Full Job',
                     'fetch': 'Fetch',
