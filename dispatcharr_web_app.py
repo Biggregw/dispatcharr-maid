@@ -111,27 +111,13 @@ def _ensure_dispatcharr_ready():
 
 def _append_dispatcharr_snapshot():
     """Append a snapshot of Dispatcharr channels/streams to logs/quality_checks.ndjson."""
-    base_url = os.getenv("DISPATCHARR_BASE_URL", "").rstrip("/")
-    token = os.getenv("DISPATCHARR_TOKEN")
-    if not base_url or not token:
-        logging.warning("Dispatcharr snapshot skipped: missing DISPATCHARR_BASE_URL or DISPATCHARR_TOKEN.")
-        return
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
     timestamp = datetime.utcnow().isoformat() + "Z"
     log_path = Path("logs") / "quality_checks.ndjson"
 
     try:
-        channels_response = requests.get(
-            f"{base_url}/api/channels/channels/",
-            headers=headers,
-            timeout=30,
-        )
-        channels_response.raise_for_status()
-        channels = channels_response.json() or []
+        api = DispatcharrAPI()
+        api.login()
+        channels = api.fetch_channels() or []
 
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as handle:
@@ -147,13 +133,7 @@ def _append_dispatcharr_snapshot():
                 if not channel_id:
                     continue
 
-                streams_response = requests.get(
-                    f"{base_url}/api/channels/channels/{channel_id}/streams/",
-                    headers=headers,
-                    timeout=30,
-                )
-                streams_response.raise_for_status()
-                streams = streams_response.json() or []
+                streams = api.fetch_channel_streams(channel_id) or []
 
                 for stream in streams:
                     record = {
