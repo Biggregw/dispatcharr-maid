@@ -5,6 +5,7 @@ Full interactive web application for Dispatcharr Maid
 Run everything from the browser - no CLI needed!
 """
 
+import csv
 import json
 import html
 import hashlib
@@ -1751,6 +1752,119 @@ def _sanitize_job_for_response(job):
     return payload
 
 
+def _normalize_quality_value(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned == "" or cleaned.upper() == "N/A":
+            return None
+        return cleaned
+    return value
+
+
+def _coerce_int_value(value):
+    value = _normalize_quality_value(value)
+    if value is None:
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_float_value(value):
+    value = _normalize_quality_value(value)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _append_quality_check_observations(job, config, channels_override=None):
+    measurements_path = config.resolve_path('csv/03_iptv_stream_measurements.csv')
+    if not os.path.exists(measurements_path):
+        logging.warning("Quality check observations skipped; measurements file missing at %s", measurements_path)
+        return
+
+    run_id = job.job_id
+    channel_ids = set()
+    for cid in job.channels or []:
+        try:
+            channel_ids.add(int(cid))
+        except (TypeError, ValueError):
+            continue
+
+    channel_name_map = {}
+    if channels_override:
+        for channel in channels_override:
+            if not isinstance(channel, dict):
+                continue
+            cid = channel.get('id')
+            try:
+                cid = int(cid)
+            except (TypeError, ValueError):
+                continue
+            channel_name_map[cid] = channel.get('name')
+
+    output_path = Path('logs/quality_checks.ndjson')
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with open(measurements_path, 'r', encoding='utf-8') as f_in, \
+             open(output_path, 'a', encoding='utf-8') as f_out:
+            reader = csv.DictReader(f_in)
+            for row in reader:
+                channel_id = _coerce_int_value(row.get('channel_id'))
+                if channel_ids and channel_id not in channel_ids:
+                    continue
+
+                stream_id = _coerce_int_value(row.get('stream_id'))
+                record_timestamp = _normalize_quality_value(row.get('timestamp')) or datetime.now().isoformat()
+
+                record = {
+                    'run_id': run_id,
+                    'job_id': job.job_id,
+                    'timestamp': record_timestamp,
+                    'channel_id': channel_id,
+                    'channel_name': channel_name_map.get(channel_id),
+                    'stream_id': stream_id,
+                    'provider_id': _normalize_quality_value(row.get('m3u_account')),
+                    'stream_name': _normalize_quality_value(row.get('stream_name')),
+                    'observations': {
+                        'static_metadata': {
+                            'video_codec': _normalize_quality_value(row.get('video_codec')),
+                            'audio_codec': _normalize_quality_value(row.get('audio_codec')),
+                            'resolution': _normalize_quality_value(row.get('resolution')),
+                            'bitrate_kbps': _coerce_float_value(row.get('bitrate_kbps')),
+                            'interlaced_status': _normalize_quality_value(row.get('interlaced_status')),
+                        },
+                        'measurements': {
+                            'status': _normalize_quality_value(row.get('status')),
+                            'frames_decoded': _coerce_int_value(row.get('frames_decoded')),
+                            'frames_dropped': _coerce_int_value(row.get('frames_dropped')),
+                            'err_decode': _coerce_int_value(row.get('err_decode')),
+                            'err_discontinuity': _coerce_int_value(row.get('err_discontinuity')),
+                            'err_timeout': _coerce_int_value(row.get('err_timeout')),
+                            'stream_url': _normalize_quality_value(row.get('stream_url')),
+                        },
+                    },
+                }
+
+                try:
+                    f_out.write(json.dumps(_make_json_safe(record), ensure_ascii=False) + "\n")
+                except Exception:
+                    logging.warning(
+                        "Failed to append quality check record for stream %s",
+                        row.get('stream_id'),
+                        exc_info=True,
+                    )
+    except Exception:
+        logging.warning("Failed to append quality check observations to %s", output_path, exc_info=True)
+
+
 def save_job_to_history(job):
     """Save completed job to history"""
     history_file = 'logs/job_history.json'
@@ -2260,6 +2374,8 @@ def run_job_worker(job, api, config):
             if job.cancel_requested:
                 job.status = 'cancelled'
                 return
+
+            _append_quality_check_observations(job, config, channels_override=channels_override)
 
             # Step 3: Score (local only; do not patch Dispatcharr stream stats)
             job.current_step = 'Scoring streams (no Dispatcharr updates)...'
