@@ -587,7 +587,7 @@ def _fetch_stream_provider_map(api, config):
 
     return stream_provider_map
 
-def fetch_streams(api, config, output_file=None, progress_callback=None, stream_provider_map_override=None):
+def fetch_streams(api, config, output_file=None, progress_callback=None, stream_provider_map_override=None, channels_override=None):
     """Fetch streams for channels based on filters.
 
     Optionally accepts:
@@ -629,9 +629,13 @@ def fetch_streams(api, config, output_file=None, progress_callback=None, stream_
         for group in groups:
             writer.writerow([group.get("id", ""), group.get("name", "")])
     
-    # Fetch all channels
-    all_channels = api.fetch_channels()
-    logging.info(f"Found {len(all_channels)} total channels")
+    # Fetch all channels (unless an explicit override is provided)
+    if channels_override is not None:
+        all_channels = channels_override
+        logging.info(f"Using {len(all_channels)} pre-resolved channels")
+    else:
+        all_channels = api.fetch_channels()
+        logging.info(f"Found {len(all_channels)} total channels")
     
     # Filter channels
     if specific_channel_ids:

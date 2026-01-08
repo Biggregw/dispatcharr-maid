@@ -184,6 +184,10 @@ class DispatcharrAPI:
     def fetch_channels(self):
         """Fetch all channels"""
         return self.get('/api/channels/channels/')
+
+    def fetch_channel(self, channel_id):
+        """Fetch a single channel by ID"""
+        return self.get(f'/api/channels/channels/{channel_id}/')
     
     def fetch_channel_streams(self, channel_id):
         """Fetch streams for a specific channel"""

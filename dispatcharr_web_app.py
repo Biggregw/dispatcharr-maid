@@ -724,6 +724,21 @@ def _resolve_channels_for_preset(api, preset):
     return ids, details
 
 
+def _fetch_channels_by_id(api, channel_ids):
+    if not channel_ids:
+        return []
+    channels = []
+    for cid in channel_ids:
+        try:
+            channel = api.fetch_channel(int(cid))
+        except Exception as exc:
+            logging.warning("Failed to fetch channel %s: %s", cid, exc)
+            continue
+        if isinstance(channel, dict):
+            channels.append(channel)
+    return channels
+
+
 def _get_latest_job_with_workspace():
     """Return the most recent job that has an assigned workspace"""
     with job_lock:
@@ -2189,12 +2204,22 @@ def run_job_worker(job, api, config):
 
             job.current_step = 'Fetching streams...'
             _job_set_stage(job, 'fetch', 'Fetch')
+            channels_override = _fetch_channels_by_id(api, job.channels or [])
+            if not channels_override:
+                job.status = 'failed'
+                job.current_step = 'Error: No channels matched the explicit selection'
+                return
 
             def fetch_progress(pdata):
                 progress_callback(job, pdata)
                 return not job.cancel_requested
 
-            fetch_streams(api, config, progress_callback=fetch_progress)
+            fetch_streams(
+                api,
+                config,
+                progress_callback=fetch_progress,
+                channels_override=channels_override,
+            )
 
             # Step 2: Analyze (FORCE re-analysis of all streams)
             if job.cancel_requested:
@@ -2262,6 +2287,7 @@ def run_job_worker(job, api, config):
                 config,
                 job.streams_per_provider,
                 job.channels,
+                channels_override=channels_override,
                 progress_callback=plan_progress,
                 should_continue=lambda: not job.cancel_requested,
                 dry_run=True,
@@ -2613,6 +2639,7 @@ def cleanup_streams_by_provider(
     config,
     streams_per_provider=1,
     specific_channel_ids=None,
+    channels_override=None,
     progress_callback=None,
     should_continue=None,
     dry_run=False,
@@ -2713,7 +2740,10 @@ def cleanup_streams_by_provider(
             return stats, plan_rows
         return stats
 
-    channels = api.fetch_channels()
+    if channels_override is not None:
+        channels = channels_override
+    else:
+        channels = api.fetch_channels()
 
     # Filter by specific channels if provided, otherwise use groups.
     # Normalize IDs to int to avoid "0 matched" when one side is str.
@@ -3935,6 +3965,13 @@ def api_start_job():
                 channels = resolved_ids
                 group_names = selection_pattern_name
                 channel_names = f'{len(channels)} channels (pattern)'
+
+        if job_type == 'full_cleanup_plan':
+            if not isinstance(channels, list) or not channels:
+                return jsonify({
+                    'success': False,
+                    'error': 'Quality Check (Preview Plan) requires an explicit channel selection.'
+                }), 400
 
         if not groups:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
