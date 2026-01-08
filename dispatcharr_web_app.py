@@ -134,13 +134,16 @@ def _append_dispatcharr_snapshot():
                     continue
 
                 streams = api.fetch_channel_streams(channel_id) or []
+                stream_count = len(streams)
 
-                for stream in streams:
+                for order_index, stream in enumerate(streams):
                     record = {
                         "timestamp": timestamp,
                         "channel_id": channel_id,
                         "channel_name": channel_name,
                         "channel_group_id": channel_group_id,
+                        "order_index": order_index,
+                        "channel_stream_count": stream_count,
                         "stream_id": stream.get("id") or stream.get("stream_id"),
                         "provider_id": (
                             stream.get("provider_id")
@@ -153,6 +156,53 @@ def _append_dispatcharr_snapshot():
     except Exception as exc:
         logging.warning("Dispatcharr snapshot failed: %s", exc)
         return
+
+
+def _parse_snapshot_interval_seconds(default_seconds=1800):
+    env_value = os.getenv("DISPATCHARR_SNAPSHOT_INTERVAL_SECONDS")
+    if env_value:
+        try:
+            return max(1, int(env_value))
+        except ValueError:
+            logging.warning(
+                "Invalid DISPATCHARR_SNAPSHOT_INTERVAL_SECONDS value: %s", env_value
+            )
+
+    flag_prefix = "--snapshot-dispatcharr-loop"
+    for index, arg in enumerate(sys.argv):
+        if arg == flag_prefix and index + 1 < len(sys.argv):
+            candidate = sys.argv[index + 1]
+        elif arg.startswith(f"{flag_prefix}="):
+            candidate = arg.split("=", 1)[1]
+        else:
+            continue
+
+        try:
+            return max(1, int(candidate))
+        except ValueError:
+            logging.warning(
+                "Invalid snapshot loop interval value: %s", candidate
+            )
+            break
+
+    return default_seconds
+
+
+def _run_dispatcharr_snapshot_loop():
+    interval_seconds = _parse_snapshot_interval_seconds()
+    logging.info(
+        "Starting Dispatcharr snapshot loop (interval=%s seconds).",
+        interval_seconds,
+    )
+    try:
+        while True:
+            try:
+                _append_dispatcharr_snapshot()
+            except Exception as exc:
+                logging.warning("Dispatcharr snapshot loop error: %s", exc)
+            time.sleep(interval_seconds)
+    except KeyboardInterrupt:
+        logging.info("Dispatcharr snapshot loop stopped.")
 
 
 def _render_auth_error(error_message):
@@ -5572,6 +5622,10 @@ def api_update_config():
 
 
 if __name__ == '__main__':
+    if "--snapshot-dispatcharr-loop" in sys.argv:
+        _run_dispatcharr_snapshot_loop()
+        sys.exit(0)
+
     if "--snapshot-dispatcharr" in sys.argv:
         _append_dispatcharr_snapshot()
         sys.exit(0)
