@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 import fcntl
+import requests
 from urllib.parse import urlparse
 from functools import wraps
 from datetime import datetime
@@ -106,6 +107,72 @@ def _ensure_dispatcharr_ready():
         _dispatcharr_auth_state['last_error'] = str(exc)
         logging.error("Dispatcharr authentication check failed: %s", exc)
         return False, _dispatcharr_auth_state['last_error']
+
+
+def _append_dispatcharr_snapshot():
+    """Append a snapshot of Dispatcharr channels/streams to logs/quality_checks.ndjson."""
+    base_url = os.getenv("DISPATCHARR_BASE_URL", "").rstrip("/")
+    token = os.getenv("DISPATCHARR_TOKEN")
+    if not base_url or not token:
+        logging.warning("Dispatcharr snapshot skipped: missing DISPATCHARR_BASE_URL or DISPATCHARR_TOKEN.")
+        return
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+    timestamp = datetime.utcnow().isoformat() + "Z"
+    log_path = Path("logs") / "quality_checks.ndjson"
+
+    try:
+        channels_response = requests.get(
+            f"{base_url}/api/channels/channels/",
+            headers=headers,
+            timeout=30,
+        )
+        channels_response.raise_for_status()
+        channels = channels_response.json() or []
+
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            for channel in channels:
+                channel_id = channel.get("id")
+                channel_name = channel.get("name") or channel.get("channel_name")
+                channel_group_id = (
+                    channel.get("group_id")
+                    or channel.get("channel_group_id")
+                    or channel.get("group")
+                )
+
+                if not channel_id:
+                    continue
+
+                streams_response = requests.get(
+                    f"{base_url}/api/channels/channels/{channel_id}/streams/",
+                    headers=headers,
+                    timeout=30,
+                )
+                streams_response.raise_for_status()
+                streams = streams_response.json() or []
+
+                for stream in streams:
+                    record = {
+                        "timestamp": timestamp,
+                        "channel_id": channel_id,
+                        "channel_name": channel_name,
+                        "channel_group_id": channel_group_id,
+                        "stream_id": stream.get("id") or stream.get("stream_id"),
+                        "provider_id": (
+                            stream.get("provider_id")
+                            or stream.get("m3u_account")
+                            or stream.get("account_id")
+                        ),
+                        "source": "dispatcharr",
+                    }
+                    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logging.warning("Dispatcharr snapshot failed: %s", exc)
+        return
 
 
 def _render_auth_error(error_message):
@@ -5525,6 +5592,10 @@ def api_update_config():
 
 
 if __name__ == '__main__':
+    if "--snapshot-dispatcharr" in sys.argv:
+        _append_dispatcharr_snapshot()
+        sys.exit(0)
+
     print("\n" + "="*70)
     print("🧹 DISPATCHARR MAID - WEB APPLICATION")
     print("="*70)
