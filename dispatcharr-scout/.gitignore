@@ -1,0 +1,41 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment and IDE files
+.env
+*.env
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Logs and runtime output
+logs/
+*.log
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+
+# Sensitive provider and job data
+provider_names.json
+provider_map.json
+provider_metadata.json
+jobs/
+csv/
+
+# User-specific configuration
+config.yaml
+*.backup
+debug_quality_check_results.sh
+diagnostic_endpoints.py
+quality_check_results_bug_analysis.md

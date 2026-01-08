@@ -1,0 +1,42 @@
+
+services:
+  # Interactive Web Application (always running)
+  dispatcharr-scout-web:
+    env_file:
+      - .env
+    networks:
+      - dispatcharr_default
+    build: .
+    container_name: dispatcharr-scout-web
+    restart: unless-stopped
+    ports:
+      - "5100:5100"  # Web application port
+    volumes:
+      - ./csv:/app/csv           # CSV data files
+      - ./logs:/app/logs         # Logs and checkpoints
+      - ./jobs:/app/jobs         # Per-job workspaces (persist results)
+      - ./config.yaml:/app/config.yaml  # Configuration
+      # Optional: mount reverse-proxy access logs for provider usage stats
+      # (e.g. Nginx Proxy Manager /data/logs). Update config.yaml usage.access_log_dir accordingly.
+      # - /path/on/host/npm-data/logs:/app/npm_logs:ro
+      - ./dispatcharr_web_app.py:/app/dispatcharr_web_app.py  # Main web app
+      - ./stream_analysis.py:/app/stream_analysis.py          # Stream analysis library
+      - ./api_utils.py:/app/api_utils.py                      # API utilities
+      - ./provider_usage.py:/app/provider_usage.py            # Provider usage via access logs
+      - ./interactive_maid.py:/app/interactive_maid.py        # Interactive CLI
+      - ./web_monitor.py:/app/web_monitor.py                  # Web monitor
+      - ./templates:/app/templates                            # HTML templates
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python3 dispatcharr_web_app.py
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+
+networks:
+  dispatcharr_default:
+    external: true
