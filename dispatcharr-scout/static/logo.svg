@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Dispatcharr Scout logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#667eea"/>
+      <stop offset="1" stop-color="#764ba2"/>
+    </linearGradient>
+    <linearGradient id="handle" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4d7b0"/>
+      <stop offset="1" stop-color="#d4a373"/>
+    </linearGradient>
+    <linearGradient id="head" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <circle cx="128" cy="128" r="120" fill="url(#bg)"/>
+  <circle cx="128" cy="128" r="120" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="6"/>
+
+  <!-- Sparkles -->
+  <g opacity="0.9">
+    <path d="M60 84l6 10 10 6-10 6-6 10-6-10-10-6 10-6 6-10z" fill="rgba(255,255,255,0.85)"/>
+    <path d="M196 56l5 8 8 5-8 5-5 8-5-8-8-5 8-5 5-8z" fill="rgba(255,255,255,0.75)"/>
+    <path d="M206 152l4 7 7 4-7 4-4 7-4-7-7-4 7-4 4-7z" fill="rgba(255,255,255,0.6)"/>
+  </g>
+
+  <!-- Broom -->
+  <g filter="url(#softShadow)">
+    <!-- Handle -->
+    <path d="M74 66c2-2 5-2 7 0l92 92c2 2 2 5 0 7l-6 6c-2 2-5 2-7 0L68 79c-2-2-2-5 0-7l6-6z"
+          fill="url(#handle)"/>
+    <!-- Handle highlight -->
+    <path d="M77 71c1-1 3-1 4 0l88 88c1 1 1 3 0 4l-2 2c-1 1-3 1-4 0L75 77c-1-1-1-3 0-4l2-2z"
+          fill="rgba(255,255,255,0.22)"/>
+
+    <!-- Head -->
+    <path d="M148 162l24-24c4-4 11-4 15 0l18 18c9 9 9 24 0 33l-8 8c-9 9-24 9-33 0l-18-18c-4-4-4-11 0-15z"
+          fill="url(#head)"/>
+    <!-- Bristles -->
+    <path d="M160 180c12 10 29 9 39-1l8-8c3-3 5-7 6-11l-61 61c4-1 8-3 11-6l-3-3c-6-6-6-16 0-22z"
+          fill="rgba(0,0,0,0.10)"/>
+    <path d="M156 176l58-58" stroke="rgba(255,255,255,0.35)" stroke-width="6" stroke-linecap="round"/>
+    <path d="M150 170l58-58" stroke="rgba(255,255,255,0.22)" stroke-width="6" stroke-linecap="round"/>
+  </g>
+</svg>
