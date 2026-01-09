@@ -1,19 +1,30 @@
-from stream_analysis import _interleave_by_provider
+from stream_analysis import order_streams_for_channel
 
 
-def test_interleave_by_provider_respects_tiers():
+def test_ordering_includes_all_streams():
     records = [
-        {"stream_id": 1, "provider": "A", "score": 90},
-        {"stream_id": 2, "provider": "A", "score": 80},
-        {"stream_id": 3, "provider": "B", "score": 85},
-        {"stream_id": 4, "provider": "B", "score": 70},
-        {"stream_id": 5, "provider": "C", "score": 75},
+        {"stream_id": 1, "m3u_account": "A", "score": 10},
+        {"stream_id": 2, "m3u_account": "A", "score": 8},
+        {"stream_id": 3, "m3u_account": "B", "score": 9},
+        {"stream_id": 4, "m3u_account": "B", "score": 7},
+        {"stream_id": 5, "m3u_account": "C", "score": 6},
     ]
 
-    ordered = _interleave_by_provider(
-        records,
-        lambda r: r.get("provider"),
-        lambda r: r.get("score", 0),
-    )
+    ordered = order_streams_for_channel(records)
 
-    assert [r["stream_id"] for r in ordered] == [1, 3, 5, 2, 4]
+    assert set(ordered) == {1, 2, 3, 4, 5}
+    assert len(ordered) == len(records)
+
+
+def test_ordering_is_deterministic_across_runs():
+    records = [
+        {"stream_id": 10, "m3u_account": "A", "score": 5},
+        {"stream_id": 11, "m3u_account": "A", "score": 5},
+        {"stream_id": 12, "m3u_account": "B", "score": 5},
+    ]
+    reversed_records = list(reversed(records))
+
+    ordered_first = order_streams_for_channel(records)
+    ordered_second = order_streams_for_channel(reversed_records)
+
+    assert ordered_first == ordered_second

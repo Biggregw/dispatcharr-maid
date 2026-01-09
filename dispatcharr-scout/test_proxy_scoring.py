@@ -3,7 +3,6 @@ import pandas as pd
 from stream_analysis import (
     Config,
     _determine_validation,
-    _interleave_by_provider,
     order_streams_for_channel,
     score_streams,
 )
@@ -98,80 +97,25 @@ def test_clean_stream_ranked_first(tmp_path):
     assert scored.loc[2, "validation_result"].lower() == "fail"
 
 
-def test_failed_stream_demotion_outweighs_bitrate():
-    records = [
-        {
-            "stream_id": 1,
-            "m3u_account": "provA",
-            "ordering_score": 120,
-            "validation_result": "pass",
-        },
-        {
-            "stream_id": 2,
-            "m3u_account": "provB",
-            "ordering_score": 300,  # raw score higher but failed validation
-            "validation_result": "fail",
-            "validation_reason": "err_timeout",
-        },
-    ]
-
-    tier1, tier2 = order_streams_for_channel(records, resilience_mode=False, fallback_depth=2, similar_score_delta=5)
-    assert tier1 == [1]
-    assert tier2 == [2]
-
-
-def test_legacy_ordering_ignores_validation_dominance():
-    records = [
-        {
-            "stream_id": 31,
-            "m3u_account": "provA",
-            "ordering_score": 120,
-            "validation_result": "pass",
-        },
-        {
-            "stream_id": 32,
-            "m3u_account": "provB",
-            "ordering_score": 300,
-            "validation_result": "fail",
-        },
-    ]
-
-    tier1, tier2 = order_streams_for_channel(
-        records,
-        resilience_mode=False,
-        fallback_depth=2,
-        similar_score_delta=5,
-        validation_dominant=False,
-    )
-    assert tier1 == [31]
-    assert tier2 == [32]
-
-
-def test_provider_diversification_keeps_failed_last():
+def test_validation_penalty_influences_ordering():
     records = [
         {
             "stream_id": 11,
             "m3u_account": "provA",
-            "ordering_score": 150,
+            "score": 150,
             "validation_result": "pass",
         },
         {
             "stream_id": 12,
             "m3u_account": "provB",
-            "ordering_score": 140,
-            "validation_result": "pass",
-        },
-        {
-            "stream_id": 13,
-            "m3u_account": "provC",
-            "ordering_score": 200,
+            "score": 150,
             "validation_result": "fail",
         },
     ]
 
-    tier1, tier2 = order_streams_for_channel(records, resilience_mode=True, fallback_depth=2, similar_score_delta=5)
-    assert tier1[:2] == [11, 12]
-    assert tier2 == [13]
+    ordered = order_streams_for_channel(records)
+
+    assert ordered == [11, 12]
 
 
 def test_validation_allows_single_hd_timeout_with_sane_bitrate():
@@ -337,7 +281,7 @@ def test_legacy_scoring_orders_by_resolution_and_bitrate(tmp_path):
     assert "validation_result" not in scored.columns
 
 
-def test_all_failed_follows_legacy_provider_interleave():
+def test_ordering_uses_existing_ordering_score():
     records = [
         {"stream_id": 21, "m3u_account": "provA", "ordering_score": 200, "validation_result": "fail"},
         {"stream_id": 22, "m3u_account": "provB", "ordering_score": 180, "validation_result": "fail"},
@@ -345,7 +289,6 @@ def test_all_failed_follows_legacy_provider_interleave():
     ]
 
     expected = [r["stream_id"] for r in sorted(records, key=lambda r: r.get("ordering_score"), reverse=True)]
-    tier1, tier2 = order_streams_for_channel(records, resilience_mode=False, fallback_depth=2, similar_score_delta=5)
+    ordered = order_streams_for_channel(records)
 
-    assert tier1 == []
-    assert tier2 == expected
+    assert ordered == expected

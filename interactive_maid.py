@@ -128,99 +128,6 @@ def get_user_selection(groups):
             print("\nLet's try again...\n")
 
 
-def cleanup_streams_by_provider(api, selected_group_ids):
-    """Keep only the top stream from each provider for each channel"""
-    print("\n" + "="*70)
-    print("CLEANING UP - KEEPING TOP STREAM PER PROVIDER PER CHANNEL")
-    print("="*70 + "\n")
-    
-    channels = api.fetch_channels()
-
-    # Performance: fetch provider IDs for all streams once (avoid N+1 API calls)
-    stream_provider_map = {}
-    try:
-        stream_provider_map = api.fetch_stream_provider_map()
-    except Exception as e:
-        print(f"Warning: could not build stream provider map; using per-stream lookups: {e}")
-    
-    filtered_channels = [
-        ch for ch in channels 
-        if ch.get('channel_group_id') in selected_group_ids
-    ]
-    
-    print(f"Processing {len(filtered_channels)} channels in selected groups\n")
-    
-    cleaned_count = 0
-    skipped_count = 0
-    total_removed = 0
-    
-    for channel in filtered_channels:
-        channel_id = channel['id']
-        channel_name = channel['name']
-        channel_number = channel.get('channel_number', 'N/A')
-        stream_ids = channel.get('streams', [])
-        
-        if not stream_ids or len(stream_ids) <= 1:
-            skipped_count += 1
-            continue
-        
-        print(f"  Channel {channel_number}: {channel_name} ({len(stream_ids)} streams)")
-        
-        # Group streams by provider (prefer cached provider map; fallback only when needed)
-        streams_by_provider = {}
-        
-        for stream_id in stream_ids:
-            sid = int(stream_id)
-            provider_id = stream_provider_map.get(sid)
-
-            if provider_id is None:
-                stream_details = api.fetch_stream_details(sid)
-                if stream_details:
-                    provider_id = stream_details.get('m3u_account')
-
-            if provider_id is None:
-                continue
-
-            if provider_id not in streams_by_provider:
-                streams_by_provider[provider_id] = []
-            streams_by_provider[provider_id].append(sid)
-        
-        # Keep only the first (top-ranked) stream from each provider
-        streams_to_keep = []
-        removed_this_channel = 0
-        
-        for provider_id, provider_streams in streams_by_provider.items():
-            if provider_streams:
-                # Keep the first stream (top-ranked after reordering)
-                streams_to_keep.append(provider_streams[0])
-                removed_count = len(provider_streams) - 1
-                
-                if removed_count > 0:
-                    print(f"     Provider {provider_id}: keeping stream {provider_streams[0]}, removing {removed_count}")
-                    removed_this_channel += removed_count
-        
-        if removed_this_channel > 0:
-            try:
-                api.update_channel_streams(channel_id, streams_to_keep)
-                cleaned_count += 1
-                total_removed += removed_this_channel
-                print(f"     ✓ Updated channel - removed {removed_this_channel} streams")
-            except Exception as e:
-                print(f"     ✗ Error: {e}")
-        else:
-            skipped_count += 1
-            print(f"     Already optimal (1 stream per provider)")
-        
-        print()
-    
-    print("="*70)
-    print(f"Cleanup complete!")
-    print(f"   Cleaned: {cleaned_count} channels")
-    print(f"   Skipped: {skipped_count} channels")
-    print(f"   Total streams removed: {total_removed}")
-    print("="*70 + "\n")
-
-
 def generate_summary_report(config):
     """Generate and display analysis summary"""
     measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
@@ -272,7 +179,7 @@ def generate_summary_report(config):
         print(f"\nCould not generate summary: {e}")
 
 
-def run_full_pipeline(api, config, selected_ids, with_cleanup=False):
+def run_full_pipeline(api, config, selected_ids):
     """Run the complete analysis pipeline"""
     start_time = time.time()
     
@@ -301,10 +208,6 @@ def run_full_pipeline(api, config, selected_ids, with_cleanup=False):
         print("STEP 4: REORDERING STREAMS IN DISPATCHARR")
         print("="*70)
         reorder_streams(api, config)
-        
-        # Cleanup (optional)
-        if with_cleanup:
-            cleanup_streams_by_provider(api, selected_ids)
         
         # Summary
         generate_summary_report(config)
@@ -406,15 +309,13 @@ def main():
         print("\n" + "="*70)
         print("WHAT WOULD YOU LIKE TO DO?")
         print("="*70)
-        print("1. Full pipeline + cleanup (fetch → analyze → score → reorder → cleanup)")
-        print("2. Full pipeline (fetch → analyze → score → reorder)")
-        print("3. Fetch only")
-        print("4. Analyze only")
-        print("5. Score only")
-        print("6. Reorder only")
-        print("7. Cleanup only (keep top stream per provider)")
-        print("8. Generate summary report")
-        print("9. Change group selection")
+        print("1. Full pipeline (fetch → analyze → score → reorder)")
+        print("2. Fetch only")
+        print("3. Analyze only")
+        print("4. Score only")
+        print("5. Reorder only")
+        print("6. Generate summary report")
+        print("7. Change group selection")
         print("0. Exit")
         
         choice = input("\nEnter choice (0-9): ").strip()
@@ -424,12 +325,9 @@ def main():
             sys.exit(0)
         
         elif choice == '1':
-            run_full_pipeline(api, config, selected_ids, with_cleanup=True)
+            run_full_pipeline(api, config, selected_ids)
         
         elif choice == '2':
-            run_full_pipeline(api, config, selected_ids, with_cleanup=False)
-        
-        elif choice == '3':
             print("\n" + "="*70)
             print("FETCHING STREAMS")
             print("="*70)
@@ -439,7 +337,7 @@ def main():
             except Exception as e:
                 print(f"\n✗ Fetch failed: {e}")
         
-        elif choice == '4':
+        elif choice == '3':
             print("\n" + "="*70)
             print("ANALYZING STREAMS")
             print("="*70)
@@ -451,7 +349,7 @@ def main():
             except Exception as e:
                 print(f"\n✗ Analysis failed: {e}")
         
-        elif choice == '5':
+        elif choice == '4':
             print("\n" + "="*70)
             print("SCORING AND SORTING STREAMS")
             print("="*70)
@@ -461,7 +359,7 @@ def main():
             except Exception as e:
                 print(f"\n✗ Scoring failed: {e}")
         
-        elif choice == '6':
+        elif choice == '5':
             print("\n" + "="*70)
             print("REORDERING STREAMS IN DISPATCHARR")
             print("="*70)
@@ -471,13 +369,10 @@ def main():
             except Exception as e:
                 print(f"\n✗ Reordering failed: {e}")
         
-        elif choice == '7':
-            cleanup_streams_by_provider(api, selected_ids)
-        
-        elif choice == '8':
+        elif choice == '6':
             generate_summary_report(config)
         
-        elif choice == '9':
+        elif choice == '7':
             # Re-select groups
             selected_groups = get_user_selection(groups)
             selected_ids = [g['id'] for g in selected_groups]
