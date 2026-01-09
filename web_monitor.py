@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 
 app = Flask(__name__)
 
@@ -60,12 +60,51 @@ def _normalize_quality_confidence(value):
     return "low"
 
 
+def _load_quality_insight_acknowledgements():
+    log_path = Path("logs") / "quality_check_acknowledgements.ndjson"
+    if not log_path.exists():
+        return {}
+
+    acknowledgements = {}
+    with log_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            channel_id = record.get("channel_id")
+            if channel_id is None:
+                continue
+            timestamp = _parse_quality_insight_timestamp(record.get("timestamp"))
+            acknowledged_until = _parse_quality_insight_timestamp(
+                record.get("acknowledged_until")
+            )
+            if not timestamp or not acknowledged_until:
+                continue
+
+            channel_key = str(channel_id)
+            existing = acknowledgements.get(channel_key)
+            if not existing or timestamp > existing["timestamp"]:
+                acknowledgements[channel_key] = {
+                    "timestamp": timestamp,
+                    "acknowledged_until": acknowledged_until,
+                }
+
+    return acknowledgements
+
+
 def _collect_quality_insights(window_hours=12):
     log_path = Path("logs") / "quality_check_suggestions.ndjson"
     if not log_path.exists():
         return []
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=window_hours)
+    acknowledgements = _load_quality_insight_acknowledgements()
     channels = {}
 
     with log_path.open("r", encoding="utf-8") as handle:
@@ -159,9 +198,16 @@ def _collect_quality_insights(window_hours=12):
         else:
             rag_status = "amber"
 
+        channel_id = channel["channel_id"]
+        ack_key = str(channel_id) if channel_id is not None else None
+        acknowledgement = acknowledgements.get(ack_key) if ack_key else None
+        if acknowledgement and now < acknowledgement["acknowledged_until"]:
+            rag_status = "green"
+            reasons = []
+
         results.append(
             {
-                "channel_id": channel["channel_id"],
+                "channel_id": channel_id,
                 "channel_name": channel["channel_name"] or "Unknown channel",
                 "rag_status": rag_status,
                 "reasons": reasons,
@@ -342,6 +388,48 @@ def api_quality_insights():
     except Exception as exc:
         print(f"Quality insights unavailable: {exc}")
         return jsonify([])
+
+
+@app.route('/api/quality-insights/acknowledge', methods=['POST'])
+def api_quality_insights_acknowledge():
+    """Append an acknowledgement record for a channel."""
+    data = request.get_json() or {}
+    channel_id = data.get("channel_id")
+    try:
+        channel_id = int(channel_id)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Invalid channel_id"}), 400
+
+    duration_hours = data.get("duration_hours", 12)
+    try:
+        duration_hours = int(duration_hours)
+        if duration_hours <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        duration_hours = 12
+
+    reason = data.get("reason")
+    if not isinstance(reason, str):
+        reason = "" if reason is None else str(reason)
+
+    now = datetime.now(timezone.utc)
+    timestamp = now.isoformat().replace("+00:00", "Z")
+    acknowledged_until = (now + timedelta(hours=duration_hours)).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+    log_path = Path("logs") / "quality_check_acknowledgements.ndjson"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "timestamp": timestamp,
+        "channel_id": channel_id,
+        "acknowledged_until": acknowledged_until,
+        "reason": reason,
+    }
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    return jsonify({"success": True})
 
 
 @app.route('/api/status')

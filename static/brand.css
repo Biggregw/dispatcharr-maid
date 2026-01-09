@@ -209,6 +209,28 @@
   color: #718096;
 }
 
+.quality-insight-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.quality-insight-review {
+  border: 1px solid #cbd5f5;
+  background: #edf2ff;
+  color: #2c5282;
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.quality-insight-review:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .quality-insight-hidden {
   display: none;
 }

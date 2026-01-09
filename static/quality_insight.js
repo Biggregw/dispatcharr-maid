@@ -70,6 +70,43 @@ document.addEventListener('DOMContentLoaded', () => {
       note.textContent = `Observational only. Based on the last ${windowHours} hours.`;
       detail.appendChild(note);
 
+      if (item.channel_id) {
+        const actions = document.createElement('div');
+        actions.className = 'quality-insight-actions';
+
+        const acknowledgeButton = document.createElement('button');
+        acknowledgeButton.type = 'button';
+        acknowledgeButton.className = 'quality-insight-review';
+        acknowledgeButton.textContent = 'Mark as reviewed';
+        acknowledgeButton.addEventListener('click', async () => {
+          acknowledgeButton.disabled = true;
+          try {
+            const response = await fetch('/api/quality-insights/acknowledge', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                channel_id: item.channel_id,
+              }),
+            });
+            if (!response.ok) {
+              throw new Error(`Request failed with status ${response.status}`);
+            }
+            await response.json();
+            await loadInsights();
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error(error);
+          } finally {
+            acknowledgeButton.disabled = false;
+          }
+        });
+
+        actions.appendChild(acknowledgeButton);
+        detail.appendChild(actions);
+      }
+
       details.appendChild(detail);
       listEl.appendChild(details);
     });
