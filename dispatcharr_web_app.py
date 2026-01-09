@@ -3230,6 +3230,7 @@ def cleanup_streams_by_provider(
         
         # Group streams by provider (prefer cached provider map; fallback only when needed)
         streams_by_provider = {}
+        unknown_provider_key = "__unknown_provider__"
         
         for stream_id in stream_ids:
             if not _should_continue():
@@ -3245,7 +3246,7 @@ def cleanup_streams_by_provider(
                     provider_id = stream_details.get('m3u_account')
 
             if provider_id is None:
-                continue
+                provider_id = unknown_provider_key
 
             if provider_id not in streams_by_provider:
                 streams_by_provider[provider_id] = []
@@ -3263,16 +3264,20 @@ def cleanup_streams_by_provider(
         
         # Keep top N streams from each provider, grouped by rank
         streams_by_rank = {}  # rank -> [stream_ids]
+        overflow_streams = []
         
         for provider_id, provider_streams in streams_by_provider.items():
             # Sort by score (highest first)
             sorted_streams = sorted(provider_streams, key=lambda x: x['score'], reverse=True)
             
             # Keep top N and organize by rank
-            for rank, stream in enumerate(sorted_streams[:streams_per_provider]):
-                if rank not in streams_by_rank:
-                    streams_by_rank[rank] = []
-                streams_by_rank[rank].append(stream)
+            for rank, stream in enumerate(sorted_streams):
+                if rank < streams_per_provider:
+                    if rank not in streams_by_rank:
+                        streams_by_rank[rank] = []
+                    streams_by_rank[rank].append(stream)
+                else:
+                    overflow_streams.append(stream)
         
         # Build final list: all rank 0 (best) sorted by score, then all rank 1 (2nd best) sorted, etc
         streams_to_keep = []
@@ -3280,6 +3285,9 @@ def cleanup_streams_by_provider(
             # Sort this rank's streams by score (highest first)
             rank_streams = sorted(streams_by_rank[rank], key=lambda x: x['score'], reverse=True)
             streams_to_keep.extend([s['id'] for s in rank_streams])
+        if overflow_streams:
+            overflow_sorted = sorted(overflow_streams, key=lambda x: x['score'], reverse=True)
+            streams_to_keep.extend([s['id'] for s in overflow_sorted])
         
         # Build plan row (before/after) even when not applying.
         before_ids = []
@@ -3315,12 +3323,15 @@ def cleanup_streams_by_provider(
         if dry_run:
             # Don't mutate Dispatcharr; just record totals.
             stats['total_streams_after'] += len(after_ids)
-        elif streams_to_keep and len(streams_to_keep) < len(stream_ids):
+        elif streams_to_keep and changed:
             try:
                 if _should_continue():
                     api.update_channel_streams(channel_id, streams_to_keep)
                 stats['total_streams_after'] += len(streams_to_keep)
-                logging.info(f"Channel {channel_id}: kept {len(streams_to_keep)} streams ({streams_per_provider} per provider)")
+                logging.info(
+                    f"Channel {channel_id}: reordered {len(streams_to_keep)} streams "
+                    f"(promoting top {streams_per_provider} per provider)"
+                )
             except Exception as e:
                 logging.warning(f"Failed to update channel {channel_id}: {e}")
         else:
