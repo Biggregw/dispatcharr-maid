@@ -67,6 +67,24 @@ def test_missing_probe_fields_have_no_effect():
     assert _continuous_ordering_score(missing_probe) == baseline
 
 
+def test_core_metadata_incomplete_scores_lower():
+    complete = {
+        "stream_id": 310,
+        "score": 120,
+        "resolution": "1920x1080",
+        "fps": 30,
+        "avg_bitrate_kbps": 5500,
+        "video_codec": "h264",
+        "audio_codec": "aac"
+    }
+    incomplete = {
+        **complete,
+        "fps": None
+    }
+
+    assert _continuous_ordering_score(complete) > _continuous_ordering_score(incomplete)
+
+
 def test_probe_signals_do_not_dominate_ordering():
     high_quality = {
         "stream_id": 301,

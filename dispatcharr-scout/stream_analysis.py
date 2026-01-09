@@ -1552,6 +1552,16 @@ def _normalize_numeric(value):
         return 0.0
 
 
+def _safe_float(value):
+    try:
+        number = float(value)
+    except Exception:
+        return None
+    if math.isnan(number) or math.isinf(number):
+        return None
+    return number
+
+
 def _stable_tiebreaker(value):
     """
     Generate a tiny deterministic value for tie-breaking.
@@ -1628,6 +1638,16 @@ def _continuous_ordering_score(record):
     interlaced_status = str(record.get('interlaced_status') or '').lower()
     interlace_penalty = 0.95 if 'interlaced' in interlaced_status else 1.0
     validation_penalty = _validation_penalty(record.get('validation_result') or record.get('status'))
+    core_fps = _safe_float(record.get('fps'))
+    core_bitrate = _safe_float(record.get('avg_bitrate_kbps'))
+    core_incomplete = (
+        not parsed
+        or str(record.get('video_codec') or '').strip().upper() in ('', 'N/A')
+        or core_fps is None
+        or core_bitrate is None
+    )
+    # Treat missing core metadata as unknown quality; apply a mild, capped penalty.
+    metadata_penalty = 0.96 if core_incomplete else 1.0
 
     score = (
         base_component * 1.5
@@ -1637,7 +1657,7 @@ def _continuous_ordering_score(record):
         + codec_score * 0.3
         + audio_score * 0.1
     )
-    score *= interlace_penalty * validation_penalty
+    score *= interlace_penalty * validation_penalty * metadata_penalty
     return score
 
 

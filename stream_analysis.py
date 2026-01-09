@@ -1721,6 +1721,17 @@ def _continuous_ordering_score(record):
 
     # Metadata completeness and gentle probe-structure penalties should be very weak.
     metadata_penalty = 1.0
+    core_fps = _safe_float(record.get('fps'))
+    core_bitrate = _safe_float(record.get('avg_bitrate_kbps'))
+    core_incomplete = (
+        not parsed
+        or str(record.get('video_codec') or '').strip().upper() in ('', 'N/A')
+        or core_fps is None
+        or core_bitrate is None
+    )
+    if core_incomplete:
+        # Treat missing core metadata as unknown quality; apply a mild, capped penalty.
+        metadata_penalty *= 0.96
     if total_pixels == 0:
         metadata_penalty *= 0.98
     if str(record.get('video_codec') or '').upper() in ('', 'N/A'):
