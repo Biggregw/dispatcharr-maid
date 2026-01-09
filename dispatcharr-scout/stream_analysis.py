@@ -1613,8 +1613,8 @@ def order_streams_for_channel(
 ):
     """Order streams so proxy playback starts on the most stable option.
 
-    Tier 1 contains only validation-passing streams. Tier 2 is reserved for
-    failed/low-quality streams and is only returned when Tier 1 is empty.
+    Tier 1 contains validation-passing streams and Tier 2 contains failed/low-quality
+    streams. Ordering never drops streams; validation only influences relative order.
     Provider diversification is applied exclusively within Tier 1.
     """
 
@@ -1777,9 +1777,7 @@ def order_streams_for_channel(
 
     ordered_clean = _resilience_order(clean_records) if clean_records else []
     ordered_failed = sorted(failed_records, key=_score, reverse=True) if failed_records else []
-
-    # Tier 2 should only provide a small safety net to avoid empty channels
-    ordered_failed = ordered_failed[:3]
+    # Rank-based truncation removed: ordering must retain all streams.
 
     tier1_ids = [r.get('stream_id') for r in ordered_clean]
     tier2_ids = [r.get('stream_id') for r in ordered_failed]
@@ -1879,7 +1877,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
             validation_dominant=validation_dominant,
         )
 
-        playback_order = tier1_stream_ids if tier1_stream_ids else tier2_stream_ids
+        # Include both tiers to guarantee every stream remains present after ordering.
+        playback_order = tier1_stream_ids + tier2_stream_ids
 
         # Get current streams from API
         current_streams = api.fetch_channel_streams(channel_id)
@@ -1890,13 +1889,10 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
         current_ids_set = {s['id'] for s in current_streams}
         validated_ids = [sid for sid in playback_order if sid in current_ids_set]
 
-        # Add any new streams not in CSV only when Tier 1 is empty
+        # Preserve every current stream; ordering must never exclude streams.
         csv_ids_set = set(sorted_stream_ids)
-        new_ids = [sid for sid in current_ids_set if sid not in csv_ids_set]
-        if tier1_stream_ids:
-            final_ids = validated_ids
-        else:
-            final_ids = validated_ids + new_ids
+        new_ids = [sid for sid in current_ids_set if sid not in csv_ids_set and sid not in validated_ids]
+        final_ids = validated_ids + new_ids
 
         channel_entry = None
         if collect_summary:
@@ -1967,7 +1963,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
 
                 return entry
 
-            final_set = set(tier1_stream_ids)
+            final_set = set(final_ids)
 
             for idx, sid in enumerate(tier1_stream_ids, start=1):
                 record = record_lookup.get(sid, {})
@@ -1987,27 +1983,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
                 })
                 channel_entry['tier2_order'].append(merged)
 
-            for sid, record in record_lookup.items():
-                if sid in final_set:
-                    continue
-                validation_result = str(record.get('validation_result') or '').lower()
-                validation_reason = record.get('validation_reason') or record.get('status')
-                if validation_result and validation_result != 'pass':
-                    reason = f"Validation failed ({validation_reason or validation_result})"
-                elif (record.get('ordering_score') in (None, 'N/A')) and (record.get('score') in (None, 'N/A')):
-                    reason = 'Missing required metrics'
-                else:
-                    reason = 'Scored lower than cutoff'
-
-                channel_entry['excluded_streams'].append({
-                    'stream_id': sid,
-                    'stream_name': record.get('stream_name'),
-                    'provider_id': record.get('m3u_account'),
-                    'provider_name': record.get('m3u_account_name'),
-                    'resolution': record.get('resolution'),
-                    'bitrate_kbps': record.get('avg_bitrate_kbps'),
-                    'reason': reason
-                })
+            # Ordering must not exclude streams; leave excluded_streams empty here.
 
             # Persist final stream metadata for history/UI rendering.
             final_ids_ordered = list(final_ids)
