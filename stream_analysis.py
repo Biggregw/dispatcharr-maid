@@ -280,7 +280,9 @@ def _get_stream_info(url, timeout):
     command = [
         'ffprobe',
         '-v', 'error',
-        '-show_entries', 'stream=codec_name,width,height,avg_frame_rate',
+        '-show_entries',
+        'stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,profile,level,pix_fmt,bit_rate'
+        ':format=format_name,bit_rate',
         '-of', 'json',
         url
     ]
@@ -294,11 +296,14 @@ def _get_stream_info(url, timeout):
         )
         if result.stdout:
             data = json.loads(result.stdout)
-            return data.get('streams', [])
-        return []
+            return {
+                'streams': data.get('streams', []),
+                'format': data.get('format', {}) or {}
+            }
+        return {'streams': [], 'format': {}}
     except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
         logging.debug(f"Stream info check failed: {e}")
-        return []
+        return {'streams': [], 'format': {}}
 
 
 def _check_interlaced_status(url, stream_name, idet_frames, timeout):
@@ -473,16 +478,27 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
             row['frames_dropped'] = 'N/A'
             row['video_stream_count'] = 'N/A'
             row['audio_stream_count'] = 'N/A'
+            row['format_name'] = 'N/A'
+            row['video_profile'] = 'N/A'
+            row['video_level'] = 'N/A'
+            row['pixel_format'] = 'N/A'
+            row['r_frame_rate'] = 'N/A'
+            row['declared_bitrate_kbps'] = 'N/A'
             row['status'] = 'N/A'
             
             # 1. Get codec info
-            streams_info = _get_stream_info(url, timeout)
+            probe_info = _get_stream_info(url, timeout)
+            streams_info = probe_info.get('streams', []) if isinstance(probe_info, dict) else []
+            format_info = probe_info.get('format', {}) if isinstance(probe_info, dict) else {}
             video_streams = [s for s in streams_info if 'width' in s]
             audio_streams = [s for s in streams_info if 'codec_name' in s and 'width' not in s]
             video_info = next(iter(video_streams), None)
             audio_info = next(iter(audio_streams), None)
             row['video_stream_count'] = len(video_streams) if streams_info else 'N/A'
             row['audio_stream_count'] = len(audio_streams) if streams_info else 'N/A'
+
+            if format_info:
+                row['format_name'] = format_info.get('format_name') or row['format_name']
             
             if video_info:
                 row['video_codec'] = video_info.get('codec_name')
@@ -493,9 +509,28 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
                     row['fps'] = round(num / den, 2) if den != 0 else 0
                 except (ValueError, ZeroDivisionError):
                     row['fps'] = 0
+                row['video_profile'] = video_info.get('profile') or row['video_profile']
+                row['video_level'] = video_info.get('level') or row['video_level']
+                row['pixel_format'] = video_info.get('pix_fmt') or row['pixel_format']
+                row['r_frame_rate'] = video_info.get('r_frame_rate') or row['r_frame_rate']
             
             if audio_info:
                 row['audio_codec'] = audio_info.get('codec_name')
+
+            declared_bitrate = None
+            for candidate in (
+                (video_info or {}).get('bit_rate'),
+                (format_info or {}).get('bit_rate')
+            ):
+                try:
+                    value = float(candidate)
+                except (TypeError, ValueError):
+                    continue
+                if value > 0:
+                    declared_bitrate = value
+                    break
+            if declared_bitrate:
+                row['declared_bitrate_kbps'] = round(declared_bitrate / 1000, 2)
             
             # 2. Get bitrate and frame stats
             bitrate, frames_decoded, frames_dropped, status, elapsed = \
@@ -928,6 +963,8 @@ def analyze_streams(config, input_csv=None,
     final_columns += [
         'timestamp', 'video_codec', 'audio_codec', 'interlaced_status', 'status',
         'bitrate_kbps', 'fps', 'resolution', 'frames_decoded', 'frames_dropped',
+        'video_stream_count', 'audio_stream_count', 'format_name', 'video_profile',
+        'video_level', 'pixel_format', 'r_frame_rate', 'declared_bitrate_kbps',
         'err_decode', 'err_discontinuity', 'err_timeout'
     ]
     
@@ -1556,10 +1593,38 @@ def _parse_resolution(resolution):
 
 
 def _normalize_numeric(value):
+    if value in (None, '', 'N/A'):
+        return 0.0
     try:
         return float(value)
     except Exception:
         return 0.0
+
+
+def _safe_float(value):
+    try:
+        number = float(value)
+    except Exception:
+        return None
+    if math.isnan(number) or math.isinf(number):
+        return None
+    return number
+
+
+def _parse_rate(rate_value):
+    if rate_value in (None, '', 'N/A'):
+        return None
+    text = str(rate_value)
+    if '/' in text:
+        try:
+            numerator, denominator = text.split('/', 1)
+            denominator = float(denominator)
+            if denominator == 0:
+                return None
+            return float(numerator) / denominator
+        except (ValueError, TypeError):
+            return None
+    return _safe_float(text)
 
 
 def _stable_tiebreaker(value):
@@ -1641,6 +1706,19 @@ def _continuous_ordering_score(record):
     interlace_penalty = 0.95 if 'interlaced' in interlaced_status else 1.0
     validation_penalty = _validation_penalty(record.get('validation_result') or record.get('status'))
 
+    # Probe-derived fields used for weak confidence tweaks (never dominant):
+    # format_name, r_frame_rate, declared_bitrate_kbps, video_profile, video_level,
+    # pixel_format, avg_frames_decoded, avg_frames_dropped, video_stream_count, audio_stream_count.
+    format_name = record.get('format_name')
+    r_frame_rate_raw = record.get('r_frame_rate')
+    r_frame_rate = _parse_rate(r_frame_rate_raw)
+    declared_bitrate_kbps = _safe_float(record.get('declared_bitrate_kbps'))
+    video_profile = record.get('video_profile')
+    video_level = record.get('video_level')
+    pixel_format = record.get('pixel_format')
+    declared_bitrate_present = declared_bitrate_kbps if declared_bitrate_kbps and declared_bitrate_kbps > 0 else None
+    r_frame_rate_present = r_frame_rate if r_frame_rate and r_frame_rate > 0 else None
+
     # Metadata completeness and gentle probe-structure penalties should be very weak.
     metadata_penalty = 1.0
     if total_pixels == 0:
@@ -1649,6 +1727,40 @@ def _continuous_ordering_score(record):
         metadata_penalty *= 0.99
     if str(record.get('audio_codec') or '').upper() in ('', 'N/A'):
         metadata_penalty *= 0.995
+
+    completeness_checks = [
+        format_name,
+        video_profile,
+        video_level,
+        pixel_format,
+        r_frame_rate_present,
+        declared_bitrate_present
+    ]
+    present_count = sum(
+        1
+        for value in completeness_checks
+        if value not in (None, '', 'N/A')
+    )
+    if present_count:
+        completeness_ratio = present_count / len(completeness_checks)
+        # Tiny bonus for richer, stable probe metadata (capped).
+        metadata_penalty *= min(1.01, 1.0 + (completeness_ratio * 0.01))
+
+    if fps > 0 and r_frame_rate:
+        # Penalize only extreme average vs. real frame rate mismatches.
+        mismatch = abs(fps - r_frame_rate) / max(fps, r_frame_rate)
+        if mismatch > 0.5:
+            metadata_penalty *= 0.99
+        elif mismatch > 0.2:
+            metadata_penalty *= 0.995
+
+    if declared_bitrate_kbps and avg_bitrate_kbps > 0:
+        # Penalize only large declared vs measured bitrate mismatches.
+        ratio = max(declared_bitrate_kbps, avg_bitrate_kbps) / min(declared_bitrate_kbps, avg_bitrate_kbps)
+        if ratio > 2.0:
+            metadata_penalty *= 0.99
+        elif ratio > 1.5:
+            metadata_penalty *= 0.995
 
     structure_penalty = 1.0
     video_stream_count = record.get('video_stream_count')
@@ -1666,6 +1778,16 @@ def _continuous_ordering_score(record):
                 structure_penalty *= max(1.0 - (extra_audio * 0.003), 0.985)
         except (TypeError, ValueError):
             pass
+
+    decoded_frames = _safe_float(record.get('avg_frames_decoded') or record.get('frames_decoded'))
+    dropped_frames = _safe_float(record.get('avg_frames_dropped') or record.get('frames_dropped'))
+    if decoded_frames and dropped_frames is not None and decoded_frames > 0 and dropped_frames >= 0:
+        # Use drop ratio only when measured data exists; keep penalties tiny.
+        drop_ratio = dropped_frames / decoded_frames
+        if drop_ratio > 0.2:
+            structure_penalty *= 0.99
+        elif drop_ratio > 0.05:
+            structure_penalty *= 0.995
 
     score = (
         base_component * 1.55
