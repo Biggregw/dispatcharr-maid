@@ -83,6 +83,9 @@
         <div class="nav-buttons">
             <a href="/" class="btn">← Back to Control Panel</a>
             <a href="/api/results/csv" class="btn" id="export-csv-link">📥 Export CSV</a>
+            <button type="button" class="quality-insight-trigger" id="quality-insight-open">
+                Quality insight
+            </button>
             <span style="display:inline-block;color:white;font-weight:600;margin-left:10px;">Run:</span>
             <select id="job-picker" class="input" style="display:inline-block; width:auto; min-width: 320px; max-width: 520px; margin-left:8px;"></select>
         </div>
@@ -309,6 +312,26 @@
         </div>
     </div>
 
+    <div class="quality-insight-modal" id="quality-insight-modal" aria-hidden="true">
+        <div class="quality-insight-backdrop" data-quality-insight-close></div>
+        <div class="quality-insight-dialog" role="dialog" aria-modal="true" aria-labelledby="quality-insight-title">
+            <div class="quality-insight-header">
+                <h2 id="quality-insight-title">Quality insight</h2>
+                <button type="button" class="quality-insight-close" data-quality-insight-close aria-label="Close">
+                    ×
+                </button>
+            </div>
+            <div class="quality-insight-body">
+                <div class="quality-insight-loading">Loading…</div>
+                <div class="quality-insight-empty quality-insight-hidden">
+                    No quality insight data in the last 12 hours.
+                </div>
+                <div class="quality-insight-error quality-insight-hidden"></div>
+                <div class="quality-insight-list"></div>
+            </div>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='quality_insight.js') }}"></script>
     <script>
         const params = new URLSearchParams(window.location.search);
         const jobId = params.get('job_id');

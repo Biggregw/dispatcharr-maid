@@ -22,7 +22,7 @@ import fcntl
 import requests
 from urllib.parse import urlparse
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from queue import Queue
 
@@ -186,6 +186,169 @@ def _parse_snapshot_interval_seconds(default_seconds=1800):
             break
 
     return default_seconds
+
+
+def _parse_quality_insight_timestamp(value):
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (ValueError, OSError):
+            return None
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        if candidate.endswith("Z"):
+            candidate = candidate[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_quality_confidence(value):
+    if value is None:
+        return "low"
+    if isinstance(value, (int, float)):
+        confidence = float(value)
+        if confidence >= 0.8:
+            return "high"
+        if confidence >= 0.5:
+            return "medium"
+        return "low"
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if "high" in normalized:
+            return "high"
+        if "medium" in normalized or "med" in normalized:
+            return "medium"
+        if "low" in normalized:
+            return "low"
+    return "low"
+
+
+def _collect_quality_insights(window_hours=12):
+    log_path = Path("logs") / "quality_check_suggestions.ndjson"
+    if not log_path.exists():
+        return []
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    channels = {}
+
+    with log_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            channel_id = record.get("channel_id") or record.get("id")
+            channel_name = (
+                record.get("channel_name")
+                or record.get("name")
+                or record.get("channel")
+            )
+            channel_key = str(channel_id) if channel_id is not None else channel_name
+            if not channel_key:
+                channel_key = f"unknown-{len(channels)}"
+
+            timestamp = _parse_quality_insight_timestamp(
+                record.get("timestamp")
+                or record.get("observed_at")
+                or record.get("created_at")
+            )
+            reason = (
+                record.get("reason")
+                or record.get("suggestion_reason")
+                or record.get("message")
+                or record.get("notes")
+            )
+            confidence = _normalize_quality_confidence(
+                record.get("confidence")
+                or record.get("confidence_level")
+                or record.get("confidence_score")
+            )
+
+            channel_entry = channels.setdefault(
+                channel_key,
+                {
+                    "channel_id": channel_id,
+                    "channel_name": channel_name,
+                    "suggestions": [],
+                },
+            )
+            if channel_entry["channel_id"] is None and channel_id is not None:
+                channel_entry["channel_id"] = channel_id
+            if not channel_entry["channel_name"] and channel_name:
+                channel_entry["channel_name"] = channel_name
+
+            channel_entry["suggestions"].append(
+                {
+                    "timestamp": timestamp,
+                    "confidence": confidence,
+                    "reason": reason,
+                }
+            )
+
+    results = []
+    for channel in channels.values():
+        recent = [
+            suggestion
+            for suggestion in channel["suggestions"]
+            if suggestion["timestamp"] and suggestion["timestamp"] >= cutoff
+        ]
+        reasons = []
+        seen_reasons = set()
+        high_count = 0
+        medium_count = 0
+        low_count = 0
+        for suggestion in recent:
+            confidence = suggestion["confidence"]
+            if confidence == "high":
+                high_count += 1
+            elif confidence == "medium":
+                medium_count += 1
+            else:
+                low_count += 1
+            reason = suggestion["reason"]
+            if reason and reason not in seen_reasons:
+                seen_reasons.add(reason)
+                reasons.append(reason)
+
+        if not recent:
+            rag_status = "green"
+            reasons = []
+        elif high_count > 0 or medium_count >= 2:
+            rag_status = "red"
+        else:
+            rag_status = "amber"
+
+        results.append(
+            {
+                "channel_id": channel["channel_id"],
+                "channel_name": channel["channel_name"] or "Unknown channel",
+                "rag_status": rag_status,
+                "reasons": reasons,
+                "window_hours": window_hours,
+            }
+        )
+
+    results.sort(
+        key=lambda item: (
+            (item["channel_name"] or "").lower(),
+            str(item["channel_id"] or ""),
+        )
+    )
+    return results
 
 
 def _run_dispatcharr_snapshot_loop():
@@ -3201,6 +3364,17 @@ def api_channels():
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/quality-insights', methods=['GET'])
+@login_required
+def api_quality_insights():
+    """Read-only quality insight summary for the last 12 hours."""
+    try:
+        return jsonify(_collect_quality_insights(window_hours=12))
+    except Exception as exc:
+        logging.warning("Quality insights unavailable: %s", exc)
+        return jsonify([])
 
 
 def _build_exact_match_regex(values):
