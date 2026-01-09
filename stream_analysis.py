@@ -1831,11 +1831,14 @@ def order_streams_for_channel(
 
     def _score(record):
         ordering = record.get('ordering_score')
-        if ordering in (None, 'N/A'):
-            ordering = _continuous_ordering_score(record)
-        score = _normalize_numeric(ordering)
+        if ordering in (None, '', 'N/A'):
+            ordering = record.get('score')
+        score_value = _safe_float(ordering)
+        if score_value is None:
+            tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
+            return (0, _stable_tiebreaker(tie_value))
         tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
-        return score + _stable_tiebreaker(tie_value)
+        return (1, score_value + _stable_tiebreaker(tie_value))
 
     ordered = sorted(list(records), key=_score, reverse=True)
     return [r.get('stream_id') for r in ordered]
