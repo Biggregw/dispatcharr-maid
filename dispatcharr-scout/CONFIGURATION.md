@@ -22,7 +22,7 @@ Step 1: Copy Example Files
 ---------------------------
 When you first clone this repository, copy the example files:
 
-cd ~/dispatcharr-scout
+cd ~/dispatcharr-maid
 
 # Copy and customize configuration
 cp config.yaml.example config.yaml
@@ -62,16 +62,16 @@ filters:
   channel_group_ids: [123, 456]  # Your actual group IDs
   specific_channel_ids: []  # Optional: specific channels
 ordering:
-  resilience_mode: false  # Optional failover-aware ordering (keeps default ordering when false)
-  fallback_depth: 3       # Ensure a Tier 2 (variant) or Tier 3 (low bitrate) entry appears within the first N slots
-  similar_score_delta: 5  # Score window used for intra-tier tie-breaks (provider diversity + bitrate preference)
+  resilience_mode: false  # Optional ordering toggle (kept for compatibility)
+  fallback_depth: 3
+  similar_score_delta: 5
 
 Analysis defaults (tune under `analysis`): duration 10s, timeout 30s, idet_frames 500, retries 1 with a 10s delay, and 8 workers.
 
 Scoring vs. ordering
 --------------------
 - **Scoring** probes each stream independently; scores are not tied to provider order.
-- **Ordering** applies a resilience-aware, tiered policy after scoring. `streams_per_provider` is a **limit**, not a round-robin ordering rule. Providers are not treated as failure domains.
+- **Ordering** uses a single continuous score derived from all available metadata. Provider identity may influence position, never inclusion.
 
 ## Scoring modes
 
@@ -137,7 +137,7 @@ nano provider_names.json
 }
 
 How to find provider IDs:
-1. Run any job in dispatcharr-scout
+1. Run any job in dispatcharr-maid
 2. Check the results page
 3. Note the provider IDs shown
 4. Add them to provider_names.json with your preferred names
@@ -147,7 +147,7 @@ or fall back to "Provider 1", "Provider 2", etc.
 
 Auto-Discovery of Provider Names (OPTIONAL)
 -------------------------------------------
-Dispatcharr-Scout can auto-discover provider IDs, names, and capacity
+Dispatcharr-Maid can auto-discover provider IDs, names, and capacity
 via Dispatcharr itself. This keeps provider_map.json and
 provider_metadata.json updated without manual edits.
 

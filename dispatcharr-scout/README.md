@@ -1,14 +1,13 @@
-# Dispatcharr-Scout
+# Dispatcharr-Maid
 
-Dispatcharr-Scout is a companion tool for Dispatcharr that enriches, analyses, and reorders channel streams to improve real-world playback reliability, particularly for IPTV and proxy-based clients.
+Dispatcharr-Maid is a companion tool for Dispatcharr that enriches, analyses, and reorders channel streams to improve real-world playback reliability, particularly for IPTV and proxy-based clients.
 
 ## Key Capabilities
 
 - Enriches channels by discovering matching streams across multiple providers
 - Scores streams independently based on quality, stability, and compatibility
-- Applies resilience-aware ordering to ensure meaningful failover
-- Limits per-provider dominance without assuming provider reliability
-- Supports device-aware filtering and low-bitrate fallback promotion
+- Orders streams deterministically using a continuous score
+- Keeps every discovered stream in the final ordered list
 - Jobs can be saved, re-run, and managed via the Run Jobs screen
 
 ## How It Works
@@ -25,23 +24,10 @@ Dispatcharr-Scout is a companion tool for Dispatcharr that enriches, analyses, a
 4. **Scoring**
    Each stream is evaluated independently based on resolution, bitrate, codec, and optional analysis.
 
-5. **Resilience-Aware Ordering**
-   Streams are ordered using tiers designed to improve real-world failover:
-   - Tier 1: One best primary stream per provider
-   - Tier 2: Meaningfully different variants (codec, bitrate, or resolution changes)
-   - Tier 3: Low-bitrate fallback streams
-   - Remaining streams are kept as overflow
-
-6. **Limits, Not Assumptions**
-   Provider limits cap how many streams are retained, but do not define ordering.
-   Providers are not treated as failure domains.
-
-## Stream Depth and Provider Limits
-
-The “Streams per Provider” setting limits how many streams are kept from each provider.
-It does not imply round-robin ordering.
-
-Ordering is always determined after scoring and resilience grouping.
+5. **Deterministic Ordering**
+   Streams are ordered using a single continuous score derived from available metadata
+   (resolution, bitrate, FPS, codecs, and validation confidence).
+   Provider identity can influence position but never inclusion.
 
 ## Matching and Advanced Regex
 

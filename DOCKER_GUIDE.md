@@ -169,16 +169,15 @@ Leave the streams you want selected and click **"Add Selected Streams"**
 - The "Current Job" section will display a message indicating it's searching for streams
 - Wait for results to show how many matching streams were found
 - At this point, all selected streams have been added to your channel in Dispatcharr
-- Adjust the "Streams per Provider" setting to specify how many streams from each provider should remain in your channel (default: 2)
 
 #### 7. Click "Quality Check (Apply Changes)" (Optional but Recommended)
-This performs a full probe of each stream and scores them, then **orders and cleans up** your channel using the resilience-aware policy and your **Streams per Provider limit**.
+This performs a full probe of each stream and scores them, then **orders** your channel using a continuous, deterministic scoring model.
 
-Tip: If you want to review what will change first, use **"Quality Check (Preview Plan)"** and commit the plan from the Results page later.
+Tip: If you want to review the ordering first, use **"Quality Check (Read-Only)"** to compute the same ordering without applying changes.
 
 Choose an **Analysis Profile** (Fast / Balanced / Deep) before running quality checks; advanced YAML parameters remain available for power users.
 
-Ordering is **tier-based and resilience-aware** (no round robin). Provider diversity is enforced inside each tier, and the Streams per Provider value is a cap, not a rotation rule.
+Ordering is based on a continuous score (resolution, bitrate, FPS, codecs, validation confidence). Providers can influence position but never inclusion.
 
 The web dashboard updates every 2 seconds with:
 - Live progress bar
@@ -193,10 +192,7 @@ The web dashboard updates every 2 seconds with:
 You have now:
 1. Added all streams from all providers to your selected channel, filtered by your search criteria
 2. Tested each stream for quality and speed
-3. Kept only the optimal streams in resilience-aware order based on your **Streams per Provider** limit
-
-**The result:**
-- Tiered ordering that surfaces meaningful provider diversity early without enforcing round robin; within each tier, diverse options appear before duplicate variants from the same provider.
+3. Ordered all streams deterministically for stable channel definitions
 
 ---
 

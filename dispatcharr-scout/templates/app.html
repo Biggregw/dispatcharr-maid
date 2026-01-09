@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dispatcharr Scout - Control Panel</title>
+    <title>Dispatcharr Maid - Control Panel</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='brand.css') }}">
     <style>
@@ -1061,9 +1061,9 @@
     <div class="container">
         <div class="header">
             <div class="brand">
-                <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="Dispatcharr Scout">
+                <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="Dispatcharr Maid">
                 <div class="brand-text">
-                    <h1>Dispatcharr Scout</h1>
+                    <h1>Dispatcharr Maid</h1>
                     <p>Interactive Control Panel</p>
                 </div>
             </div>
@@ -1328,7 +1328,7 @@
                                 <div class="regex-preset-dropdown__menu hidden" id="saved-regex-menu" role="listbox" aria-label="Saved Jobs for Advanced Regex"></div>
                             </div>
                             <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                                Jobs save automatically when you run them. They capture your regex, filters, +1 choice, Streams Per Provider, and group/channel picks.
+                                Jobs save automatically when you run them. They capture your regex, filters, +1 choice, and group/channel picks.
                                 Loading a Saved Job fills those fields (best-effort) so you can tweak or rerun with the current selection.
                             </span>
                         </div>
@@ -1373,13 +1373,13 @@
                         <button class="action-btn primary" onclick="startJob('full_cleanup_plan', null, event)"
                                 style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
                             <span>🔎</span>
-                            <span>Quality Check (Preview Plan)</span>
+                            <span>Quality Check (Read-Only)</span>
                         </button>
 
                         <div class="action-help">
                             <div style="font-weight: 700; color: #2d3748; margin-bottom: 6px;">Which one should I use?</div>
-                            <div><strong>Apply Changes</strong> will analyze + score, then <strong>order</strong> and <strong>clean up</strong> streams immediately (uses your “Streams Per Provider” limit).</div>
-                            <div style="margin-top: 6px;"><strong>Preview Plan</strong> makes <strong>no changes</strong>. It generates a reviewable plan in Results, where you can commit it later.</div>
+                            <div><strong>Apply Changes</strong> will analyze + score, then <strong>order</strong> streams immediately (no streams are removed).</div>
+                            <div style="margin-top: 6px;"><strong>Quality Check (Read-Only)</strong> computes the same ordering without applying any changes.</div>
                         </div>
                     </div>
                 </div>
@@ -1402,23 +1402,6 @@
                         Raw analysis parameters stay available for power users. Keep your YAML overrides as-is to fully control probes; this panel simply keeps the defaults grouped under named profiles.
                     </div>
                 </details>
-            </div>
-
-            <div style="margin: 20px 0; padding: 20px; background: #f7fafc; border-radius: 8px; border-left: 4px solid #667eea;">
-                <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #2d3748; font-size: 1.1em;">
-                    🔄 Streams Per Provider
-                </label>
-                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 15px; margin-bottom: 10px;">
-                    <input type="number" id="streamsPerProvider" min="1" max="10" value="2"
-                           style="width: 80px; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1.1em;">
-                    <span style="color: #718096; font-size: 0.95em;">
-                        Cap of how many streams to keep per provider (1 = keep only the strongest option from that provider, 2 = keep the top two, etc.)
-                    </span>
-                </div>
-                <div style="padding: 12px; background: #eef2ff; border-left: 3px solid #667eea; border-radius: 4px; font-size: 0.9em; color: #4338ca;">
-                    <strong>Example with 3 providers and value = 2:</strong><br>
-                    Up to 2 streams are kept from each provider. Ordering is determined by scoring + the resilience-aware policy rather than a round robin.
-                </div>
             </div>
 
             <div class="nav-buttons">
@@ -1546,11 +1529,11 @@
     <div id="apply-confirm-modal" class="modal-overlay hidden">
         <div class="modal">
             <div class="modal-header">
-                <div class="modal-title">Run without Preview?</div>
+                <div class="modal-title">Run Apply Changes now?</div>
                 <button class="btn btn-back" onclick="closeApplyConfirmModal()">✖</button>
             </div>
             <div class="modal-body">
-                <p style="margin: 0; color: #374151;">Preview Plan hasn’t been run this session. Applying changes updates Dispatcharr immediately.</p>
+                <p style="margin: 0; color: #374151;">Applying changes updates Dispatcharr immediately.</p>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-back" onclick="closeApplyConfirmModal()">Cancel</button>
@@ -2087,11 +2070,7 @@
                 const data = await resp.json();
                 if (data.success) {
                     if (countEl) countEl.textContent = `${data.count} channels`;
-                    // If preset stored suggested settings, apply them.
                     const preset = data.preset;
-                    const spp = preset?.streams_per_provider;
-                    const sppInput = document.getElementById('streamsPerProvider');
-                    if (sppInput && typeof spp === 'number' && spp >= 1) sppInput.value = String(spp);
                 } else {
                     if (countEl) countEl.textContent = data.error || 'Unable to resolve';
                 }
@@ -2132,7 +2111,6 @@
             const payload = {
                 job_type: 'pattern_refresh_full_cleanup',
                 regex_preset_id: patternId,
-                streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
                 exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false
             };
 
@@ -2634,7 +2612,6 @@
                         regex_mode: regexMode,
                         groups: (Array.isArray(selectedGroups) && selectedGroups.length > 0) ? selectedGroups : undefined,
                         channels: Array.isArray(selectedChannels) ? selectedChannels : null,
-                        streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
                         exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
                         base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                         include_filter: document.getElementById('includeFilter')?.value || null,
@@ -2786,15 +2763,15 @@
         function jobTypeLabel(jobType) {
             return {
                 refresh_optimize: 'Refresh Channel Streams',
-                pattern_refresh_full_cleanup: 'Saved Job (Refresh + QC + Cleanup)',
-                full_cleanup_plan: 'Quality Check (Preview Plan)',
+                pattern_refresh_full_cleanup: 'Saved Job (Refresh + QC)',
+                full_cleanup_plan: 'Quality Check (Read-Only)',
                 full_cleanup: 'Quality Check (Apply Changes)',
                 full: 'Full Job',
                 fetch: 'Fetch Streams',
                 analyze: 'Analyze Streams',
                 score: 'Score Streams',
                 reorder: 'Reorder Streams',
-                cleanup: 'Cleanup'
+                cleanup: 'Reorder Streams'
             }[jobType] || jobType;
         }
 
@@ -2913,7 +2890,6 @@
                     channels: selectedChannels,
                     group_names: groupNames,
                     channel_names: channelNames,
-                    streams_per_provider: parseInt(document.getElementById('streamsPerProvider')?.value) || 2,
                     analysis_profile: document.getElementById('analysisProfile')?.value || 'balanced',
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
@@ -2945,10 +2921,6 @@
                 if (data.success) {
                     currentJobId = data.job_id;
                     lastTerminalJobId = null;
-
-                    if (jobType === 'full_cleanup_plan') {
-                        hasRunPreviewPlan = true;
-                    }
 
                     // Show current job card
                     document.getElementById('current-job-card').classList.remove('hidden');
@@ -3139,8 +3111,8 @@
             const planReminderStatuses = ['queued', 'running', 'completed'];
             const showPlanReminder = job.job_type === 'full_cleanup_plan' && planReminderStatuses.includes(job.status);
             const planReminderCopy = job.status === 'completed'
-                ? 'Preview Plan finished. Open Results → Planned Changes to review and commit the plan.'
-                : 'Preview Plan runs do not apply changes. Open Results → Planned Changes to review and commit when it finishes.';
+                ? 'Read-Only Quality Check finished. Open Results to inspect the checks.'
+                : 'Read-Only Quality Check runs do not apply changes. Open Results to inspect the checks when it finishes.';
             
             const processed = typeof job.stage_progress === 'number'
                 ? job.stage_progress
@@ -3642,14 +3614,14 @@
                 let typeLabel = {
                     'refresh_optimize': 'Refresh',
                     'pattern_refresh_full_cleanup': 'Saved Job',
-                    'full_cleanup_plan': 'Quality Check (Preview Plan)',
+                    'full_cleanup_plan': 'Quality Check (Read-Only)',
                     'full_cleanup': 'Quality Check (Apply Changes)',
                     'full': 'Full Job',
                     'fetch': 'Fetch',
                     'analyze': 'Analyze',
                     'score': 'Score',
                     'reorder': 'Reorder',
-                    'cleanup': 'Cleanup'
+                    'cleanup': 'Reorder'
                 }[job.job_type] || job.job_type;
                 
                 // Build context line: Group > Channel
@@ -3663,9 +3635,6 @@
                 if (job.result_summary) {
                     if (job.result_summary.job_type === 'refresh') {
                         streamInfo = `${job.result_summary.new_count || 0} streams`;
-                    } else if (job.result_summary.final_stream_count !== undefined) {
-                        // Cleanup jobs show final stream count
-                        streamInfo = `${job.result_summary.final_stream_count} streams`;
                     } else if (job.result_summary.total) {
                         // For analysis jobs, show how many were analyzed
                         streamInfo = `${job.result_summary.total} analyzed`;

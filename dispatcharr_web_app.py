@@ -562,11 +562,6 @@ def _build_regex_preset_payload(data, *, allow_generated_name=False, allow_regex
                 raise ValueError(f'Invalid channel id: {c}')
         channel_ids = tmp
 
-    streams_per_provider = data.get('streams_per_provider')
-    try:
-        streams_per_provider_i = int(streams_per_provider) if streams_per_provider is not None else None
-    except Exception:
-        raise ValueError('"streams_per_provider" must be an integer')
 
     now_iso = datetime.now().isoformat()
     normalized_name = name_to_use.strip()
@@ -583,8 +578,6 @@ def _build_regex_preset_payload(data, *, allow_generated_name=False, allow_regex
         preset['groups'] = group_ids
     if channels is not None:
         preset['channels'] = channel_ids
-    if streams_per_provider_i is not None:
-        preset['streams_per_provider'] = streams_per_provider_i
     if base_search_text is not None:
         preset['base_search_text'] = base_search_text
     if include_filter is not None:
@@ -620,7 +613,6 @@ def _maybe_auto_save_job_request(job_request, preview_only=False):
             'regex_mode': regex_mode,
             'groups': job_request.get('groups') or [],
             'channels': job_request.get('channels'),
-            'streams_per_provider': job_request.get('streams_per_provider'),
             'base_search_text': job_request.get('base_search_text'),
             'include_filter': job_request.get('include_filter'),
             'exclude_filter': job_request.get('exclude_filter'),
@@ -1348,10 +1340,9 @@ def _build_ordering_visibility(results, config, provider_names=None):
     if not results or not config:
         return None
 
-    cleanup_rows = results.get('cleanup_plan_rows') if isinstance(results, dict) else None
     ordering_summary = results.get('ordering_summary') if isinstance(results, dict) else None
 
-    if not cleanup_rows and not ordering_summary:
+    if not ordering_summary:
         return None
 
     channel_lookup = _load_channel_lookup(config)
@@ -1370,74 +1361,24 @@ def _build_ordering_visibility(results, config, provider_names=None):
             return meta
         return fallback or {}
 
-    if cleanup_rows:
-        for row in cleanup_rows:
-            if not isinstance(row, dict):
+    channels = ordering_summary.get('channels') if isinstance(ordering_summary, dict) else None
+    if channels:
+        for ch in channels:
+            if not isinstance(ch, dict):
                 continue
-            after_ids = row.get('after_stream_ids') or []
-            before_ids = row.get('before_stream_ids') or []
-            removed_ids = row.get('removed_stream_ids')
-            if removed_ids is None:
-                removed_ids = [sid for sid in before_ids if sid not in set(after_ids)]
-            channel_id = row.get('channel_id')
-            channel_info = _channel_meta(channel_id, {'channel_number': row.get('channel_number'), 'channel_name': row.get('channel_name')})
-            for idx, sid in enumerate(after_ids, start=1):
-                merged = _merge_stream_details(sid, {}, scored_lookup, provider_names)
+            channel_id = ch.get('channel_id')
+            channel_info = _channel_meta(channel_id, {'channel_number': ch.get('channel_number'), 'channel_name': ch.get('channel_name')})
+            for row in ch.get('final_order') or []:
+                if not isinstance(row, dict):
+                    continue
+                merged = _merge_stream_details(row.get('stream_id'), row, scored_lookup, provider_names)
                 merged.update({
-                    'order': idx,
+                    'order': row.get('order'),
                     'channel_id': channel_id,
                     'channel_number': channel_info.get('channel_number'),
                     'channel_name': channel_info.get('channel_name'),
                 })
                 final_orders.append(merged)
-
-            for sid in removed_ids:
-                merged = _merge_stream_details(sid, {}, scored_lookup, provider_names)
-                val_res = str(merged.get('validation_result') or '').lower()
-                val_reason = merged.get('validation_reason')
-                reason = 'Excluded by provider limit'
-                if val_res and val_res != 'pass':
-                    reason = f"Validation failed ({val_reason or val_res})"
-                excluded_streams.append({
-                    **merged,
-                    'channel_id': channel_id,
-                    'channel_number': channel_info.get('channel_number'),
-                    'channel_name': channel_info.get('channel_name'),
-                    'reason': reason
-                })
-
-    elif ordering_summary:
-        channels = ordering_summary.get('channels') if isinstance(ordering_summary, dict) else None
-        if channels:
-            for ch in channels:
-                if not isinstance(ch, dict):
-                    continue
-                channel_id = ch.get('channel_id')
-                channel_info = _channel_meta(channel_id, {'channel_number': ch.get('channel_number'), 'channel_name': ch.get('channel_name')})
-                for row in ch.get('final_order') or []:
-                    if not isinstance(row, dict):
-                        continue
-                    merged = _merge_stream_details(row.get('stream_id'), row, scored_lookup, provider_names)
-                    merged.update({
-                        'order': row.get('order'),
-                        'channel_id': channel_id,
-                        'channel_number': channel_info.get('channel_number'),
-                        'channel_name': channel_info.get('channel_name'),
-                    })
-                    final_orders.append(merged)
-
-                for row in ch.get('excluded_streams') or []:
-                    if not isinstance(row, dict):
-                        continue
-                    merged = _merge_stream_details(row.get('stream_id'), row, scored_lookup, provider_names)
-                    reason = row.get('reason') or 'Scored lower than cutoff'
-                    excluded_streams.append({
-                        **merged,
-                        'channel_id': channel_id,
-                        'channel_number': channel_info.get('channel_number'),
-                        'channel_name': channel_info.get('channel_name'),
-                        'reason': reason
-                    })
 
     return {
         'final_orders': final_orders,
@@ -1598,7 +1539,6 @@ def _build_job_meta(job_id, job_type, config):
             'include_filter': entry.include_filter,
             'exclude_filter': entry.exclude_filter,
             'exclude_plus_one': entry.exclude_plus_one,
-            'streams_per_provider': entry.streams_per_provider,
             'stream_name_regex': entry.stream_name_regex,
             'stream_name_regex_override': entry.stream_name_regex_override,
         })
@@ -1620,7 +1560,6 @@ def _build_job_meta(job_id, job_type, config):
             'include_filter': entry.get('include_filter'),
             'exclude_filter': entry.get('exclude_filter'),
             'exclude_plus_one': entry.get('exclude_plus_one'),
-            'streams_per_provider': entry.get('streams_per_provider'),
             'stream_name_regex': entry.get('stream_name_regex'),
             'stream_name_regex_override': entry.get('stream_name_regex_override'),
         })
@@ -1694,7 +1633,7 @@ def _get_job_results(job_id):
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, streams_per_provider=1, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None):
+    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -1704,7 +1643,6 @@ class Job:
         self.base_search_text = base_search_text
         self.include_filter = include_filter
         self.exclude_filter = exclude_filter
-        self.streams_per_provider = streams_per_provider  # Specific channel IDs if selected
         self.exclude_plus_one = exclude_plus_one
         self.selected_stream_ids = selected_stream_ids
         self.stream_name_regex = stream_name_regex
@@ -2402,38 +2340,12 @@ def run_job_worker(job, api, config):
                     job.status = 'cancelled'
                     return
 
-                job.current_step = f'Quality: cleaning up (keeping top {job.streams_per_provider} per provider)...'
-                _job_advance_stage(job)  # cleanup
-                # Cleanup can take a long time; track progress per channel and allow cancellation.
-                _job_set_stage(job, 'cleanup', 'Cleanup', total=0)
-
-                def cleanup_progress(pdata):
-                    progress_callback(job, pdata)
-                    return not job.cancel_requested
-
-                cleanup_stats, cleanup_plan_rows = cleanup_streams_by_provider(
-                    api,
-                    job.groups,
-                    config,
-                    job.streams_per_provider,
-                    job.channels,
-                    progress_callback=cleanup_progress,
-                    should_continue=lambda: not job.cancel_requested,
-                    return_plan=True
-                )
-                # Ensure stage completion if we know the total.
-                if getattr(job, 'stage_total', 0):
-                    _job_update_stage_progress(job, processed=job.stage_total, total=job.stage_total, failed=job.failed)
-
                 job.result_summary = job.result_summary or {}
                 job.result_summary['pattern_pipeline'] = {
                     'pattern_id': job.selection_pattern_id,
                     'pattern_name': job.selection_pattern_name,
                     'refresh_stats': refresh_stats
                 }
-                job.result_summary['cleanup_stats'] = cleanup_stats
-                job.result_summary['final_stream_count'] = cleanup_stats.get('total_streams_after', 0)
-                job.result_summary['cleanup_plan_rows'] = cleanup_plan_rows
             finally:
                 logging.info("TASK_END: %s", quality_task_name)
 
@@ -2520,67 +2432,21 @@ def run_job_worker(job, api, config):
                 job.status = 'cancelled'
                 return
 
-            # Step 4: Build plan (compute cleanup ordering without applying)
-            job.current_step = f'Planning cleanup (keeping top {job.streams_per_provider} per provider; no updates)...'
+            # Step 4: Build plan (compute ordering without applying)
+            job.current_step = 'Planning stream order (no updates)...'
             _job_advance_stage(job)  # plan
-            _job_set_stage(job, 'plan', 'Plan (no updates)', total=0)
+            _job_set_stage(job, 'plan', 'Plan (no updates)', total=1)
 
-            def plan_progress(pdata):
-                progress_callback(job, pdata)
-                return not job.cancel_requested
-
-            cleanup_stats, plan_rows = cleanup_streams_by_provider(
-                api,
-                job.groups,
-                config,
-                job.streams_per_provider,
-                job.channels,
-                channels_override=channels_override,
-                progress_callback=plan_progress,
-                should_continue=lambda: not job.cancel_requested,
-                dry_run=True,
-                return_plan=True,
-            )
+            reorder_summary = reorder_streams(api, config, collect_summary=True, apply_changes=False)
+            _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
 
             if job.cancel_requested:
                 job.status = 'cancelled'
                 return
 
-            # Write plan to the job workspace for UI review (avoid bloating job history).
-            try:
-                plan_path = config.resolve_path('logs/dispatcharr_plan.json')
-                Path(plan_path).parent.mkdir(parents=True, exist_ok=True)
-                plan_payload = {
-                    'job_id': job.job_id,
-                    'generated_at': datetime.now().isoformat(),
-                    'streams_per_provider': int(job.streams_per_provider),
-                    'groups': job.groups,
-                    'channels': job.channels,
-                    'stats': cleanup_stats,
-                    'rows': plan_rows or [],
-                }
-                with open(plan_path, 'w', encoding='utf-8') as f:
-                    json.dump(plan_payload, f, indent=2)
-            except Exception:
-                logging.warning("Failed to write dispatcharr plan file", exc_info=True)
-
-            # Save a compact summary to history.
-            changed = 0
-            try:
-                changed = sum(1 for r in (plan_rows or []) if isinstance(r, dict) and r.get('changed'))
-            except Exception:
-                changed = 0
-
-            job.result_summary = job.result_summary or {}
-            job.result_summary['dispatcharr_plan'] = {
-                'available': True,
-                'path': 'logs/dispatcharr_plan.json',
-                'streams_per_provider': int(job.streams_per_provider),
-                'channels_total': int(cleanup_stats.get('channels_total', 0) or 0),
-                'channels_changed': int(changed),
-                'total_streams_before': int(cleanup_stats.get('total_streams_before', 0) or 0),
-                'total_streams_after': int(cleanup_stats.get('total_streams_after', 0) or 0),
-            }
+            if reorder_summary:
+                job.result_summary = job.result_summary or {}
+                job.result_summary['ordering_summary'] = reorder_summary
 
         elif job.job_type in ['full', 'full_cleanup']:
             if job.job_type == 'full_cleanup':
@@ -2664,41 +2530,6 @@ def run_job_worker(job, api, config):
                 job.result_summary = job.result_summary or {}
                 job.result_summary['ordering_summary'] = reorder_summary
 
-            # Step 5: Cleanup (if requested)
-            if job.job_type == 'full_cleanup':
-                if job.cancel_requested:
-                    job.status = 'cancelled'
-                    return
-                
-                job.current_step = f'Cleaning up (keeping top {job.streams_per_provider} per provider)...'
-                _job_advance_stage(job)  # cleanup
-                # Cleanup can take a long time; track progress per channel and allow cancellation.
-                _job_set_stage(job, 'cleanup', 'Cleanup', total=0)
-
-                def cleanup_progress(pdata):
-                    progress_callback(job, pdata)
-                    return not job.cancel_requested
-
-                cleanup_stats, cleanup_plan_rows = cleanup_streams_by_provider(
-                    api,
-                    job.groups,
-                    config,
-                    job.streams_per_provider,
-                    job.channels,
-                    progress_callback=cleanup_progress,
-                    should_continue=lambda: not job.cancel_requested,
-                    return_plan=True
-                )
-                # Ensure stage completion if we know the total.
-                if getattr(job, 'stage_total', 0):
-                    _job_update_stage_progress(job, processed=job.stage_total, total=job.stage_total, failed=job.failed)
-
-                # Add cleanup stats to result summary
-                if not job.result_summary:
-                    job.result_summary = {}
-                job.result_summary['cleanup_stats'] = cleanup_stats
-                job.result_summary['final_stream_count'] = cleanup_stats.get('total_streams_after', 0)
-                job.result_summary['cleanup_plan_rows'] = cleanup_plan_rows
         
         elif job.job_type == 'fetch':
             job.current_step = 'Fetching streams...'
@@ -2805,32 +2636,13 @@ def run_job_worker(job, api, config):
             time.sleep(1)
         
         elif job.job_type == 'cleanup':
-            job.current_step = f'Cleaning up (keeping top {job.streams_per_provider} per provider)...'
-            # Cleanup can take a long time; track progress per channel and allow cancellation.
-            _job_set_stage(job, 'cleanup', 'Cleanup', total=0)
-
-            def cleanup_progress(pdata):
-                progress_callback(job, pdata)
-                return not job.cancel_requested
-
-            cleanup_stats = cleanup_streams_by_provider(
-                api,
-                job.groups,
-                config,
-                job.streams_per_provider,
-                job.channels,
-                progress_callback=cleanup_progress,
-                should_continue=lambda: not job.cancel_requested
-            )
-            # Ensure stage completion if we know the total.
-            if getattr(job, 'stage_total', 0):
-                _job_update_stage_progress(job, processed=job.stage_total, total=job.stage_total, failed=job.failed)
-            
-            # Store cleanup stats for history
-            job.result_summary = {
-                'cleanup_stats': cleanup_stats,
-                'final_stream_count': cleanup_stats.get('total_streams_after', 0)
-            }
+            job.current_step = 'Reordering streams...'
+            _job_set_stage(job, 'reorder', 'Reorder', total=1)
+            reorder_summary = reorder_streams(api, config, collect_summary=True)
+            _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
+            if reorder_summary:
+                job.result_summary = job.result_summary or {}
+                job.result_summary['ordering_summary'] = reorder_summary
         
         # Job completed successfully
         with job_lock:
@@ -2879,469 +2691,6 @@ def run_job_worker(job, api, config):
                 job.current_step = job.status.capitalize()
         # Save to history
         save_job_to_history(job)
-
-
-def cleanup_streams_by_provider(
-    api,
-    selected_group_ids,
-    config,
-    streams_per_provider=1,
-    specific_channel_ids=None,
-    channels_override=None,
-    progress_callback=None,
-    should_continue=None,
-    dry_run=False,
-    return_plan=False,
-):
-    """Keep only the top N streams from each provider for each channel, sorted by quality score.
-
-    If provided, `progress_callback` is called with dicts like {'processed': x, 'total': y}.
-    If provided, `should_continue` is called periodically; when it returns False, cleanup exits early.
-
-    If `dry_run` is True, no Dispatcharr updates are performed. When `return_plan` is True,
-    this returns a tuple of (stats, plan_rows) where plan_rows contains per-channel before/after
-    stream IDs and summary deltas.
-    """
-    
-    # Track stats
-    stats = {
-        'channels_processed': 0,
-        'total_streams_before': 0,
-        'total_streams_after': 0,
-        'channels_total': 0,
-        'cancelled': False,
-    }
-    plan_rows = [] if return_plan else None
-
-    def _should_continue():
-        try:
-            return bool(should_continue()) if should_continue else True
-        except Exception:
-            return True
-
-    def _progress(processed, total):
-        if not progress_callback:
-            return True
-        try:
-            return bool(progress_callback({'processed': int(processed), 'total': int(total)}))
-        except Exception:
-            return True
-    
-    # Load scored streams to get quality rankings
-    scored_file = config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
-    stream_scores = {}
-    # Best-effort stream_id -> m3u_account cache to avoid expensive provider-map fetches.
-    stream_provider_map = {}
-    
-    if os.path.exists(scored_file):
-        try:
-            df = pd.read_csv(scored_file)
-            if 'stream_id' in df.columns:
-                sid_series = pd.to_numeric(df['stream_id'], errors='coerce')
-                if 'quality_score' in df.columns:
-                    score_series = pd.to_numeric(df['quality_score'], errors='coerce')
-                elif 'score' in df.columns:
-                    score_series = pd.to_numeric(df['score'], errors='coerce')
-                else:
-                    score_series = pd.Series(0, index=df.index)
-
-                mask = sid_series.notna()
-                sid_series = sid_series[mask].astype(int)
-                score_series = score_series.reindex(df.index).fillna(0)[mask].fillna(0).astype(float)
-
-                stream_scores = dict(zip(sid_series.tolist(), score_series.tolist()))
-
-                # Also cache provider IDs if present in the scored CSV.
-                if 'm3u_account' in df.columns:
-                    provider_series = df['m3u_account'].reindex(df.index)[mask]
-                    for sid, provider_id in zip(sid_series.tolist(), provider_series.tolist()):
-                        if provider_id in ("", None) or (isinstance(provider_id, float) and pd.isna(provider_id)):
-                            continue
-                        stream_provider_map.setdefault(int(sid), provider_id)
-        except Exception as e:
-            logging.warning(f"Could not load scores: {e}")
-
-    # Fall back to measurements CSV for provider IDs when scored CSV isn't available.
-    measurements_file = config.resolve_path('csv/03_iptv_stream_measurements.csv')
-    if os.path.exists(measurements_file):
-        try:
-            # Read CSV first, then check for required columns (usecols raises ValueError if columns are missing)
-            df_map = pd.read_csv(measurements_file)
-            if 'stream_id' in df_map.columns and 'm3u_account' in df_map.columns:
-                sid_series = pd.to_numeric(df_map['stream_id'], errors='coerce')
-                mask = sid_series.notna()
-                if mask.any():
-                    sid_series = sid_series[mask].astype(int)
-                    provider_series = df_map['m3u_account'].reindex(df_map.index)[mask]
-                    for sid, provider_id in zip(sid_series.tolist(), provider_series.tolist()):
-                        if provider_id in ("", None) or (isinstance(provider_id, float) and pd.isna(provider_id)):
-                            continue
-                        stream_provider_map.setdefault(int(sid), provider_id)
-        except Exception:
-            logging.debug("Could not load provider IDs from measurements CSV", exc_info=True)
-
-    # Fetch channels early so we can show totals immediately (mobile UX),
-    # then do the potentially long provider-map step with incremental progress.
-    if not _should_continue():
-        stats['cancelled'] = True
-        if return_plan:
-            return stats, plan_rows
-        return stats
-
-    if channels_override is not None:
-        channels = channels_override
-    else:
-        channels = api.fetch_channels()
-
-    # Filter by specific channels if provided, otherwise use groups.
-    # Normalize IDs to int to avoid "0 matched" when one side is str.
-    specific_ids = None
-    if specific_channel_ids:
-        try:
-            specific_ids = {int(x) for x in specific_channel_ids}
-        except Exception:
-            specific_ids = {x for x in specific_channel_ids}
-
-    if specific_ids is not None:
-        filtered_channels = [
-            ch for ch in channels
-            if isinstance(ch, dict) and ch.get('id') is not None and (int(ch.get('id')) in specific_ids)
-        ]
-    else:
-        try:
-            group_ids = {int(x) for x in (selected_group_ids or [])}
-        except Exception:
-            group_ids = set(selected_group_ids or [])
-        filtered_channels = [
-            ch for ch in channels
-            if isinstance(ch, dict) and ch.get('channel_group_id') in group_ids
-        ]
-
-    stats['channels_total'] = len(filtered_channels)
-
-    # Provider-map is the common "stuck at 95%" culprit; represent it as a fixed chunk of work
-    # and update progress as we page through the streams endpoint.
-    provider_steps = 10 if stats['channels_total'] <= 50 else 25
-    total_work = int(stats['channels_total'] + provider_steps)
-    _progress(0, total_work)
-
-    # Performance: fetch provider IDs once (avoid N+1 API calls).
-    #
-    # IMPORTANT: Fetching *all* streams (provider-map) can be extremely slow on some instances
-    # and appears as "stuck at ~99%" in the UI. Prefer a scoped provider-map for the streams
-    # in the selected channels (fast for 1–few channels), and apply a hard time budget to
-    # avoid blocking cleanup forever.
-    # NOTE: stream_provider_map may already contain values from CSV outputs.
-    provider_done = 0
-    try:
-        if not _should_continue():
-            stats['cancelled'] = True
-            if return_plan:
-                return stats, plan_rows
-            return stats
-
-        provider_map_budget_s = max(1, int(os.getenv('DISPATCHARR_CLEANUP_PROVIDER_MAP_MAX_SECONDS', '90') or 90))
-        provider_map_start = time.time()
-
-        # Build a scoped list of stream IDs we actually need to map.
-        needed_stream_ids = []
-        try:
-            needed = set()
-            for ch in filtered_channels:
-                if not isinstance(ch, dict):
-                    continue
-                for sid in (ch.get('streams') or []):
-                    try:
-                        needed.add(int(sid))
-                    except Exception:
-                        continue
-            needed_stream_ids = sorted(needed)
-        except Exception:
-            needed_stream_ids = []
-
-        # Only map what's missing (if we already have provider IDs from CSV outputs).
-        missing_stream_ids = [sid for sid in needed_stream_ids if sid not in stream_provider_map]
-
-        if not missing_stream_ids:
-            # Nothing to do: mark provider-map chunk complete immediately.
-            provider_done = provider_steps
-            _progress(provider_done, total_work)
-        else:
-            # Heuristic: for small selections, a scoped map is much faster than paginating
-            # through the entire streams endpoint.
-            use_scoped_map = (
-                (specific_channel_ids is not None)
-                or (stats['channels_total'] <= 25)
-                or (len(missing_stream_ids) <= 1500)
-            )
-
-            if use_scoped_map:
-                # Scoped provider-map: only map stream IDs present in selected channels.
-                # This avoids a full `/streams` crawl when the job is targeting a small set.
-                mapped = 0
-                for sid in missing_stream_ids:
-                    if not _should_continue():
-                        stats['cancelled'] = True
-                        if return_plan:
-                            return stats, plan_rows
-                        return stats
-                    if (time.time() - provider_map_start) > provider_map_budget_s:
-                        logging.warning(
-                            "Provider-map budget exceeded (%ss); continuing with partial map.",
-                            provider_map_budget_s,
-                        )
-                        break
-
-                    try:
-                        stream_details = api.fetch_stream_details(sid)
-                    except Exception:
-                        stream_details = None
-
-                    if isinstance(stream_details, dict):
-                        m3u_account = stream_details.get('m3u_account')
-                        if m3u_account is not None:
-                            stream_provider_map[int(sid)] = m3u_account
-
-                    mapped += 1
-                    # Incremental progress for provider-map chunk.
-                    frac = min(1.0, max(0.0, float(mapped) / float(len(missing_stream_ids) or 1)))
-                    target_done = int(round(frac * provider_steps))
-                    if target_done > provider_done:
-                        provider_done = target_done
-                        _progress(provider_done, total_work)
-            else:
-                # Global provider-map: crawl streams endpoint in a cancellable loop.
-                # Apply a time budget so this can't block cleanup indefinitely.
-                limit = 500  # smaller pages reduce long server-side response times
-                next_url = f'/api/channels/streams/?limit={int(limit)}'
-                seen_next = set()
-                total_count = None
-                fetched_count = 0
-
-                missing_set = None
-                try:
-                    if missing_stream_ids and len(missing_stream_ids) <= 100000:
-                        missing_set = set(missing_stream_ids)
-                except Exception:
-                    missing_set = None
-
-                while next_url:
-                    if not _should_continue():
-                        stats['cancelled'] = True
-                        if return_plan:
-                            return stats, plan_rows
-                        return stats
-                    if (time.time() - provider_map_start) > provider_map_budget_s:
-                        logging.warning(
-                            "Provider-map budget exceeded (%ss); continuing with partial map.",
-                            provider_map_budget_s,
-                        )
-                        break
-
-                    payload = api.get(next_url, timeout=30)
-                    if isinstance(payload, dict) and 'results' in payload:
-                        results = payload.get('results') or []
-                        next_link = payload.get('next')
-                        if payload.get('count') is not None:
-                            try:
-                                total_count = int(payload.get('count'))
-                            except Exception:
-                                pass
-                    elif isinstance(payload, list):
-                        results = payload
-                        next_link = None
-                    else:
-                        raise ValueError("Unexpected streams response shape; expected dict or list.")
-
-                    for stream in results:
-                        if not isinstance(stream, dict):
-                            continue
-                        stream_id = stream.get('id')
-                        m3u_account = stream.get('m3u_account')
-                        if stream_id is None or m3u_account is None:
-                            continue
-                        try:
-                            sid = int(stream_id)
-                        except Exception:
-                            continue
-                        if missing_set is not None and sid not in missing_set:
-                            continue
-                        stream_provider_map[sid] = m3u_account
-                        if missing_set is not None:
-                            missing_set.discard(sid)
-                            if not missing_set:
-                                next_link = None
-                                next_url = None
-                                break
-
-                    fetched_count += len(results)
-
-                    # Incremental progress for the provider-map chunk (provider_steps)
-                    target_done = provider_done
-                    if total_count and total_count > 0:
-                        frac = min(1.0, max(0.0, float(fetched_count) / float(total_count)))
-                        target_done = int(round(frac * provider_steps))
-                    else:
-                        # No total available; progress by pages up to provider_steps.
-                        target_done = min(provider_steps, provider_done + 1)
-
-                    if target_done > provider_done:
-                        provider_done = target_done
-                        _progress(provider_done, total_work)
-
-                    if next_link:
-                        next_url = next_link.split('/api/')[-1]
-                        next_url = '/api/' + str(next_url).lstrip('/')
-                        # Safety guard against API returning the same next URL repeatedly.
-                        if next_url in seen_next:
-                            logging.warning("Streams pagination returned a repeated next URL; stopping provider-map fetch.")
-                            break
-                        seen_next.add(next_url)
-                    else:
-                        next_url = None
-
-        # Ensure the provider-map chunk is marked complete.
-        if provider_done < provider_steps:
-            provider_done = provider_steps
-            _progress(provider_done, total_work)
-    except Exception as e:
-        logging.warning(
-            f"Could not build stream provider map; falling back to per-stream lookups: {e}"
-        )
-        # Still advance past the provider-map chunk so overall progress doesn't stall.
-        if provider_done < provider_steps:
-            provider_done = provider_steps
-            _progress(provider_done, total_work)
-    
-    for idx, channel in enumerate(filtered_channels, start=1):
-        if not _should_continue():
-            stats['cancelled'] = True
-            break
-
-        channel_id = channel['id']
-        stream_ids = channel.get('streams', [])
-        
-        if not stream_ids or len(stream_ids) <= streams_per_provider:
-            _progress(provider_done + idx, total_work)
-            continue
-        
-        stats['channels_processed'] += 1
-        stats['total_streams_before'] += len(stream_ids)
-        
-        # Group streams by provider (prefer cached provider map; fallback only when needed)
-        streams_by_provider = {}
-        unknown_provider_key = "__unknown_provider__"
-        
-        for stream_id in stream_ids:
-            if not _should_continue():
-                stats['cancelled'] = True
-                break
-            sid = int(stream_id)
-            provider_id = stream_provider_map.get(sid)
-
-            # Fallback: only hit the API if we couldn't map this stream
-            if provider_id is None:
-                stream_details = api.fetch_stream_details(sid)
-                if stream_details:
-                    provider_id = stream_details.get('m3u_account')
-
-            if provider_id is None:
-                provider_id = unknown_provider_key
-
-            if provider_id not in streams_by_provider:
-                streams_by_provider[provider_id] = []
-
-            # Store stream with its score
-            score = stream_scores.get(sid, 0)
-            streams_by_provider[provider_id].append({
-                'id': sid,
-                'score': score
-            })
-
-        if stats.get('cancelled'):
-            _progress(provider_done + idx, total_work)
-            break
-        
-        # Keep top N streams from each provider, grouped by rank
-        streams_by_rank = {}  # rank -> [stream_ids]
-        overflow_streams = []
-        
-        for provider_id, provider_streams in streams_by_provider.items():
-            # Sort by score (highest first)
-            sorted_streams = sorted(provider_streams, key=lambda x: x['score'], reverse=True)
-            
-            # Keep top N and organize by rank
-            for rank, stream in enumerate(sorted_streams):
-                if rank < streams_per_provider:
-                    if rank not in streams_by_rank:
-                        streams_by_rank[rank] = []
-                    streams_by_rank[rank].append(stream)
-                else:
-                    overflow_streams.append(stream)
-        
-        # Build final list: all rank 0 (best) sorted by score, then all rank 1 (2nd best) sorted, etc
-        streams_to_keep = []
-        for rank in sorted(streams_by_rank.keys()):
-            # Sort this rank's streams by score (highest first)
-            rank_streams = sorted(streams_by_rank[rank], key=lambda x: x['score'], reverse=True)
-            streams_to_keep.extend([s['id'] for s in rank_streams])
-        if overflow_streams:
-            overflow_sorted = sorted(overflow_streams, key=lambda x: x['score'], reverse=True)
-            streams_to_keep.extend([s['id'] for s in overflow_sorted])
-        
-        # Build plan row (before/after) even when not applying.
-        before_ids = []
-        try:
-            before_ids = [int(s) for s in (stream_ids or [])]
-        except Exception:
-            before_ids = list(stream_ids or [])
-
-        after_ids = streams_to_keep[:] if streams_to_keep else before_ids[:]
-        changed = before_ids != after_ids
-
-        if return_plan:
-            removed = [sid for sid in before_ids if sid not in set(after_ids)]
-            added = [sid for sid in after_ids if sid not in set(before_ids)]
-            plan_rows.append({
-                'channel_id': int(channel_id) if channel_id is not None else channel_id,
-                'channel_number': channel.get('channel_number'),
-                'channel_name': channel.get('name'),
-                'channel_group_id': channel.get('channel_group_id'),
-                'streams_per_provider': int(streams_per_provider),
-                'before_count': len(before_ids),
-                'after_count': len(after_ids),
-                'changed': bool(changed),
-                'removed_count': len(removed),
-                'added_count': len(added),
-                # Keep lists for UI inspection (can be large; still useful for small jobs).
-                'before_stream_ids': before_ids,
-                'after_stream_ids': after_ids,
-                'removed_stream_ids': removed,
-                'added_stream_ids': added,
-            })
-
-        if dry_run:
-            # Don't mutate Dispatcharr; just record totals.
-            stats['total_streams_after'] += len(after_ids)
-        elif streams_to_keep and changed:
-            try:
-                if _should_continue():
-                    api.update_channel_streams(channel_id, streams_to_keep)
-                stats['total_streams_after'] += len(streams_to_keep)
-                logging.info(
-                    f"Channel {channel_id}: reordered {len(streams_to_keep)} streams "
-                    f"(promoting top {streams_per_provider} per provider)"
-                )
-            except Exception as e:
-                logging.warning(f"Failed to update channel {channel_id}: {e}")
-        else:
-            stats['total_streams_after'] += len(stream_ids)
-
-        _progress(provider_done + idx, total_work)
-    
-    if return_plan:
-        return stats, plan_rows
-    return stats
 
 
 def generate_job_summary(config, specific_channel_ids=None):
@@ -4154,7 +3503,6 @@ def api_start_job():
         base_search_text = data.get('base_search_text')
         include_filter = data.get('include_filter')
         exclude_filter = data.get('exclude_filter')
-        streams_per_provider = data.get('streams_per_provider', 1)
         exclude_plus_one = data.get('exclude_plus_one', False)
         selected_stream_ids = data.get('selected_stream_ids')
         stream_name_regex = data.get('stream_name_regex')
@@ -4247,7 +3595,6 @@ def api_start_job():
             _maybe_auto_save_job_request({
                 'groups': groups,
                 'channels': channels,
-                'streams_per_provider': streams_per_provider,
                 'base_search_text': base_search_text,
                 'include_filter': include_filter,
                 'exclude_filter': exclude_filter,
@@ -4271,7 +3618,6 @@ def api_start_job():
             base_search_text,
             include_filter,
             exclude_filter,
-            streams_per_provider,
             exclude_plus_one,
             group_names,
             channel_names,
@@ -5072,7 +4418,7 @@ def api_dispatcharr_plan(job_id):
 
         meta = {}
         if isinstance(payload, dict):
-            meta = {k: payload.get(k) for k in ('job_id', 'generated_at', 'streams_per_provider', 'groups', 'channels', 'stats')}
+            meta = {k: payload.get(k) for k in ('job_id', 'generated_at', 'groups', 'channels', 'stats')}
 
         provider_names = {}
         if include_details:
@@ -5503,7 +4849,6 @@ def api_save_regex():
         "regex": "...",
         "groups": [1,2],            # optional; when provided, becomes a pipeline preset
         "channels": [123,456]|null, # optional; null means all channels in groups
-        "streams_per_provider": 2,  # optional
       }
     """
     try:

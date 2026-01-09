@@ -14,10 +14,10 @@ fi
 echo ""
 echo "2. Checking Job class __init__..."
 INIT_LINE=$(grep -A 2 "def __init__" dispatcharr_web_app.py | grep "job_id, job_type, groups, channels")
-if echo "$INIT_LINE" | grep -q "include_filter.*exclude_filter.*streams_per_provider"; then
-    echo "   ✓ Job __init__ has all parameters"
+if echo "$INIT_LINE" | grep -q "include_filter.*exclude_filter"; then
+    echo "   ✓ Job __init__ has filter parameters"
 else
-    echo "   ✗ MISSING: Job __init__ parameters incomplete"
+    echo "   ✗ MISSING: Job __init__ filter parameters incomplete"
     echo "   Found: $INIT_LINE"
 fi
 
@@ -36,11 +36,10 @@ echo ""
 echo "4. Checking api_start_job extracts filter variables..."
 START_JOB=$(grep -A 120 "def api_start_job" dispatcharr_web_app.py)
 if echo "$START_JOB" | grep -q "include_filter = data.get" && \
-   echo "$START_JOB" | grep -q "exclude_filter = data.get" && \
-   echo "$START_JOB" | grep -q "streams_per_provider = data.get"; then
-    echo "   ✓ Variables extracted from request"
+   echo "$START_JOB" | grep -q "exclude_filter = data.get"; then
+    echo "   ✓ Filter variables extracted from request"
 else
-    echo "   ✗ MISSING: Variables not extracted"
+    echo "   ✗ MISSING: Filter variables not extracted"
 fi
 
 # 5. Check Job creation
@@ -48,11 +47,10 @@ echo ""
 echo "5. Checking Job creation passes all parameters..."
 JOB_CREATE=$(grep -A 40 "job = Job(" dispatcharr_web_app.py | tr '\n' ' ')
 if echo "$JOB_CREATE" | grep -q "include_filter" && \
-   echo "$JOB_CREATE" | grep -q "exclude_filter" && \
-   echo "$JOB_CREATE" | grep -q "streams_per_provider"; then
-    echo "   ✓ Job created with all parameters"
+   echo "$JOB_CREATE" | grep -q "exclude_filter"; then
+    echo "   ✓ Job created with filter parameters"
 else
-    echo "   ✗ MISSING: Job creation incomplete"
+    echo "   ✗ MISSING: Job creation missing filters"
     echo "   Found: $JOB_CREATE"
 fi
 

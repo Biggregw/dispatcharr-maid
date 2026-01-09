@@ -6,6 +6,7 @@ Core stream analysis library for Dispatcharr-Scout
 import csv
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -17,6 +18,8 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
+
+import hashlib
 
 import pandas as pd
 import yaml
@@ -1329,9 +1332,6 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
     validation_results = summary.apply(_determine_validation, axis=1)
     summary['validation_result'] = validation_results.apply(lambda x: x[0])
     summary['validation_reason'] = validation_results.apply(lambda x: x[1])
-    summary['validation_rank'] = summary['validation_result'].apply(
-        lambda result: 0 if str(result).lower() == 'pass' else 1
-    )
 
     summary['startup_score'] = summary['avg_bitrate_kbps'].apply(
         _calculate_proxy_startup_score
@@ -1344,18 +1344,14 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
         ), axis=1
     )
 
-    summary['validation_demotion'] = summary['validation_result'].apply(
-        lambda result: 0 if str(result).lower() == 'pass' else 200
-    )
-
     summary['score'] = summary['startup_score'] + summary['stability_score']
-    summary['ordering_score'] = summary['score'] - summary['validation_demotion']
-
-    summary.loc[summary['avg_bitrate_kbps'].isna(), 'ordering_score'] = -1
+    # Continuous ordering score uses all available metadata and a soft validation penalty.
+    summary['ordering_score'] = summary.apply(_continuous_ordering_score, axis=1)
+    summary['ordering_score'] = summary['ordering_score'] + summary['stream_id'].apply(_stable_tiebreaker)
 
     df_sorted = summary.sort_values(
-        by=['channel_number', 'validation_rank', 'ordering_score'],
-        ascending=[True, True, False]
+        by=['channel_number', 'ordering_score'],
+        ascending=[True, False]
     )
 
     final_columns = [
@@ -1368,8 +1364,8 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
         'avg_bitrate_kbps', 'avg_frames_decoded',
         'avg_frames_dropped', 'dropped_frame_percentage', 'fps', 'resolution',
         'video_codec', 'audio_codec', 'interlaced_status', 'status', 'score',
-        'validation_result', 'validation_reason', 'validation_rank',
-        'startup_score', 'stability_score', 'validation_demotion', 'ordering_score'
+        'validation_result', 'validation_reason',
+        'startup_score', 'stability_score', 'ordering_score'
     ]
     for col in final_columns:
         if col not in df_sorted.columns:
@@ -1440,7 +1436,8 @@ def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, up
     summary['score'] = summary.apply(
         lambda row: _calculate_legacy_score(row, scoring_cfg), axis=1
     )
-    summary['ordering_score'] = summary['score']
+    summary['ordering_score'] = summary.apply(_continuous_ordering_score, axis=1)
+    summary['ordering_score'] = summary['ordering_score'] + summary['stream_id'].apply(_stable_tiebreaker)
 
     df_sorted = summary.sort_values(
         by=['channel_number', 'ordering_score'],
@@ -1540,44 +1537,12 @@ def score_streams(api, config, input_csv=None,
         _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, update_stats, api)
 
 
-def _interleave_by_provider(records, provider_fn, score_fn):
-    """Interleave ranked records by provider to maintain deterministic tiers."""
-
-    provider_order = []
-    provider_buckets = {}
-
-    for record in sorted(records, key=score_fn, reverse=True):
-        provider = provider_fn(record)
-        if provider not in provider_buckets:
-            provider_buckets[provider] = []
-            provider_order.append(provider)
-        provider_buckets[provider].append(record)
-
-    interleaved = []
-    max_len = max((len(bucket) for bucket in provider_buckets.values()), default=0)
-    for idx in range(max_len):
-        for provider in provider_order:
-            bucket = provider_buckets.get(provider, [])
-            if len(bucket) > idx:
-                interleaved.append(bucket[idx])
-
-    return interleaved
-
-
 def _parse_resolution(resolution):
     try:
         width_str, height_str = str(resolution).lower().split('x')
         return int(width_str), int(height_str)
     except Exception:
         return None
-
-
-def _is_low_fallback(row):
-    parsed = _parse_resolution(row.get('resolution'))
-    if not parsed:
-        return False
-    width, height = parsed
-    return width <= 1280 and height <= 720
 
 
 def _normalize_numeric(value):
@@ -1587,20 +1552,93 @@ def _normalize_numeric(value):
         return 0.0
 
 
-def _quality_sort_key(record):
-    ordering = record.get('ordering_score')
-    if ordering in (None, 'N/A'):
-        ordering = record.get('score')
-    ordering_score = _normalize_numeric(ordering)
+def _stable_tiebreaker(value):
+    """
+    Generate a tiny deterministic value for tie-breaking.
+
+    This ensures ordering stability without relying on input list order.
+    """
+    digest = hashlib.blake2b(str(value).encode('utf-8'), digest_size=8).hexdigest()
+    max_int = float(2**64 - 1)
+    return int(digest, 16) / max_int * 1e-6
+
+
+def _codec_quality_score(codec_value):
+    codec = str(codec_value or '').lower()
+    if 'av1' in codec:
+        return 1.0
+    if 'hevc' in codec or '265' in codec:
+        return 0.9
+    if 'h264' in codec or 'avc' in codec:
+        return 0.8
+    if 'mpeg2' in codec or 'mpeg-2' in codec:
+        return 0.6
+    return 0.7
+
+
+def _audio_quality_score(codec_value):
+    codec = str(codec_value or '').lower()
+    if 'eac3' in codec or 'e-ac-3' in codec:
+        return 0.9
+    if 'ac3' in codec:
+        return 0.85
+    if 'aac' in codec:
+        return 0.8
+    if 'mp3' in codec:
+        return 0.7
+    return 0.75
+
+
+def _validation_penalty(validation_value):
+    if validation_value is None:
+        return 0.9
+    value = str(validation_value).strip().lower()
+    if value == 'pass':
+        return 1.0
+    if value == 'fail':
+        return 0.75
+    return 0.85
+
+
+def _continuous_ordering_score(record):
+    """
+    Compute a continuous, deterministic score from all available metadata.
+    Uses diminishing returns so extreme values don't dominate.
+    """
+    base_score = _normalize_numeric(record.get('score'))
     parsed = _parse_resolution(record.get('resolution'))
     if parsed:
         width, height = parsed
-        total_pixels = int(width) * int(height)
+        total_pixels = max(int(width) * int(height), 0)
     else:
         total_pixels = 0
-    fps = _normalize_numeric(record.get('fps'))
-    avg_bitrate_kbps = _normalize_numeric(record.get('avg_bitrate_kbps'))
-    return (ordering_score, total_pixels, fps, avg_bitrate_kbps)
+
+    fps = max(_normalize_numeric(record.get('fps')), 0.0)
+    avg_bitrate_kbps = max(_normalize_numeric(record.get('avg_bitrate_kbps')), 0.0)
+
+    # Diminishing returns via log1p normalization against practical ceilings.
+    resolution_score = math.log1p(total_pixels) / math.log1p(3840 * 2160)
+    fps_score = math.log1p(fps) / math.log1p(120)
+    bitrate_score = math.log1p(avg_bitrate_kbps) / math.log1p(50000)
+    base_component = math.log1p(max(base_score, 0.0))
+
+    codec_score = _codec_quality_score(record.get('video_codec'))
+    audio_score = _audio_quality_score(record.get('audio_codec'))
+
+    interlaced_status = str(record.get('interlaced_status') or '').lower()
+    interlace_penalty = 0.95 if 'interlaced' in interlaced_status else 1.0
+    validation_penalty = _validation_penalty(record.get('validation_result') or record.get('status'))
+
+    score = (
+        base_component * 1.5
+        + resolution_score * 2.0
+        + fps_score * 0.6
+        + bitrate_score * 1.0
+        + codec_score * 0.3
+        + audio_score * 0.1
+    )
+    score *= interlace_penalty * validation_penalty
+    return score
 
 
 def order_streams_for_channel(
@@ -1611,24 +1649,10 @@ def order_streams_for_channel(
     provider_fn=None,
     validation_dominant=True,
 ):
-    """Order streams so proxy playback starts on the most stable option.
+    """Order streams using a continuous, deterministic score.
 
-    Tier 1 contains validation-passing streams and Tier 2 contains failed/low-quality
-    streams. Ordering never drops streams; validation only influences relative order.
-    Provider diversification is applied exclusively within Tier 1.
+    All streams remain present; validation only reduces confidence via a penalty.
     """
-
-    provider_fn = provider_fn or (lambda r: r.get('m3u_account_name') or r.get('m3u_account') or 'unknown_provider')
-
-    try:
-        fallback_depth = int(fallback_depth)
-    except (ValueError, TypeError):
-        fallback_depth = 3
-
-    try:
-        similar_score_delta = float(similar_score_delta)
-    except (ValueError, TypeError):
-        similar_score_delta = 5.0
 
     if not records:
         return []
@@ -1636,156 +1660,16 @@ def order_streams_for_channel(
     def _score(record):
         ordering = record.get('ordering_score')
         if ordering in (None, 'N/A'):
-            ordering = record.get('score')
-        return _normalize_numeric(ordering)
+            ordering = _continuous_ordering_score(record)
+        score = _normalize_numeric(ordering)
+        tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
+        return score + _stable_tiebreaker(tie_value)
 
-    def _bitrate(record):
-        try:
-            return float(record.get('avg_bitrate_kbps'))
-        except Exception:
-            return None
-
-    def _resilience_order(ordered_records):
-        ordered_records = list(ordered_records)
-        if not ordered_records:
-            return []
-
-        base_interleaved = _interleave_by_provider(
-            ordered_records,
-            provider_fn,
-            _score,
-        )
-        if not resilience_mode:
-            return base_interleaved
-
-        scored_records = sorted(ordered_records, key=_quality_sort_key, reverse=True)
-
-        provider_best = {}
-        tier1 = []
-        tier2_candidates = []
-        tier3_candidates = []
-        tier3_providers = set()
-
-        for record in scored_records:
-            provider = provider_fn(record)
-            if _is_low_fallback(record):
-                if provider not in tier3_providers:
-                    tier3_candidates.append(record)
-                    tier3_providers.add(provider)
-                continue
-
-            if provider not in provider_best:
-                provider_best[provider] = record
-                tier1.append(record)
-            else:
-                tier2_candidates.append(record)
-
-        tier2 = []
-        tier2_providers = set()
-        overflow = []
-        for record in tier2_candidates:
-            provider = provider_fn(record)
-            best = provider_best.get(provider)
-            if not best:
-                continue
-
-            resolution_differs = str(record.get('resolution')) != str(best.get('resolution'))
-            codec_differs = str(record.get('video_codec')) != str(best.get('video_codec'))
-
-            best_bitrate = _bitrate(best)
-            current_bitrate = _bitrate(record)
-            bitrate_lower = (
-                best_bitrate is not None and current_bitrate is not None and current_bitrate < best_bitrate
-            )
-            if (resolution_differs or codec_differs or bitrate_lower) and provider not in tier2_providers:
-                tier2.append(record)
-                tier2_providers.add(provider)
-            else:
-                overflow.append(record)
-
-        tier3 = list(tier3_candidates)
-
-        def _order_tier(tier_records):
-            ordered = sorted(tier_records, key=_score, reverse=True)
-            ordered = list(ordered)
-            for idx, record in enumerate(list(ordered)):
-                current_res = record.get('resolution')
-                current_score = _score(record)
-                current_bitrate = _bitrate(record)
-                if current_bitrate is None:
-                    continue
-                for alt_idx in range(idx + 1, len(ordered)):
-                    alt = ordered[alt_idx]
-                    if str(alt.get('resolution')) != str(current_res):
-                        continue
-                    alt_score = _score(alt)
-                    if abs(current_score - alt_score) > similar_score_delta:
-                        continue
-                    alt_bitrate = _bitrate(alt)
-                    if alt_bitrate is None:
-                        continue
-                    if alt_bitrate < current_bitrate:
-                        ordered.insert(idx, ordered.pop(alt_idx))
-                        break
-            return ordered
-
-        ordered_tier1 = _order_tier(tier1)
-        ordered_tier2 = _order_tier(tier2)
-        ordered_tier3 = _order_tier(tier3)
-        ordered_overflow = _order_tier(overflow)
-
-        provider_buckets = {}
-        provider_order = []
-
-        for tier_records in [ordered_tier1, ordered_tier2, ordered_tier3, ordered_overflow]:
-            for record in tier_records:
-                provider = provider_fn(record)
-                if provider not in provider_buckets:
-                    provider_buckets[provider] = []
-                    provider_order.append(provider)
-                provider_buckets[provider].append(record)
-
-        diversified = []
-        max_len = max((len(bucket) for bucket in provider_buckets.values()), default=0)
-        for idx in range(max_len):
-            for provider in provider_order:
-                bucket = provider_buckets.get(provider, [])
-                if len(bucket) > idx:
-                    diversified.append(bucket[idx])
-
-        early_window = diversified[:max(fallback_depth, 1)]
-        has_variant_early = any(record in ordered_tier2 + ordered_tier3 for record in early_window)
-        if not has_variant_early:
-            for idx, record in enumerate(diversified):
-                if record in ordered_tier2 + ordered_tier3:
-                    if idx >= fallback_depth:
-                        variant_record = diversified.pop(idx)
-                        insert_at = max(min(fallback_depth - 1, len(diversified)), 0)
-                        diversified.insert(insert_at, variant_record)
-                    break
-
-        return diversified
-
-    def _is_validation_pass(record):
-        validation_result = record.get('validation_result')
-        if validation_result is None:
-            return False
-        return str(validation_result).lower() == 'pass'
-
-    clean_records = [r for r in records if _is_validation_pass(r)]
-    failed_records = [r for r in records if r not in clean_records]
-
-    ordered_clean = _resilience_order(clean_records) if clean_records else []
-    ordered_failed = sorted(failed_records, key=_score, reverse=True) if failed_records else []
-    # Rank-based truncation removed: ordering must retain all streams.
-
-    tier1_ids = [r.get('stream_id') for r in ordered_clean]
-    tier2_ids = [r.get('stream_id') for r in ordered_failed]
-
-    return tier1_ids, tier2_ids
+    ordered = sorted(list(records), key=_score, reverse=True)
+    return [r.get('stream_id') for r in ordered]
 
 
-def reorder_streams(api, config, input_csv=None, collect_summary=False):
+def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_changes=True):
     """Reorder streams in Dispatcharr based on scores"""
 
     logging.info("Reordering streams in Dispatcharr...")
@@ -1800,7 +1684,6 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
 
     filters = config.get('filters') or {}
     ordering_cfg = config.get('ordering') or {}
-    scoring_cfg = config.get('scoring') or {}
     resilience_mode = bool(ordering_cfg.get('resilience_mode', False))
     try:
         fallback_depth = int(ordering_cfg.get('fallback_depth', 3) or 3)
@@ -1810,7 +1693,6 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
         similar_score_delta = float(ordering_cfg.get('similar_score_delta', 5) or 5)
     except (ValueError, TypeError):
         similar_score_delta = 5.0
-    validation_dominant = bool(scoring_cfg.get('proxy_first', scoring_cfg.get('proxy_startup_bias', False)))
 
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])
@@ -1840,8 +1722,6 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
     df['stream_id'] = df['stream_id'].astype(int)
     df['channel_id'] = df['channel_id'].astype(int)
 
-    sorted_stream_ids = df['stream_id'].tolist()
-
     grouped = df.groupby("channel_id")
 
     summary = {'channels': []} if collect_summary else None
@@ -1868,17 +1748,17 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
         return row.get('m3u_account_name') or row.get('m3u_account') or 'unknown_provider'
 
     for channel_id, group in grouped:
-        tier1_stream_ids, tier2_stream_ids = order_streams_for_channel(
-            group.to_dict('records'),
-            resilience_mode=resilience_mode,
-            fallback_depth=fallback_depth,
-            similar_score_delta=similar_score_delta,
-            provider_fn=_provider,
-            validation_dominant=validation_dominant,
-        )
-
-        # Include both tiers to guarantee every stream remains present after ordering.
-        playback_order = tier1_stream_ids + tier2_stream_ids
+        group_records = group.to_dict('records')
+        record_lookup = {}
+        for record in group_records:
+            sid = record.get('stream_id')
+            if sid in (None, 'N/A'):
+                continue
+            try:
+                sid_int = int(sid)
+            except Exception:
+                sid_int = sid
+            record_lookup[sid_int] = record
 
         # Get current streams from API
         current_streams = api.fetch_channel_streams(channel_id)
@@ -1887,26 +1767,44 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
             continue
         
         current_ids_set = {s['id'] for s in current_streams}
-        validated_ids = [sid for sid in playback_order if sid in current_ids_set]
 
-        # Preserve every current stream; ordering must never exclude streams.
-        csv_ids_set = set(sorted_stream_ids)
-        new_ids = [sid for sid in current_ids_set if sid not in csv_ids_set and sid not in validated_ids]
-        final_ids = validated_ids + new_ids
+        records_for_ordering = []
+        for stream in current_streams:
+            sid = stream.get('id')
+            if sid is None:
+                continue
+            try:
+                sid_key = int(sid)
+            except Exception:
+                sid_key = sid
+            record = record_lookup.get(sid_key)
+            if record is None:
+                record = {
+                    'stream_id': sid_key,
+                    'stream_name': stream.get('name'),
+                    'm3u_account': stream.get('m3u_account'),
+                    'm3u_account_name': stream.get('m3u_account_name'),
+                    'resolution': stream.get('resolution'),
+                    'avg_bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate'),
+                    'fps': stream.get('source_fps') or stream.get('fps'),
+                    'video_codec': stream.get('video_codec'),
+                    'audio_codec': stream.get('audio_codec'),
+                    'interlaced_status': stream.get('interlaced_status'),
+                    'status': stream.get('status'),
+                }
+            records_for_ordering.append(record)
+
+        ordered_stream_ids = order_streams_for_channel(
+            records_for_ordering,
+            resilience_mode=resilience_mode,
+            fallback_depth=fallback_depth,
+            similar_score_delta=similar_score_delta,
+            provider_fn=_provider,
+        )
+        final_ids = [sid for sid in ordered_stream_ids if sid in current_ids_set]
 
         channel_entry = None
         if collect_summary:
-            record_lookup = {}
-            for record in group.to_dict('records'):
-                sid = record.get('stream_id')
-                if sid in (None, 'N/A'):
-                    continue
-                try:
-                    sid_int = int(sid)
-                except Exception:
-                    sid_int = sid
-                record_lookup[sid_int] = record
-
             current_lookup = {}
             for stream in current_streams:
                 if not isinstance(stream, dict):
@@ -1932,7 +1830,6 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
                 'channel_number': channel_meta.get('channel_number'),
                 'channel_name': channel_meta.get('name'),
                 'final_order': [],
-                'tier2_order': [],
                 'excluded_streams': []
             }
 
@@ -1965,25 +1862,14 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
 
             final_set = set(final_ids)
 
-            for idx, sid in enumerate(tier1_stream_ids, start=1):
+            for idx, sid in enumerate(final_ids, start=1):
                 record = record_lookup.get(sid, {})
                 merged = _merge_entry(sid, record)
                 merged.update({
                     'order': idx,
-                    'quality_tier': 'tier1',
+                    'quality_tier': 'ordered',
                 })
                 channel_entry['final_order'].append(merged)
-
-            for idx, sid in enumerate(tier2_stream_ids, start=1):
-                record = record_lookup.get(sid, {})
-                merged = _merge_entry(sid, record)
-                merged.update({
-                    'order': idx,
-                    'quality_tier': 'tier2',
-                })
-                channel_entry['tier2_order'].append(merged)
-
-            # Ordering must not exclude streams; leave excluded_streams empty here.
 
             # Persist final stream metadata for history/UI rendering.
             final_ids_ordered = list(final_ids)
@@ -1993,13 +1879,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
                 for sid in final_ids_ordered:
                     record = record_lookup.get(sid)
                     merged = _merge_entry(sid, record)
-                    is_tier1 = sid in tier1_stream_ids
-                    if record is None:
-                        validation_result = 'fallback'
-                        validation_reason = 'no_streams_passed_validation'
-                    else:
-                        validation_result = merged.get('validation_result')
-                        validation_reason = merged.get('validation_reason')
+                    validation_result = merged.get('validation_result')
+                    validation_reason = merged.get('validation_reason')
                     final_streams.append({
                         'id': sid,
                         'name': merged.get('stream_name'),
@@ -2009,14 +1890,10 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
                         'bitrate_kbps': merged.get('bitrate_kbps'),
                         'validation': validation_result,
                         'validation_reason': validation_reason,
-                        'quality_tier': 'tier1' if is_tier1 else 'tier2',
+                        'quality_tier': 'ordered',
                     })
             else:
                 final_streams = []
-
-            # When final_ids are empty, still persist the channel entry and mark Tier 1 empty.
-            if not tier1_stream_ids:
-                channel_entry['tier1_empty'] = True
 
             channel_entry['final_streams'] = final_streams
             channel_entry['final_stream_ids'] = final_ids_ordered
@@ -2027,11 +1904,12 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False):
             logging.warning(f"No valid streams for channel {channel_id}")
             continue
         
-        try:
-            api.update_channel_streams(channel_id, final_ids)
-            logging.info(f"Reordered channel {channel_id}")
-        except Exception as e:
-            logging.error(f"Failed to reorder channel {channel_id}: {e}")
+        if apply_changes:
+            try:
+                api.update_channel_streams(channel_id, final_ids)
+                logging.info(f"Reordered channel {channel_id}")
+            except Exception as e:
+                logging.error(f"Failed to reorder channel {channel_id}: {e}")
 
         if collect_summary and channel_entry is not None:
             summary['channels'].append(channel_entry)

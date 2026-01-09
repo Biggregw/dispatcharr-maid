@@ -1,11 +1,11 @@
-# Dispatcharr Scout - Docker Deployment Guide
+# Dispatcharr Maid - Docker Deployment Guide
 
 ## 🐳 What This Does
 
-Runs Dispatcharr Scout in Docker containers that:
+Runs Dispatcharr Maid in Docker containers that:
 - ✅ **Connect to your existing Dispatcharr** on the same network
 - ✅ **Persist data** (CSV files, logs, config)
-- ✅ **Web UI always available** on port 5100 (control panel + results)
+- ✅ **Web UI always available** on port 5000 (control panel + results)
 - ✅ **Optional CLI on-demand** (exec into the same container if you prefer terminal workflows)
 - ✅ **Auto-restart** with your server
 - ✅ **Managed via Portainer** (optional)
@@ -26,18 +26,18 @@ Runs Dispatcharr Scout in Docker containers that:
 
 ```bash
 # Create directory
-mkdir -p ~/dispatcharr-scout
-cd ~/dispatcharr-scout
+mkdir -p ~/dispatcharr-maid
+cd ~/dispatcharr-maid
 
-# Download the latest Dispatcharr-Scout release zip from GitHub
-wget https://github.com/Biggregw/dispatcharr-scout/archive/refs/heads/main.zip -O Dispatcharr_Scout.zip
+# Download the latest Dispatcharr-Maid release zip from GitHub
+wget https://github.com/Biggregw/dispatcharr-maid/archive/refs/heads/main.zip -O Dispatcharr_Maid.zip
 
 # Extract the zip file
-unzip Dispatcharr_Scout.zip
+unzip Dispatcharr_Maid.zip
 
 # Move the files to the directory
-mv dispatcharr-scout-main/* .
-rm -rf dispatcharr-scout-main
+mv dispatcharr-maid-main/* .
+rm -rf dispatcharr-maid-main
 ls
 ```
 
@@ -83,7 +83,7 @@ DISPATCHARR_TOKEN=
 
 **Key points:**
 - Use `http://dispatcharr:9191` (the container name), not `localhost` or an IP!
-- Dispatcharr-Scout must run on the same Docker network as Dispatcharr
+- Dispatcharr-Maid must run on the same Docker network as Dispatcharr
 - The provided `docker-compose.yml` attaches the service to the existing `dispatcharr_default` network, which must already exist
 
 ---
@@ -108,7 +108,7 @@ docker-compose ps
 You should see:
 ```
 NAME                    STATUS              PORTS
-dispatcharr-scout-web    Up (healthy)        0.0.0.0:5100->5100/tcp
+dispatcharr-maid-web    Up (healthy)        0.0.0.0:5000->5000/tcp
 ```
 
 ---
@@ -117,10 +117,10 @@ dispatcharr-scout-web    Up (healthy)        0.0.0.0:5100->5100/tcp
 
 Open in your browser:
 ```
-http://YOUR-SERVER-IP:5100
+http://YOUR-SERVER-IP:5000
 ```
 
-You should see the Dispatcharr Scout dashboard!
+You should see the Dispatcharr Maid dashboard!
 
 ---
 
@@ -131,7 +131,7 @@ You should see the Dispatcharr Scout dashboard!
 **Recommendation:** Select one Group and one Channel to work on at a time for optimal results.
 
 #### 1. Navigate to the Dashboard
-Open `http://YOUR-SERVER-IP:5100` in your browser.
+Open `http://YOUR-SERVER-IP:5000` in your browser.
 
 #### 2. Select Your Groups
 A check has been made to list all Groups that exist in channels within Dispatcharr (not all groups from your provider).
@@ -154,7 +154,7 @@ If running for a single channel (e.g., "BBC One"), you will see the matching cha
 - **Include / Exclude filters**: `*` wildcards supported
 - **Exclude +1 channels**
 - **Advanced Regex (optional)** with a **regex-only** toggle if you want regex to be the only rule
-- **No server-side capability testing:** Dispatcharr-Scout assumes client-side decode (e.g., Firestick) and proxied playback without transcoding; FFmpeg capability checks were removed.
+- **No server-side capability testing:** Dispatcharr-Maid assumes client-side decode (e.g., Firestick) and proxied playback without transcoding; FFmpeg capability checks were removed.
 
 Providers are not treated as failure domains; diversity comes from the tiered ordering policy rather than round robin.
 
@@ -169,16 +169,15 @@ Leave the streams you want selected and click **"Add Selected Streams"**
 - The "Current Job" section will display a message indicating it's searching for streams
 - Wait for results to show how many matching streams were found
 - At this point, all selected streams have been added to your channel in Dispatcharr
-- Adjust the "Streams per Provider" setting to specify how many streams from each provider should remain in your channel (default: 2)
 
 #### 7. Click "Quality Check (Apply Changes)" (Optional but Recommended)
-This performs a full probe of each stream and scores them, then **orders and cleans up** your channel using the resilience-aware policy and your **Streams per Provider limit**.
+This performs a full probe of each stream and scores them, then **orders** your channel using a continuous, deterministic scoring model.
 
-Tip: If you want to review what will change first, use **"Quality Check (Preview Plan)"** and commit the plan from the Results page later.
+Tip: If you want to review the ordering first, use **"Quality Check (Read-Only)"** to compute the same ordering without applying changes.
 
 Choose an **Analysis Profile** (Fast / Balanced / Deep) before running quality checks; advanced YAML parameters remain available for power users.
 
-Ordering is **tier-based and resilience-aware** (no round robin). Provider diversity is enforced inside each tier, and the Streams per Provider value is a cap, not a rotation rule.
+Ordering is based on a continuous score (resolution, bitrate, FPS, codecs, validation confidence). Providers can influence position but never inclusion.
 
 The web dashboard updates every 2 seconds with:
 - Live progress bar
@@ -193,10 +192,7 @@ The web dashboard updates every 2 seconds with:
 You have now:
 1. Added all streams from all providers to your selected channel, filtered by your search criteria
 2. Tested each stream for quality and speed
-3. Kept only the optimal streams in resilience-aware order based on your **Streams per Provider** limit
-
-**The result:**
-- Tiered ordering that surfaces meaningful provider diversity early without enforcing round robin; within each tier, diverse options appear before duplicate variants from the same provider.
+3. Ordered all streams deterministically for stable channel definitions
 
 ---
 
@@ -206,7 +202,7 @@ You have now:
 
 ```bash
 # Web UI logs
-docker-compose logs -f dispatcharr-scout-web
+docker-compose logs -f dispatcharr-maid-web
 ```
 
 ### Access Data Files
@@ -214,7 +210,7 @@ docker-compose logs -f dispatcharr-scout-web
 All your CSV files and logs are in the local folders:
 
 ```bash
-cd ~/dispatcharr-scout
+cd ~/dispatcharr-maid
 
 # CSV files
 ls -lh csv/
@@ -251,11 +247,11 @@ Use the provided automation if available (e.g., `./update-maid.sh`) to pull upda
 
 ```bash
 # Pull latest code
-cd ~/dispatcharr-scout
-wget https://github.com/Biggregw/dispatcharr-scout/archive/refs/heads/main.zip -O Dispatcharr_Scout.zip
-unzip -o Dispatcharr_Scout.zip
-mv dispatcharr-scout-main/* .
-rm -rf dispatcharr-scout-main Dispatcharr_Scout.zip
+cd ~/dispatcharr-maid
+wget https://github.com/Biggregw/dispatcharr-maid/archive/refs/heads/main.zip -O Dispatcharr_Maid.zip
+unzip -o Dispatcharr_Maid.zip
+mv dispatcharr-maid-main/* .
+rm -rf dispatcharr-maid-main Dispatcharr_Maid.zip
 
 # Rebuild containers (required when dependencies or assets change)
 docker-compose build
@@ -271,10 +267,10 @@ docker-compose up -d
 docker-compose ps
 
 # Check resource usage
-docker stats dispatcharr-scout-web
+docker stats dispatcharr-maid-web
 
 # Check network connectivity
-docker exec dispatcharr-scout-web ping -c 3 dispatcharr
+docker exec dispatcharr-maid-web ping -c 3 dispatcharr
 ```
 
 ---
@@ -285,23 +281,23 @@ docker exec dispatcharr-scout-web ping -c 3 dispatcharr
 dispatcharr_default network 
 ├── dispatcharr 
 ├── dispatcharr-redis 
-└── dispatcharr-scout-web (auto-assigned IP, exposed on host: 0.0.0.0:5100)
+└── dispatcharr-maid-web (auto-assigned IP, exposed on host: 0.0.0.0:5000)
 ```
 
 All containers can communicate by name:
-- `dispatcharr-scout-web` → `http://dispatcharr:9191` ✅
+- `dispatcharr-maid-web` → `http://dispatcharr:9191` ✅
 - `dispatcharr` → `dispatcharr-redis:6379` ✅
 
 ---
 
 ## 📦 Using Portainer
 
-If you have Portainer running, here's how to manage Dispatcharr Scout through it:
+If you have Portainer running, here's how to manage Dispatcharr Maid through it:
 
 1. **Open Portainer:** `http://YOUR-SERVER-IP:9000`
 2. **Go to Containers**
 3. **Find:**
-   - `dispatcharr-scout-web` (Web UI)
+   - `dispatcharr-maid-web` (Web UI)
 
 **From Portainer you can:**
 - ✅ Start/stop containers
@@ -311,7 +307,7 @@ If you have Portainer running, here's how to manage Dispatcharr Scout through it
 - ✅ Restart containers
 
 **To run CLI from Portainer (optional):**
-1. Click on `dispatcharr-scout-web` container
+1. Click on `dispatcharr-maid-web` container
 2. Click "Console"
 3. Select "Custom" → enter `/bin/bash`
 4. Click "Connect"
@@ -325,7 +321,7 @@ If you have Portainer running, here's how to manage Dispatcharr Scout through it
 
 ```bash
 # Check logs
-docker-compose logs dispatcharr-scout-web
+docker-compose logs dispatcharr-maid-web
 
 # Common issues:
 # - .env file missing
@@ -337,10 +333,10 @@ docker-compose logs dispatcharr-scout-web
 
 ```bash
 # Test network connectivity
-docker exec dispatcharr-scout-web ping dispatcharr
+docker exec dispatcharr-maid-web ping dispatcharr
 
 # Check .env has correct URL
-docker exec dispatcharr-scout-web cat .env
+docker exec dispatcharr-maid-web cat .env
 
 # Should show: DISPATCHARR_BASE_URL=http://dispatcharr:9191
 ```
@@ -349,23 +345,23 @@ docker exec dispatcharr-scout-web cat .env
 
 ```bash
 # Check if it's running
-docker-compose ps dispatcharr-scout-web
+docker-compose ps dispatcharr-maid-web
 
-# Check if port 5100 is available
-sudo netstat -tlnp | grep 5100
+# Check if port 5000 is available
+sudo netstat -tlnp | grep 5000
 
 # View web UI logs
-docker-compose logs dispatcharr-scout-web
+docker-compose logs dispatcharr-maid-web
 ```
 
 ### Data Not Persisting
 
 ```bash
 # Check volumes are mounted
-docker inspect dispatcharr-scout-web | grep -A 10 Mounts
+docker inspect dispatcharr-maid-web | grep -A 10 Mounts
 
 # Make sure you're in the right directory
-pwd  # Should be ~/dispatcharr-scout
+pwd  # Should be ~/dispatcharr-maid
 
 # Check local folders exist
 ls -la csv/ logs/
@@ -402,7 +398,7 @@ The `restart: unless-stopped` policy means:
 To prevent auto-start:
 ```bash
 # Change restart policy
-docker update --restart=no dispatcharr-scout-web
+docker update --restart=no dispatcharr-maid-web
 ```
 
 ---
@@ -415,7 +411,7 @@ Edit `docker-compose.yml`:
 
 ```yaml
 ports:
-  - "8080:5100"  # Access on port 8080 instead of 5100
+  - "8080:5000"  # Access on port 8080 instead of 5000
 ```
 
 Then: `docker-compose up -d`
@@ -426,7 +422,7 @@ Edit `docker-compose.yml`:
 
 ```yaml
 services:
-  dispatcharr-scout-web:
+  dispatcharr-maid-web:
     # ... existing config ...
     deploy:
       resources:
@@ -447,7 +443,7 @@ Use cron to trigger analysis:
 crontab -e
 
 # Add this line (run daily at 2am):
-0 2 * * * docker exec dispatcharr-scout-web python3 -c "from stream_analysis import Config, fetch_streams, analyze_streams, score_streams, reorder_streams; from api_utils import DispatcharrAPI; api = DispatcharrAPI(); api.login(); config = Config(); fetch_streams(api, config); analyze_streams(config); score_streams(api, config); reorder_streams(api, config)" >> /var/log/dispatcharr-scout-cron.log 2>&1
+0 2 * * * docker exec dispatcharr-maid-web python3 -c "from stream_analysis import Config, fetch_streams, analyze_streams, score_streams, reorder_streams; from api_utils import DispatcharrAPI; api = DispatcharrAPI(); api.login(); config = Config(); fetch_streams(api, config); analyze_streams(config); score_streams(api, config); reorder_streams(api, config)" >> /var/log/dispatcharr-maid-cron.log 2>&1
 ```
 
 ---
@@ -459,8 +455,8 @@ You can add HTTPS access to the web UI:
 1. **Open NPM:** `http://YOUR-SERVER-IP:81`
 2. **Add Proxy Host:**
    - Domain: `maid.yourdomain.com` (or use local domain)
-   - Forward to: `dispatcharr-scout-web`
-   - Port: `5100`
+   - Forward to: `dispatcharr-maid-web`
+   - Port: `5000`
 3. **Enable SSL** (if you have a domain)
 
 Now access via: `https://maid.yourdomain.com`
@@ -470,7 +466,7 @@ Now access via: `https://maid.yourdomain.com`
 If your IPTV client uses the **Xtream connection served by Dispatcharr**, you can
 derive provider-usage stats from Nginx Proxy Manager access logs.
 
-1. **Mount NPM logs into the Scout container** (read-only).
+1. **Mount NPM logs into the Maid container** (read-only).
    - NPM logs live at `/data/logs/` inside the NPM container.
    - On the host, that corresponds to your NPM data volume/bind mount (varies by install).
 2. Set `usage.access_log_dir` in `config.yaml` (see `config.yaml.example`).
@@ -507,12 +503,12 @@ derive provider-usage stats from Nginx Proxy Manager access logs.
 1. **Start using it:**
    ```bash
    docker-compose up -d
-   docker-compose exec dispatcharr-scout-web python3 interactive_maid.py
+   docker-compose exec dispatcharr-maid-web python3 interactive_maid.py
    ```
 
 2. **Access dashboard:**
    ```
-   http://YOUR-SERVER-IP:5100
+   http://YOUR-SERVER-IP:5000
    ```
 
 3. **Monitor via Portainer:**
@@ -533,12 +529,12 @@ docker-compose logs -f
 
 **Test Dispatcharr connection:**
 ```bash
-docker exec dispatcharr-scout-web python3 -c "from api_utils import DispatcharrAPI; api = DispatcharrAPI(); api.login(); print('✅ Connected!')"
+docker exec dispatcharr-maid-web python3 -c "from api_utils import DispatcharrAPI; api = DispatcharrAPI(); api.login(); print('✅ Connected!')"
 ```
 
 **Verify files are mounted:**
 ```bash
-docker exec dispatcharr-scout-web ls -la /app/csv /app/logs /app/jobs
+docker exec dispatcharr-maid-web ls -la /app/csv /app/logs /app/jobs
 ```
 
 **Rebuild from scratch:**
@@ -550,4 +546,4 @@ docker-compose up -d
 
 ---
 
-Enjoy your Dockerized Dispatcharr Scout! 🎉🐳
+Enjoy your Dockerized Dispatcharr Maid! 🎉🐳

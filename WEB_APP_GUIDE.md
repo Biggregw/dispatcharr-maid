@@ -57,14 +57,12 @@ This step is where you define and run Jobs. The matching model is always:
 
 Dispatcharr-Maid assumes client-side decode (e.g., Firestick) with proxied playback only; FFmpeg capability testing and transcoding are out of scope.
 
-### 4) Quality Check (ranking + cleanup)
+### 4) Quality Check (scoring + ordering)
 
 Pick an **Analysis Profile** (Fast / **Balanced** (default) / Deep) to decide how deep the probe should go. Raw analysis parameters stay under **Advanced analysis settings**, and YAML imports remain supported if you want to override everything.
 
-Set **Streams Per Provider** (e.g. `2`) as a **limit per provider**, then choose one:
-
-- **Quality Check (Apply Changes)**: runs analysis + scoring, then updates Dispatcharr immediately (ordering + cleanup respects your Streams Per Provider limit).
-- **Quality Check (Preview Plan)**: makes **no changes**. It generates a plan you can review and commit later from the Results page.
+- **Quality Check (Apply Changes)**: runs analysis + scoring, then updates Dispatcharr immediately with a deterministic ordering (no streams removed).
+- **Quality Check (Read-Only)**: makes **no changes** and computes the same ordering for inspection.
 
 ---
 
@@ -77,7 +75,7 @@ Open `http://YOUR-SERVER-IP:5000/results`.
 - Tabs:
   - **Providers / Channels / Errors**: summary tables
   - **Streams**: stream list with a “generate minimal regex” helper
-  - **Planned Changes**: for “Preview Plan” runs; you can **commit selected channels** to Dispatcharr from here
+  - **Ordering visibility**: review the ordered stream list for each channel
 
 ---
 

@@ -9,7 +9,6 @@ def _preset_data(**overrides):
         'regex_mode': 'filter',
         'groups': [1],
         'channels': [10],
-        'streams_per_provider': 2,
         'base_search_text': 'BBC One',
     }
     data.update(overrides)
@@ -25,7 +24,6 @@ def test_same_identity_replaces_and_updates(monkeypatch):
         _preset_data(
             name='Auto Name',
             include_filter='south',
-            streams_per_provider=3,
         )
     )
 
@@ -35,7 +33,6 @@ def test_same_identity_replaces_and_updates(monkeypatch):
     assert len(presets) == 1
     assert presets[0]['name'] == 'Custom Name'
     assert presets[0]['include_filter'] == 'south'
-    assert presets[0]['streams_per_provider'] == 3
     assert presets[0]['identity'] == initial['identity']
 
 
@@ -79,7 +76,6 @@ def test_preview_auto_save_does_not_run(monkeypatch):
             'channels': [10],
             'base_search_text': 'BBC One',
             'stream_name_regex': 'bbc',
-            'streams_per_provider': 2,
         },
         preview_only=True,
     )
