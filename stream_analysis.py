@@ -471,12 +471,18 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
             row['bitrate_kbps'] = 'N/A'
             row['frames_decoded'] = 'N/A'
             row['frames_dropped'] = 'N/A'
+            row['video_stream_count'] = 'N/A'
+            row['audio_stream_count'] = 'N/A'
             row['status'] = 'N/A'
             
             # 1. Get codec info
             streams_info = _get_stream_info(url, timeout)
-            video_info = next((s for s in streams_info if 'width' in s), None)
-            audio_info = next((s for s in streams_info if 'codec_name' in s and 'width' not in s), None)
+            video_streams = [s for s in streams_info if 'width' in s]
+            audio_streams = [s for s in streams_info if 'codec_name' in s and 'width' not in s]
+            video_info = next(iter(video_streams), None)
+            audio_info = next(iter(audio_streams), None)
+            row['video_stream_count'] = len(video_streams) if streams_info else 'N/A'
+            row['audio_stream_count'] = len(audio_streams) if streams_info else 'N/A'
             
             if video_info:
                 row['video_codec'] = video_info.get('codec_name')
@@ -1621,9 +1627,11 @@ def _continuous_ordering_score(record):
     avg_bitrate_kbps = max(_normalize_numeric(record.get('avg_bitrate_kbps')), 0.0)
 
     # Diminishing returns via log1p normalization against practical ceilings.
+    # Resolution is slightly more influential to better separate 1080p from 720p.
     resolution_score = math.log1p(total_pixels) / math.log1p(3840 * 2160)
+    resolution_detail = math.sqrt(total_pixels) / math.sqrt(3840 * 2160) if total_pixels > 0 else 0.0
     fps_score = math.log1p(fps) / math.log1p(120)
-    bitrate_score = math.log1p(avg_bitrate_kbps) / math.log1p(50000)
+    bitrate_score = math.log1p(avg_bitrate_kbps) / math.log1p(20000)
     base_component = math.log1p(max(base_score, 0.0))
 
     codec_score = _codec_quality_score(record.get('video_codec'))
@@ -1633,15 +1641,42 @@ def _continuous_ordering_score(record):
     interlace_penalty = 0.95 if 'interlaced' in interlaced_status else 1.0
     validation_penalty = _validation_penalty(record.get('validation_result') or record.get('status'))
 
+    # Metadata completeness and gentle probe-structure penalties should be very weak.
+    metadata_penalty = 1.0
+    if total_pixels == 0:
+        metadata_penalty *= 0.98
+    if str(record.get('video_codec') or '').upper() in ('', 'N/A'):
+        metadata_penalty *= 0.99
+    if str(record.get('audio_codec') or '').upper() in ('', 'N/A'):
+        metadata_penalty *= 0.995
+
+    structure_penalty = 1.0
+    video_stream_count = record.get('video_stream_count')
+    if video_stream_count not in (None, '', 'N/A'):
+        try:
+            if int(video_stream_count) > 1:
+                structure_penalty *= 0.985
+        except (TypeError, ValueError):
+            pass
+    audio_stream_count = record.get('audio_stream_count')
+    if audio_stream_count not in (None, '', 'N/A'):
+        try:
+            extra_audio = max(int(audio_stream_count) - 2, 0)
+            if extra_audio:
+                structure_penalty *= max(1.0 - (extra_audio * 0.003), 0.985)
+        except (TypeError, ValueError):
+            pass
+
     score = (
-        base_component * 1.5
-        + resolution_score * 2.0
-        + fps_score * 0.6
-        + bitrate_score * 1.0
-        + codec_score * 0.3
-        + audio_score * 0.1
+        base_component * 1.55
+        + resolution_score * 2.2
+        + resolution_detail * 0.4
+        + fps_score * 0.55
+        + bitrate_score * 0.9
+        + codec_score * 0.32
+        + audio_score * 0.12
     )
-    score *= interlace_penalty * validation_penalty
+    score *= interlace_penalty * validation_penalty * metadata_penalty * structure_penalty
     return score
 
 
