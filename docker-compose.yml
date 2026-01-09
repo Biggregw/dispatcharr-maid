@@ -28,7 +28,7 @@ services:
       - ./templates:/app/templates                            # HTML templates
     environment:
       - PYTHONUNBUFFERED=1
-    command: python3 dispatcharr_web_app.py
+    command: sh -c "python3 dispatcharr_web_app.py --snapshot-dispatcharr-loop & exec python3 dispatcharr_web_app.py"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
