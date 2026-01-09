@@ -16,6 +16,7 @@ SUGGESTIONS_PATH = LOGS_DIR / "quality_check_suggestions.ndjson"
 
 WINDOW_HOURS = 12
 MIN_TOP_OBSERVATIONS = 2
+PLAYBACK_SOURCE = "playback"
 
 
 def _utc_now() -> datetime:
@@ -62,12 +63,40 @@ def _within_window(timestamp: datetime, cutoff: datetime) -> bool:
     return timestamp >= cutoff
 
 
+def _is_real_playback(record: Dict, log_label: str) -> bool:
+    """
+    Guard insight inputs so they only reflect real playback activity.
+
+    Without an explicit playback source marker we cannot safely tell if a record
+    came from diagnostics (quality checks, snapshots, planning, etc.), so we
+    skip it and log loudly to avoid contaminating insights.
+    """
+    source = (record.get("source") or "").strip().lower()
+    if not source:
+        logging.warning(
+            "Skipping %s entry without explicit playback source; "
+            "cannot safely attribute to real playback.",
+            log_label,
+        )
+        return False
+    if source != PLAYBACK_SOURCE:
+        logging.info(
+            "Ignoring non-playback %s entry from source '%s'.",
+            log_label,
+            source,
+        )
+        return False
+    return True
+
+
 def _collect_quality_checks(cutoff: datetime):
     channel_names: Dict[str, str] = {}
     top_counts: Dict[str, Counter] = defaultdict(Counter)
     top_observations: Dict[str, int] = defaultdict(int)
 
     for record in _read_ndjson(QUALITY_CHECKS_PATH):
+        if not _is_real_playback(record, "quality_checks"):
+            continue
         timestamp = _parse_timestamp(record.get("timestamp"))
         if not timestamp:
             logging.warning("Missing or invalid timestamp in quality_checks entry")
@@ -97,6 +126,8 @@ def _collect_selection_outcomes(cutoff: datetime):
     record_counts: Dict[str, int] = defaultdict(int)
 
     for record in _read_ndjson(SELECTION_OUTCOMES_PATH):
+        if not _is_real_playback(record, "selection_outcomes"):
+            continue
         timestamp = _parse_timestamp(record.get("timestamp"))
         if not timestamp:
             logging.warning("Missing or invalid timestamp in selection_outcomes entry")
