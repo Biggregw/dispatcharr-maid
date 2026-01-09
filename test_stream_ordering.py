@@ -43,6 +43,57 @@ def test_score_collisions_are_rare_for_similar_streams():
     assert len(scores) == len(set(scores))
 
 
+def test_missing_probe_fields_have_no_effect():
+    record = {
+        "stream_id": 300,
+        "score": 120,
+        "resolution": "1920x1080",
+        "fps": 30,
+        "avg_bitrate_kbps": 5500,
+        "video_codec": "h264",
+        "audio_codec": "aac"
+    }
+    baseline = _continuous_ordering_score(record)
+    missing_probe = {
+        **record,
+        "format_name": "N/A",
+        "r_frame_rate": "N/A",
+        "declared_bitrate_kbps": "N/A",
+        "video_profile": None,
+        "video_level": "",
+        "pixel_format": "N/A"
+    }
+
+    assert _continuous_ordering_score(missing_probe) == baseline
+
+
+def test_probe_signals_do_not_dominate_ordering():
+    high_quality = {
+        "stream_id": 301,
+        "score": 220,
+        "resolution": "1920x1080",
+        "fps": 30,
+        "avg_bitrate_kbps": 6500,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+        "r_frame_rate": "120/1",
+        "declared_bitrate_kbps": 400,
+        "avg_frames_decoded": 1000,
+        "avg_frames_dropped": 400
+    }
+    lower_quality = {
+        "stream_id": 302,
+        "score": 100,
+        "resolution": "1280x720",
+        "fps": 24,
+        "avg_bitrate_kbps": 2500,
+        "video_codec": "h264",
+        "audio_codec": "aac"
+    }
+
+    assert _continuous_ordering_score(high_quality) > _continuous_ordering_score(lower_quality)
+
+
 def test_provider_identity_does_not_exclude_streams():
     records = [
         {"stream_id": 201, "m3u_account": "provider_a", "score": 12},
