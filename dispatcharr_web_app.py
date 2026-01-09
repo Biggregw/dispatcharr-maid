@@ -189,6 +189,31 @@ def _parse_snapshot_interval_seconds(default_seconds=1800):
 
 
 def _run_dispatcharr_snapshot_loop():
+    lock_path = Path("dispatcharr_snapshot_loop.pid")
+    lock_file = None
+    if lock_path.exists():
+        try:
+            pid_text = lock_path.read_text().strip()
+            pid = int(pid_text)
+            try:
+                os.kill(pid, 0)
+                return
+            except ProcessLookupError:
+                lock_path.unlink()
+            except PermissionError:
+                return
+        except (OSError, ValueError):
+            try:
+                lock_path.unlink()
+            except OSError:
+                return
+    try:
+        lock_file = lock_path.open("x")
+        lock_file.write(str(os.getpid()))
+        lock_file.flush()
+    except (FileExistsError, OSError):
+        return
+
     interval_seconds = _parse_snapshot_interval_seconds()
     logging.info(
         "Starting Dispatcharr snapshot loop (interval=%s seconds).",
@@ -203,6 +228,14 @@ def _run_dispatcharr_snapshot_loop():
             time.sleep(interval_seconds)
     except KeyboardInterrupt:
         logging.info("Dispatcharr snapshot loop stopped.")
+    finally:
+        try:
+            if lock_file:
+                lock_file.close()
+            if lock_path.exists():
+                lock_path.unlink()
+        except OSError:
+            pass
 
 
 def _render_auth_error(error_message):
