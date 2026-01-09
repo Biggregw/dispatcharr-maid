@@ -35,6 +35,8 @@ import math
 from flask import json
 from flask.json.provider import DefaultJSONProvider
 
+import quality_check_evaluator
+
 class NaNSafeJSONProvider(DefaultJSONProvider):
     def default(self, obj):
         if isinstance(obj, float):
@@ -153,9 +155,10 @@ def _append_dispatcharr_snapshot():
                         "source": "dispatcharr",
                     }
                     handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        return True
     except Exception as exc:
         logging.warning("Dispatcharr snapshot failed: %s", exc)
-        return
+        return False
 
 
 def _parse_snapshot_interval_seconds(default_seconds=1800):
@@ -385,7 +388,14 @@ def _run_dispatcharr_snapshot_loop():
     try:
         while True:
             try:
-                _append_dispatcharr_snapshot()
+                snapshot_written = _append_dispatcharr_snapshot()
+                if snapshot_written:
+                    try:
+                        quality_check_evaluator.evaluate_quality_checks()
+                    except Exception as exc:
+                        logging.warning(
+                            "Quality check evaluator failed: %s", exc
+                        )
             except Exception as exc:
                 logging.warning("Dispatcharr snapshot loop error: %s", exc)
             time.sleep(interval_seconds)
