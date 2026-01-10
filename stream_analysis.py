@@ -2144,6 +2144,10 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         'london', 'midlands', 'yorkshire',
         'north', 'south', 'east', 'west'
     }
+
+    _PREFIX_NEUTRAL_TOKENS = {
+        'uk', 'us', 'usa', 'ca', 'au', 'ie', 'de', 'fr', 'es', 'it'
+    }
     
     _NUMERIC_WORD_ALIASES = {
         'one': '1',
@@ -2221,12 +2225,34 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     _selected_has_timeshift = None
     _selected_numeric_re = None
     _selected_tokens = None
+    _selected_token_set = None
     _include_regexes = None
     _exclude_regexes = None
     _alias_neutral_tokens = set()
     
+    def _find_match_window(stream_tokens, selected_tokens):
+        if not selected_tokens:
+            return None
+        selected_len = len(selected_tokens)
+        for start in range(len(stream_tokens) - selected_len + 1):
+            if stream_tokens[start:start + selected_len] == selected_tokens:
+                return start + selected_len
+        selected_index = 0
+        end_index = None
+        for idx, token in enumerate(stream_tokens):
+            if token == selected_tokens[selected_index]:
+                selected_index += 1
+                end_index = idx + 1
+                if selected_index == selected_len:
+                    return end_index
+        return None
+
     def _passes_semantic_suffix(selected_tokens, stream_tokens):
-        suffix_tokens = [token for token in stream_tokens if token not in selected_tokens]
+        match_end = _find_match_window(stream_tokens, selected_tokens)
+        if match_end is None:
+            return False
+        # Prefix tokens (like ones in _PREFIX_NEUTRAL_TOKENS) must not be treated as suffixes.
+        suffix_tokens = stream_tokens[match_end:]
         for token in suffix_tokens:
             if (
                 token not in _QUALITY_NEUTRAL_TOKENS
@@ -2317,7 +2343,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     selected_cleaned = strip_quality(search_name)
     _selected_normalized = canonicalize_name(selected_cleaned)
     _selected_has_timeshift = bool(_TIMESHIFT_SEMANTIC_RE.search(search_name))
-    _selected_tokens = set(tokenize_canonical(selected_cleaned))
+    _selected_tokens = tokenize_canonical(selected_cleaned)
+    _selected_token_set = set(_selected_tokens)
     numeric_match = re.search(r'(?:^|\s)(\d+)\s*$', _selected_normalized)
     if numeric_match:
         numeric_token = numeric_match.group(1)
@@ -2345,7 +2372,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
                 continue
             tokens = {
                 token for token in stream_tokens
-                if token not in _selected_tokens and token not in _QUALITY_NEUTRAL_TOKENS
+                if token not in _selected_token_set and token not in _QUALITY_NEUTRAL_TOKENS
             }
             if not tokens:
                 continue
@@ -2357,7 +2384,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         return {
             token for token, count in token_counts.items()
             if 0 < count < stream_count
-            and token not in _selected_tokens
+            and token not in _selected_token_set
             and not token.isdigit()
             and token not in _QUALITY_NEUTRAL_TOKENS
         }
