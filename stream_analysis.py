@@ -1959,6 +1959,9 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                     'stream_name': stream.get('name'),
                     'm3u_account': stream.get('m3u_account'),
                     'm3u_account_name': stream.get('m3u_account_name'),
+                    # Pass through service metadata if the source stream already includes it.
+                    'service_name': stream.get('service_name'),
+                    'service_provider': stream.get('service_provider'),
                     'resolution': stream.get('resolution'),
                     'avg_bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate'),
                     'fps': stream.get('source_fps') or stream.get('fps'),
@@ -1995,6 +1998,9 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                     'stream_name': stream.get('name'),
                     'provider_id': stream.get('m3u_account'),
                     'provider_name': stream.get('m3u_account_name'),
+                    # Pass through service metadata if the source stream already includes it.
+                    'service_name': stream.get('service_name'),
+                    'service_provider': stream.get('service_provider'),
                     'resolution': stream.get('resolution'),
                     'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate')
                 }
@@ -2016,6 +2022,9 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                     'stream_name': source_record.get('stream_name') or fallback.get('stream_name'),
                     'provider_id': source_record.get('m3u_account') if isinstance(source_record, dict) else None,
                     'provider_name': source_record.get('m3u_account_name') if isinstance(source_record, dict) else None,
+                    # Pass through service metadata if the source stream already includes it.
+                    'service_name': source_record.get('service_name') if isinstance(source_record, dict) else None,
+                    'service_provider': source_record.get('service_provider') if isinstance(source_record, dict) else None,
                     'resolution': source_record.get('resolution'),
                     'video_codec': source_record.get('video_codec'),
                     'bitrate_kbps': source_record.get('avg_bitrate_kbps'),
@@ -2028,6 +2037,10 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                     entry['provider_id'] = fallback.get('provider_id')
                 if entry.get('provider_name') is None and isinstance(fallback, dict):
                     entry['provider_name'] = fallback.get('provider_name')
+                if entry.get('service_name') is None and isinstance(fallback, dict):
+                    entry['service_name'] = fallback.get('service_name')
+                if entry.get('service_provider') is None and isinstance(fallback, dict):
+                    entry['service_provider'] = fallback.get('service_provider')
                 if entry.get('resolution') is None and isinstance(fallback, dict):
                     entry['resolution'] = fallback.get('resolution')
                 if entry.get('bitrate_kbps') is None and isinstance(fallback, dict):
@@ -2061,6 +2074,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                         'name': merged.get('stream_name'),
                         'provider_id': merged.get('provider_id'),
                         'provider_name': merged.get('provider_name'),
+                        'service_name': merged.get('service_name'),
+                        'service_provider': merged.get('service_provider'),
                         'resolution': merged.get('resolution'),
                         'bitrate_kbps': merged.get('bitrate_kbps'),
                         'validation': validation_result,
@@ -2254,6 +2269,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             'name': stream.get('name'),
             'provider_id': stream.get('m3u_account'),
             'provider_name': stream.get('m3u_account_name'),
+            # Pass through service metadata if the source stream already includes it.
+            'service_name': stream.get('service_name'),
+            'service_provider': stream.get('service_provider'),
             'resolution': stream.get('resolution'),
             'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate')
         }
@@ -2328,6 +2346,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             'name': stream_name,
             'provider_id': provider_id,
             'provider_name': provider_name,
+            # Pass through service metadata if the source stream already includes it.
+            'service_name': stream.get('service_name'),
+            'service_provider': stream.get('service_provider'),
             # URL is not used by the UI and can be large/sensitive; omit.
             'resolution': stream.get('resolution'),
             'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate')
