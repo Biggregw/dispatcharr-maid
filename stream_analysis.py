@@ -2133,9 +2133,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     _QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
     _TIMESHIFT_SEMANTIC_RE = re.compile(r'(?:\+\s*\d+|\bplus\s*\d+\b)', flags=re.IGNORECASE)
     
-    def normalize(text):
-        """Remove spaces and lowercase"""
-        return text.replace(" ", "").lower()
+    def canonicalize_name(text):
+        """Lowercase and normalize punctuation/whitespace for name comparisons."""
+        lowered = text.lower()
+        cleaned = re.sub(r'[^0-9a-z]', ' ', lowered)
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        return cleaned
     
     def strip_quality(text):
         """Remove quality indicators"""
@@ -2192,7 +2195,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if _stream_name_override_re is not None:
             return bool(_stream_name_override_re.search(stream_name))
 
-        stream_normalized = normalize(stream_name)
+        stream_normalized = canonicalize_name(stream_name)
         
         if _selected_normalized not in stream_normalized:
             return False
@@ -2259,9 +2262,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     # Precompute match constants once (used inside the stream loop).
     # In override mode these values are unused, but we still set safe defaults.
     selected_cleaned = strip_quality(search_name)
-    _selected_normalized = normalize(selected_cleaned)
+    _selected_normalized = canonicalize_name(selected_cleaned)
     _selected_has_timeshift = bool(_TIMESHIFT_SEMANTIC_RE.search(search_name))
-    numeric_match = re.search(r'(?:^|\s)(\d+)\s*$', selected_cleaned)
+    numeric_match = re.search(r'(?:^|\s)(\d+)\s*$', _selected_normalized)
     if numeric_match:
         numeric_token = numeric_match.group(1)
         _selected_numeric_re = re.compile(rf'\b{re.escape(numeric_token)}\b', flags=re.IGNORECASE)
