@@ -2366,6 +2366,28 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             filtered.append(token)
         return filtered
 
+    def _allows_numeric_one_equivalence(selected_name, stream_name):
+        selected_tokens = tokenize_canonical(selected_name)
+        stream_tokens = tokenize_canonical(stream_name)
+        if not selected_tokens or not stream_tokens:
+            return False
+        if selected_tokens[-1] != '1':
+            return False
+        base_tokens = selected_tokens[:-1]
+        if not base_tokens:
+            return False
+        if any(token.isdigit() for token in base_tokens):
+            return False
+        for token in stream_tokens:
+            for digits in re.findall(r'\d+', token):
+                if digits != '1':
+                    return False
+        normalized_stream_tokens = [
+            token[:-1] if (token.endswith('1') and not token.isdigit()) else token
+            for token in stream_tokens
+        ]
+        return normalized_stream_tokens == base_tokens
+
     def matches_stream(stream_name):
         """Check if stream matches the selected channel (fast path; precomputed filters)."""
         if exclude_plus_one and _TIMESHIFT_SEMANTIC_RE.search(stream_name):
@@ -2380,7 +2402,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if _selected_normalized not in stream_normalized:
             return False
         if _selected_numeric_re and not _selected_numeric_re.search(stream_normalized):  # use canonical form so word-number aliases (e.g., "one"->"1") pass
-            return False
+            if not _allows_numeric_one_equivalence(selected_cleaned, stream_name):
+                return False
         
         stream_has_timeshift = bool(_TIMESHIFT_SEMANTIC_RE.search(stream_name))
         
