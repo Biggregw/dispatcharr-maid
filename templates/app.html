@@ -2313,8 +2313,19 @@
                 if (base && typeof derived.base_search_text === 'string') base.value = derived.base_search_text;
                 if (inc && typeof derived.include_filter === 'string') inc.value = derived.include_filter;
                 if (exc && typeof derived.exclude_filter === 'string') exc.value = derived.exclude_filter;
-                if (exPlusOne && typeof derived.exclude_plus_one === 'boolean') exPlusOne.checked = derived.exclude_plus_one;
-                if (exPlusOne && exPlusOneRefine) exPlusOneRefine.checked = exPlusOne.checked;
+                const plusOneLocked = derived.exclude_plus_one_locked === true;
+                if (exPlusOne && typeof derived.exclude_plus_one === 'boolean') {
+                    exPlusOne.checked = derived.exclude_plus_one;
+                    exPlusOne.disabled = plusOneLocked;
+                } else if (exPlusOne) {
+                    exPlusOne.disabled = false;
+                }
+                if (exPlusOneRefine && exPlusOne) {
+                    exPlusOneRefine.checked = exPlusOne.checked;
+                    exPlusOneRefine.disabled = plusOneLocked;
+                } else if (exPlusOneRefine) {
+                    exPlusOneRefine.disabled = false;
+                }
 
                 if (overrideInput) overrideInput.value = '';
                 if (filterInput) filterInput.value = '';

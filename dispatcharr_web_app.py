@@ -1188,6 +1188,7 @@ def _derive_refresh_filter_config(api, config, channel_id):
 
     total_current = len(current_names)
     exclude_plus_one = (timeshift_count == 0)
+    exclude_plus_one_locked = exclude_plus_one
 
     include_counts = {}
     for tokens in current_token_sets:
@@ -1251,7 +1252,8 @@ def _derive_refresh_filter_config(api, config, channel_id):
         'base_search_text': base_search_text,
         'include_filter': include_filter,
         'exclude_filter': exclude_filter,
-        'exclude_plus_one': exclude_plus_one
+        'exclude_plus_one': exclude_plus_one,
+        'exclude_plus_one_locked': exclude_plus_one_locked
     }
 
 

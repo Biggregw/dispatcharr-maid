@@ -2180,6 +2180,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     # once `search_name` is known).
     _selected_normalized = None
     _selected_has_timeshift = None
+    _selected_numeric_re = None
     _include_regexes = None
     _exclude_regexes = None
     
@@ -2191,6 +2192,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         stream_normalized = normalize(stream_name)
         
         if _selected_normalized not in stream_normalized:
+            return False
+        if _selected_numeric_re and not _selected_numeric_re.search(stream_name):
             return False
         
         stream_has_timeshift = bool(_TIMESHIFT_RE.search(stream_name))
@@ -2252,8 +2255,13 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     # Precompute match constants once (used inside the stream loop).
     # In override mode these values are unused, but we still set safe defaults.
-    _selected_normalized = normalize(strip_quality(search_name))
+    selected_cleaned = strip_quality(search_name)
+    _selected_normalized = normalize(selected_cleaned)
     _selected_has_timeshift = bool(_TIMESHIFT_RE.search(search_name))
+    numeric_match = re.search(r'(?:^|\s)(\d+)\s*$', selected_cleaned)
+    if numeric_match:
+        numeric_token = numeric_match.group(1)
+        _selected_numeric_re = re.compile(rf'\b{re.escape(numeric_token)}\b', flags=re.IGNORECASE)
     _include_regexes = [] if _stream_name_override_re is not None else compile_wildcard_filter(include_filter)
     _exclude_regexes = [] if _stream_name_override_re is not None else compile_wildcard_filter(exclude_filter)
     
