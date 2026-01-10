@@ -1106,6 +1106,155 @@ def _build_exclude_filter(exclude_filter, exclude_plus_one):
     return ','.join(filters) if filters else None
 
 
+_DERIVED_COLLISION_TOKENS = ('music', 'hits', 'radio', 'kids', 'junior', 'jr', '4k')
+_DERIVED_QUALITY_NEUTRAL_TOKENS = {'hd', 'fhd', 'uhd'}
+_DERIVED_TIMESHIFT_TOKENS = {'extra', 'timeshift'}
+_DERIVED_TOKEN_RE = re.compile(r'\+\d+|[a-z0-9]+', flags=re.IGNORECASE)
+_DERIVED_TIMESHIFT_RE = re.compile(r'\+\d+', flags=re.IGNORECASE)
+# Match the existing refresh normalization logic (stream_analysis.refresh_channel_streams).
+_DERIVED_STRIP_QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
+
+
+def _derive_base_search_text(channel_name):
+    """Strip quality tokens using the existing refresh normalization logic."""
+    cleaned = _DERIVED_STRIP_QUALITY_RE.sub(' ', str(channel_name or ''))
+    return ' '.join(cleaned.split()).strip()
+
+
+def _tokenize_refresh_text(value):
+    return [token.lower() for token in _DERIVED_TOKEN_RE.findall(str(value or '').lower()) if token]
+
+
+def _is_timeshift_token(token):
+    if not token:
+        return False
+    if token.startswith('+') and token[1:].isdigit():
+        return True
+    return token in _DERIVED_TIMESHIFT_TOKENS
+
+
+def _has_timeshift_variant(stream_name, tokens=None):
+    if _DERIVED_TIMESHIFT_RE.search(str(stream_name or '')):
+        return True
+    tokens = tokens or _tokenize_refresh_text(stream_name)
+    return any(token in _DERIVED_TIMESHIFT_TOKENS for token in tokens)
+
+
+def _filtered_token_set(tokens, base_tokens):
+    filtered = set()
+    for token in tokens:
+        if not token:
+            continue
+        if token in base_tokens:
+            continue
+        if token in _DERIVED_QUALITY_NEUTRAL_TOKENS:
+            continue
+        if _is_timeshift_token(token):
+            continue
+        filtered.add(token)
+    return filtered
+
+
+def _derive_refresh_filter_config(api, config, channel_id):
+    """
+    Derive a conservative refresh filter configuration from the channel's current streams.
+
+    This is deterministic and explainable:
+    - Start with the channel name (existing normalization) as the primary match.
+    - Only include tokens that appear in MOST current streams.
+    - Exclude known collision tokens (unless the current channel already uses them).
+    - Use preview-only tokens as additional guardrails.
+    - Allow timeshift variants unless evidence says none exist.
+    """
+    channel_id_int = int(channel_id)
+    channels = api.fetch_channels() or []
+    target = next((ch for ch in channels if int(ch.get('id', -1)) == channel_id_int), None)
+    channel_name = (target or {}).get('name', '') or ''
+
+    base_search_text = _derive_base_search_text(channel_name) or str(channel_name).strip()
+
+    current_streams = api.fetch_channel_streams(channel_id_int) or []
+    current_names = [s.get('name', '') for s in current_streams if isinstance(s, dict)]
+
+    base_tokens = set(_tokenize_refresh_text(channel_name))
+    current_token_sets = [set(_tokenize_refresh_text(name)) for name in current_names]
+
+    current_tokens_raw = set()
+    timeshift_count = 0
+    for tokens, name in zip(current_token_sets, current_names):
+        current_tokens_raw.update(tokens)
+        if _has_timeshift_variant(name, tokens=tokens):
+            timeshift_count += 1
+
+    total_current = len(current_names)
+    exclude_plus_one = (timeshift_count == 0)
+
+    include_counts = {}
+    for tokens in current_token_sets:
+        filtered = _filtered_token_set(tokens, base_tokens)
+        for token in filtered:
+            include_counts[token] = include_counts.get(token, 0) + 1
+
+    include_tokens = [
+        token for token, count in include_counts.items()
+        if total_current > 0 and count > (total_current / 2)
+    ]
+
+    include_filter = ','.join(sorted(include_tokens)) if include_tokens else ''
+
+    preview_tokens = []
+    try:
+        preview = refresh_channel_streams(
+            api,
+            config,
+            channel_id_int,
+            base_search_text=base_search_text,
+            include_filter=include_filter or None,
+            exclude_filter=None,
+            preview=True,
+            stream_name_regex=None,
+            stream_name_regex_override=None
+        )
+        preview_streams = preview.get('streams') if isinstance(preview, dict) else None
+        if isinstance(preview_streams, list):
+            preview_tokens = [set(_tokenize_refresh_text(s.get('name', ''))) for s in preview_streams if isinstance(s, dict)]
+    except Exception as exc:
+        logging.warning("Failed to derive preview tokens for channel %s: %s", channel_id, exc)
+
+    preview_filtered_counts = {}
+    preview_filtered_set = set()
+    for tokens in preview_tokens:
+        filtered = _filtered_token_set(tokens, base_tokens)
+        preview_filtered_set.update(filtered)
+        for token in filtered:
+            preview_filtered_counts[token] = preview_filtered_counts.get(token, 0) + 1
+
+    current_filtered_set = set()
+    for tokens in current_token_sets:
+        current_filtered_set.update(_filtered_token_set(tokens, base_tokens))
+
+    preview_total = len(preview_tokens)
+    preview_excludes = [
+        token for token, count in preview_filtered_counts.items()
+        if preview_total > 0 and count > (preview_total / 2) and token not in current_filtered_set
+    ]
+
+    collision_excludes = [
+        token for token in _DERIVED_COLLISION_TOKENS
+        if token not in base_tokens and token not in current_tokens_raw
+    ]
+
+    exclude_tokens = sorted(set(collision_excludes + preview_excludes))
+    exclude_filter = ','.join(exclude_tokens) if exclude_tokens else ''
+
+    return {
+        'base_search_text': base_search_text,
+        'include_filter': include_filter,
+        'exclude_filter': exclude_filter,
+        'exclude_plus_one': exclude_plus_one
+    }
+
+
 def _ensure_provider_map(api, config):
     """
     Ensure provider_map.json exists in the workspace.
@@ -3094,6 +3243,24 @@ def api_channels():
         
         return jsonify({'success': True, 'channels': channels_by_group})
 
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/refresh-derived', methods=['GET'])
+@login_required
+def api_refresh_derived():
+    """Derive a suggested refresh filter config from the channel's current streams."""
+    channel_id = request.args.get('channel_id')
+    if not channel_id:
+        return jsonify({'success': False, 'error': 'Channel ID is required'}), 400
+
+    try:
+        api = DispatcharrAPI()
+        api.login()
+        config = Config('config.yaml')
+        derived = _derive_refresh_filter_config(api, config, channel_id)
+        return jsonify({'success': True, 'derived': derived})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

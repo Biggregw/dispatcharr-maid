@@ -1140,6 +1140,9 @@
                 <label style="display: block; margin-bottom: 15px; font-weight: 600; color: #2d3748; font-size: 1.1em;">
                     🔍 Channel Refresh Filters (for "Refresh Channel Streams" only)
                 </label>
+                <div style="margin-top: -6px; margin-bottom: 14px; color: #6b7280; font-size: 0.9em;">
+                    These filters were suggested and derived from the streams currently assigned to this channel.
+                </div>
 
                 <div style="margin-bottom: 16px;">
                     <label style="display: block; margin-bottom: 5px; color: #1f2937; font-weight: 700;">
@@ -2267,6 +2270,12 @@
                 }
             }
 
+            if (!selectedChannels || selectedChannels.length !== 1) {
+                derivedRefreshChannelId = null;
+            } else if (String(derivedRefreshChannelId) !== String(selectedChannels[0])) {
+                derivedRefreshChannelId = null;
+            }
+
             // Show/hide refresh filters based on selection
             const refreshFiltersDiv = document.getElementById('refreshFilters');
             if (refreshFiltersDiv) {
@@ -2277,7 +2286,53 @@
                 }
             }
         }
-        
+
+        let derivedRefreshChannelId = null;
+        let derivedRefreshInFlight = false;
+
+        async function loadDerivedRefreshFilters(channelId) {
+            if (!channelId) return;
+            if (derivedRefreshInFlight) return;
+            if (String(derivedRefreshChannelId) === String(channelId)) return;
+            derivedRefreshInFlight = true;
+            try {
+                const resp = await fetch(`/api/refresh-derived?channel_id=${encodeURIComponent(String(channelId))}&ts=${Date.now()}`, { cache: 'no-store' });
+                const data = await resp.json();
+                if (!data.success) {
+                    return;
+                }
+                const derived = data.derived || {};
+                const base = document.getElementById('baseSearchText');
+                const inc = document.getElementById('includeFilter');
+                const exc = document.getElementById('excludeFilter');
+                const exPlusOne = document.getElementById('excludePlusOne');
+                const exPlusOneRefine = document.getElementById('excludePlusOneRefine');
+                const overrideInput = document.getElementById('streamNameRegexOverride');
+                const filterInput = document.getElementById('streamNameRegex');
+
+                if (base && typeof derived.base_search_text === 'string') base.value = derived.base_search_text;
+                if (inc && typeof derived.include_filter === 'string') inc.value = derived.include_filter;
+                if (exc && typeof derived.exclude_filter === 'string') exc.value = derived.exclude_filter;
+                if (exPlusOne && typeof derived.exclude_plus_one === 'boolean') exPlusOne.checked = derived.exclude_plus_one;
+                if (exPlusOne && exPlusOneRefine) exPlusOneRefine.checked = exPlusOne.checked;
+
+                if (overrideInput) overrideInput.value = '';
+                if (filterInput) filterInput.value = '';
+                syncAdvancedFieldFromInputs();
+
+                const refineDetails = document.getElementById('refine-matches');
+                const advancedDetails = document.getElementById('advanced-matching');
+                if (refineDetails) refineDetails.open = false;
+                if (advancedDetails) advancedDetails.open = false;
+
+                derivedRefreshChannelId = channelId;
+            } catch (e) {
+                // Best-effort only: leave existing values untouched on failure.
+            } finally {
+                derivedRefreshInFlight = false;
+            }
+        }
+
         // Update channel counts
         function updateChannelCounts() {
             let total = 0;
@@ -2312,6 +2367,10 @@
                 document.getElementById('final-channels-summary').textContent = `${selectedChannels.length} specific channels`;
             } else {
                 document.getElementById('final-channels-summary').textContent = 'All channels';
+            }
+
+            if (selectedChannels && selectedChannels.length === 1) {
+                loadDerivedRefreshFilters(selectedChannels[0]);
             }
         }
         
