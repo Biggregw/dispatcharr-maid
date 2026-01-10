@@ -2379,7 +2379,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         
         if _selected_normalized not in stream_normalized:
             return False
-        if _selected_numeric_re and not _selected_numeric_re.search(stream_name):
+        if _selected_numeric_re and not _selected_numeric_re.search(stream_normalized):  # use canonical form so word-number aliases (e.g., "one"->"1") pass
             return False
         
         stream_has_timeshift = bool(_TIMESHIFT_SEMANTIC_RE.search(stream_name))
