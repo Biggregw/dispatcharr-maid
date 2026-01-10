@@ -1097,12 +1097,8 @@ def _build_config_from_job(job):
     return Config('config.yaml')
 
 
-def _build_exclude_filter(exclude_filter, exclude_plus_one):
+def _build_exclude_filter(exclude_filter):
     filters = [item.strip() for item in (exclude_filter or '').split(',') if item.strip()]
-    if exclude_plus_one:
-        plus_one_pattern = r'\+ ?1'
-        if plus_one_pattern not in filters:
-            filters.append(plus_one_pattern)
     return ','.join(filters) if filters else None
 
 
@@ -1212,6 +1208,7 @@ def _derive_refresh_filter_config(api, config, channel_id):
             base_search_text=base_search_text,
             include_filter=include_filter or None,
             exclude_filter=None,
+            exclude_plus_one=exclude_plus_one,
             preview=True,
             stream_name_regex=None,
             stream_name_regex_override=None
@@ -2472,7 +2469,7 @@ def run_job_worker(job, api, config):
                     include_filter = job.include_filter if (len(channels_to_refresh) == 1) else None
                     exclude_filter = None
                     if len(channels_to_refresh) == 1:
-                        exclude_filter = _build_exclude_filter(job.exclude_filter, job.exclude_plus_one)
+                        exclude_filter = _build_exclude_filter(job.exclude_filter)
                     result = refresh_channel_streams(
                         api,
                         config,
@@ -2480,6 +2477,7 @@ def run_job_worker(job, api, config):
                         base_search_text=base_search_text,
                         include_filter=include_filter,
                         exclude_filter=exclude_filter,
+                        exclude_plus_one=job.exclude_plus_one,
                         allowed_stream_ids=None,
                         preview=False,
                         stream_name_regex=stream_name_regex,
@@ -2838,7 +2836,7 @@ def run_job_worker(job, api, config):
             
             job.current_step = 'Searching all providers for matching streams...'
             _job_set_stage(job, 'refresh', 'Refresh', total=1)
-            effective_exclude_filter = _build_exclude_filter(job.exclude_filter, job.exclude_plus_one)
+            effective_exclude_filter = _build_exclude_filter(job.exclude_filter)
             filters = config.get('filters') or {}
             stream_name_regex = getattr(job, 'stream_name_regex', None)
             if stream_name_regex is None and isinstance(filters, dict):
@@ -2848,10 +2846,11 @@ def run_job_worker(job, api, config):
                 api,
                 config,
                 channel_id,
-                job.base_search_text,
-                job.include_filter,
-                effective_exclude_filter,
-                job.selected_stream_ids,
+                base_search_text=job.base_search_text,
+                include_filter=job.include_filter,
+                exclude_filter=effective_exclude_filter,
+                exclude_plus_one=job.exclude_plus_one,
+                allowed_stream_ids=job.selected_stream_ids,
                 stream_name_regex=stream_name_regex,
                 stream_name_regex_override=job.stream_name_regex_override
             )
@@ -3612,7 +3611,7 @@ def api_refresh_preview():
             if isinstance(filters, dict):
                 stream_name_regex = filters.get('refresh_stream_name_regex')
 
-        effective_exclude_filter = _build_exclude_filter(exclude_filter, exclude_plus_one)
+        effective_exclude_filter = _build_exclude_filter(exclude_filter)
         preview = refresh_channel_streams(
             api,
             config,
@@ -3620,6 +3619,7 @@ def api_refresh_preview():
             base_search_text,
             include_filter,
             effective_exclude_filter,
+            exclude_plus_one=exclude_plus_one,
             preview=True,
             stream_name_regex=stream_name_regex,
             stream_name_regex_override=stream_name_regex_override,

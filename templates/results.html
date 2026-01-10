@@ -455,7 +455,6 @@
             if (meta.base_search_text) refreshLines.push(`<div><strong>Primary Match</strong>: ${escapeHtml(String(meta.base_search_text))}</div>`);
             if (meta.include_filter) refreshLines.push(`<div><strong>Include filter</strong>: ${escapeHtml(String(meta.include_filter))}</div>`);
             if (meta.exclude_filter) refreshLines.push(`<div><strong>Exclude filter</strong>: ${escapeHtml(String(meta.exclude_filter))}</div>`);
-            if (meta.exclude_plus_one === true) refreshLines.push(`<div><strong>Exclude +1</strong>: true</div>`);
             if (meta.stream_name_regex) refreshLines.push(`<div><strong>Advanced Regex (layered)</strong>: <code>${escapeHtml(String(meta.stream_name_regex))}</code></div>`);
             if (meta.stream_name_regex_override) refreshLines.push(`<div><strong>Advanced Regex (regex-only)</strong>: <code>${escapeHtml(String(meta.stream_name_regex_override))}</code></div>`);
 
