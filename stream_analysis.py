@@ -2127,7 +2127,10 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     Returns:
         dict with stats about streams found/added
     """
+    import json
+    import os
     import re
+    from datetime import datetime, timezone
 
     # Performance: precompile regexes used in matching loops
     _QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
@@ -2198,6 +2201,46 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             pat = re.escape(part).replace(r'\*', '.*')
             regexes.append(re.compile(pat))
         return regexes
+
+    def _deny_log_path():
+        return os.path.join('logs', 'channel_stream_denies.ndjson')
+
+    def _load_channel_denies(target_channel_id):
+        denied_ids = set()
+        deny_path = _deny_log_path()
+        if not os.path.exists(deny_path):
+            return denied_ids
+        try:
+            with open(deny_path, 'r', encoding='utf-8') as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if str(record.get('channel_id')) != str(target_channel_id):
+                        continue
+                    stream_id = record.get('stream_id')
+                    if stream_id is None:
+                        continue
+                    try:
+                        denied_ids.add(int(stream_id))
+                    except (TypeError, ValueError):
+                        continue
+        except OSError as exc:
+            logging.error(f"Failed reading deny log: {exc}")
+        return denied_ids
+
+    def _append_channel_denies(records):
+        if not records:
+            return
+        deny_path = _deny_log_path()
+        os.makedirs(os.path.dirname(deny_path), exist_ok=True)
+        with open(deny_path, 'a', encoding='utf-8') as handle:
+            for record in records:
+                handle.write(json.dumps(record, ensure_ascii=False) + '\n')
 
     # Optional regex for stream name filtering (applied after base match + wildcard include/exclude).
     _stream_name_re = None
@@ -2522,6 +2565,11 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
 
+    deny_overrides = _stream_name_override_re is not None
+    denied_stream_ids = set() if deny_overrides else _load_channel_denies(channel_id)
+    deny_records = []
+    record_denies = allowed_stream_ids is not None and not preview
+
     for stream in all_streams:
         stream_name = stream.get('name', '')
         stream_id = stream.get('id')
@@ -2531,12 +2579,30 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if provider_name is None and provider_lookup and provider_id is not None:
             provider_name = provider_lookup.get(str(provider_id))
 
+        if (
+            denied_stream_ids
+            and stream_id is not None
+            and int(stream_id) in denied_stream_ids
+            and not (allowed_set is not None and int(stream_id) in allowed_set)
+        ):
+            logging.info(
+                f"Rejected stream {stream_id} for channel {channel_id} due to persisted deny"
+            )
+            continue
+
         if not matches_stream(stream_name):
             continue
 
         total_matching += 1
 
         if allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
+            if record_denies and stream_id is not None:
+                deny_records.append({
+                    'channel_id': int(channel_id),
+                    'stream_id': int(stream_id),
+                    'stream_name': stream_name,
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                })
             continue
 
         filtered_count += 1
@@ -2595,6 +2661,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     # Update channel with new stream list
     try:
         api.update_channel_streams(channel_id, final_stream_ids)
+        if record_denies:
+            _append_channel_denies(deny_records)
         logging.info(f"✓ Successfully replaced channel streams")
         return result
     except Exception as e:
