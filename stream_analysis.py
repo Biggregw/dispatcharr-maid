@@ -2229,6 +2229,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     _include_regexes = None
     _exclude_regexes = None
     _alias_neutral_tokens = set()
+    _derived_negative_tokens = set()
     
     def _find_match_window(stream_tokens, selected_tokens):
         if not selected_tokens:
@@ -2262,6 +2263,30 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
                 return False
         return True
 
+    def _is_timeshift_token(token):
+        if token == 'plus':
+            return True
+        return bool(_TIMESHIFT_SEMANTIC_RE.search(token))
+
+    def _extract_suffix_tokens(stream_name):
+        stream_tokens = tokenize_canonical(stream_name)
+        match_end = _find_match_window(stream_tokens, _selected_tokens)
+        if match_end is None:
+            return []
+        suffix_tokens = stream_tokens[match_end:]
+        filtered = []
+        for token in suffix_tokens:
+            if token in _QUALITY_NEUTRAL_TOKENS:
+                continue
+            if token in _REGION_NEUTRAL_TOKENS:
+                continue
+            if token.isdigit():
+                continue
+            if _is_timeshift_token(token):
+                continue
+            filtered.append(token)
+        return filtered
+
     def matches_stream(stream_name):
         """Check if stream matches the selected channel (fast path; precomputed filters)."""
         if exclude_plus_one and _TIMESHIFT_SEMANTIC_RE.search(stream_name):
@@ -2288,6 +2313,15 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if _selected_tokens is not None:
             if not _passes_semantic_suffix(_selected_tokens, tokenize_canonical(stream_normalized)):
                 return False
+
+        if _derived_negative_tokens:
+            suffix_tokens = _extract_suffix_tokens(stream_name)
+            for token in suffix_tokens:
+                if token in _derived_negative_tokens:
+                    logging.info(
+                        f"Rejected stream due to derived negative token '{token}': {stream_name}"
+                    )
+                    return False
         
         if _include_regexes:
             stream_lower = stream_name.lower()
@@ -2430,6 +2464,41 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
                 next_url = None
     
     logging.info(f"Checking {len(all_streams)} streams from all providers...")
+
+    if _stream_name_override_re is None:
+        preview_only_streams = []
+        for stream in all_streams:
+            stream_name = stream.get('name', '')
+            stream_id = stream.get('id')
+            if not matches_stream(stream_name):
+                continue
+            if stream_id in current_stream_ids:
+                continue
+            preview_only_streams.append(stream)
+
+        current_suffix_tokens = set()
+        for stream in current_streams or []:
+            stream_name = stream.get('name')
+            if not stream_name:
+                continue
+            current_suffix_tokens.update(_extract_suffix_tokens(stream_name))
+
+        preview_token_counts = defaultdict(int)
+        for stream in preview_only_streams:
+            stream_name = stream.get('name')
+            if not stream_name:
+                continue
+            stream_tokens = set(_extract_suffix_tokens(stream_name))
+            for token in stream_tokens:
+                preview_token_counts[token] += 1
+
+        _derived_negative_tokens = {
+            token for token, count in preview_token_counts.items()
+            if count >= 2 and token not in current_suffix_tokens
+        }
+        if _derived_negative_tokens:
+            sorted_tokens = ', '.join(sorted(_derived_negative_tokens))
+            logging.info(f"Derived negative tokens learned: {sorted_tokens}")
     
     # Preview responses can become very large when regex override is broad.
     # Cap the returned stream list while still computing accurate counts.
