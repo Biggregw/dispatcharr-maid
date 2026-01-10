@@ -2196,11 +2196,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     _selected_tokens = None
     _include_regexes = None
     _exclude_regexes = None
+    _alias_neutral_tokens = set()
     
     def _passes_semantic_suffix(selected_tokens, stream_tokens):
         suffix_tokens = [token for token in stream_tokens if token not in selected_tokens]
         for token in suffix_tokens:
-            if token not in _QUALITY_NEUTRAL_TOKENS:
+            if token not in _QUALITY_NEUTRAL_TOKENS and token not in _alias_neutral_tokens:
                 return False
         return True
 
@@ -2296,6 +2297,38 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     # Get current streams for this channel
     current_streams = api.fetch_channel_streams(channel_id)
     current_stream_ids = {s['id'] for s in current_streams} if current_streams else set()
+
+    def _infer_alias_neutral_tokens(streams):
+        if not streams:
+            return set()
+        token_counts = defaultdict(int)
+        stream_count = 0
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            stream_name = stream.get('name')
+            if not stream_name:
+                continue
+            tokens = {
+                token for token in tokenize_canonical(stream_name)
+                if token and token not in _QUALITY_NEUTRAL_TOKENS
+            }
+            if not tokens:
+                continue
+            stream_count += 1
+            for token in tokens:
+                token_counts[token] += 1
+        if stream_count == 0:
+            return set()
+        return {
+            token for token, count in token_counts.items()
+            if 0 < count < stream_count
+            and token not in _selected_tokens
+            and not token.isdigit()
+            and token not in _QUALITY_NEUTRAL_TOKENS
+        }
+
+    _alias_neutral_tokens = _infer_alias_neutral_tokens(current_streams)
 
     def _stream_snapshot(stream):
         if not isinstance(stream, dict):
