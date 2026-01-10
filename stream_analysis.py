@@ -2132,6 +2132,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     # Performance: precompile regexes used in matching loops
     _QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
     _TIMESHIFT_SEMANTIC_RE = re.compile(r'(?:\+\s*\d+|\bplus\s*\d+\b)', flags=re.IGNORECASE)
+    _QUALITY_NEUTRAL_TOKENS = {
+        'sd', 'hd', 'fhd', 'uhd', '4k', '8k',
+        'hevc', 'h264', 'h265', 'avc', 'x264', 'x265',
+        '720p', '1080p', '1440p', '2160p', '4320p',
+        'hdr', 'hdr10', 'dolby', 'vision',
+    }
     
     def canonicalize_name(text):
         """Lowercase and normalize punctuation/whitespace for name comparisons."""
@@ -2143,6 +2149,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     def strip_quality(text):
         """Remove quality indicators"""
         return _QUALITY_RE.sub('', text).strip()
+
+    def tokenize_canonical(text):
+        return [token for token in canonicalize_name(text).split(' ') if token]
 
     def compile_wildcard_filter(filter_text):
         """
@@ -2184,9 +2193,17 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     _selected_normalized = None
     _selected_has_timeshift = None
     _selected_numeric_re = None
+    _selected_tokens = None
     _include_regexes = None
     _exclude_regexes = None
     
+    def _passes_semantic_suffix(selected_tokens, stream_tokens):
+        suffix_tokens = [token for token in stream_tokens if token not in selected_tokens]
+        for token in suffix_tokens:
+            if token not in _QUALITY_NEUTRAL_TOKENS:
+                return False
+        return True
+
     def matches_stream(stream_name):
         """Check if stream matches the selected channel (fast path; precomputed filters)."""
         if exclude_plus_one and _TIMESHIFT_SEMANTIC_RE.search(stream_name):
@@ -2208,6 +2225,10 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             return False
         if not _selected_has_timeshift and stream_has_timeshift:
             return False
+
+        if _selected_tokens is not None:
+            if not _passes_semantic_suffix(_selected_tokens, tokenize_canonical(stream_normalized)):
+                return False
         
         if _include_regexes:
             stream_lower = stream_name.lower()
@@ -2264,6 +2285,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     selected_cleaned = strip_quality(search_name)
     _selected_normalized = canonicalize_name(selected_cleaned)
     _selected_has_timeshift = bool(_TIMESHIFT_SEMANTIC_RE.search(search_name))
+    _selected_tokens = set(tokenize_canonical(selected_cleaned))
     numeric_match = re.search(r'(?:^|\s)(\d+)\s*$', _selected_normalized)
     if numeric_match:
         numeric_token = numeric_match.group(1)
