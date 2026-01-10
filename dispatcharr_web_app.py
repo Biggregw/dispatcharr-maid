@@ -1563,6 +1563,8 @@ def _merge_stream_details(stream_id, base_info, scored_lookup, provider_names=No
         'stream_name': base_info.get('stream_name') if isinstance(base_info, dict) else None,
         'provider_id': None,
         'provider_name': None,
+        'service_name': None,
+        'service_provider': None,
         'resolution': None,
         'video_codec': None,
         'bitrate_kbps': None,
@@ -1571,7 +1573,7 @@ def _merge_stream_details(stream_id, base_info, scored_lookup, provider_names=No
         'final_score': None,
     }
 
-    for key in ['provider_id', 'provider_name', 'resolution', 'video_codec', 'bitrate_kbps', 'validation_result', 'validation_reason', 'final_score']:
+    for key in ['provider_id', 'provider_name', 'service_name', 'service_provider', 'resolution', 'video_codec', 'bitrate_kbps', 'validation_result', 'validation_reason', 'final_score']:
         value = None
         if isinstance(base_info, dict):
             value = base_info.get(key)

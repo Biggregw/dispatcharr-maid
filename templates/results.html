@@ -124,6 +124,8 @@
                             <th>#</th>
                             <th>Stream</th>
                             <th>Provider</th>
+                            <th>Service Name</th>
+                            <th>Service Provider</th>
                             <th>Resolution</th>
                             <th>Codec</th>
                             <th>Bitrate</th>
@@ -143,6 +145,8 @@
                             <th>Channel</th>
                             <th>Stream</th>
                             <th>Provider</th>
+                            <th>Service Name</th>
+                            <th>Service Provider</th>
                             <th>Resolution</th>
                             <th>Bitrate</th>
                             <th>Reason</th>
@@ -297,6 +301,8 @@
                             <th>Status</th>
                             <th>Stream</th>
                             <th>Provider</th>
+                            <th>Service Name</th>
+                            <th>Service Provider</th>
                             <th>Resolution</th>
                             <th>Bitrate</th>
                         </tr>
@@ -541,7 +547,7 @@
             });
 
             if (!rows.length) {
-                tbody.innerHTML = '<tr><td colspan="5" class="muted">No stream details available for this refresh.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" class="muted">No stream details available for this refresh.</td></tr>';
                 card.style.display = '';
                 return;
             }
@@ -550,6 +556,8 @@
                 const name = row?.name || row?.stream_name || `Stream ${row?.id ?? ''}`;
                 const pid = row?.provider_id ?? row?.providerid ?? row?.provider;
                 const providerCell = providerLabelHtml(pid ?? row?.provider_name) || escapeHtml(row?.provider_name || '');
+                const serviceName = row?.service_name ? escapeHtml(String(row.service_name)) : '';
+                const serviceProvider = row?.service_provider ? escapeHtml(String(row.service_provider)) : '';
                 const resolution = escapeHtml(row?.resolution || '—');
                 const bitrate = fmtBitrate(row?.bitrate_kbps);
                 const statusClass = row.status === 'Removed' ? 'badge removed' : (row.status === 'Added' ? 'badge added' : 'badge unchanged');
@@ -558,6 +566,8 @@
                         <td><span class="${statusClass}">${escapeHtml(row.status || '')}</span></td>
                         <td>${escapeHtml(String(name))}</td>
                         <td>${providerCell}</td>
+                        <td>${serviceName}</td>
+                        <td>${serviceProvider}</td>
                         <td>${resolution}</td>
                         <td>${bitrate}</td>
                     </tr>
@@ -593,6 +603,8 @@
 
             finalBody.innerHTML = sortedFinal.map((row) => {
                 const providerCell = providerLabelHtml(row?.provider_id) || escapeHtml(row?.provider_name || '');
+                const serviceName = row?.service_name ? escapeHtml(String(row.service_name)) : '';
+                const serviceProvider = row?.service_provider ? escapeHtml(String(row.service_provider)) : '';
                 const validation = row?.validation_result ? escapeHtml(String(row.validation_result)) : '—';
                 const score = row?.final_score;
                 const scoreText = score === null || score === undefined ? '—' : escapeHtml(Number(score).toFixed ? Number(score).toFixed(1) : String(score));
@@ -602,6 +614,8 @@
                         <td class="mono">${escapeHtml(row?.order ?? '')}</td>
                         <td>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)}</td>
                         <td>${providerCell}</td>
+                        <td>${serviceName}</td>
+                        <td>${serviceProvider}</td>
                         <td>${escapeHtml(row?.resolution || '—')}</td>
                         <td>${escapeHtml(row?.video_codec || '—')}</td>
                         <td>${fmtBitrate(row?.bitrate_kbps)}</td>
@@ -622,11 +636,15 @@
 
             excludedBody.innerHTML = sortedExcluded.map((row) => {
                 const providerCell = providerLabelHtml(row?.provider_id) || escapeHtml(row?.provider_name || '');
+                const serviceName = row?.service_name ? escapeHtml(String(row.service_name)) : '';
+                const serviceProvider = row?.service_provider ? escapeHtml(String(row.service_provider)) : '';
                 return `
                     <tr>
                         <td>${channelLabelFrom(row)}</td>
                         <td>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)}</td>
                         <td>${providerCell}</td>
+                        <td>${serviceName}</td>
+                        <td>${serviceProvider}</td>
                         <td>${escapeHtml(row?.resolution || '—')}</td>
                         <td>${fmtBitrate(row?.bitrate_kbps)}</td>
                         <td>${escapeHtml(row?.reason || '—')}</td>
@@ -635,7 +653,7 @@
             }).join('');
 
             if (!excluded.length) {
-                excludedBody.innerHTML = '<tr><td colspan="6" class="muted">No streams were excluded.</td></tr>';
+                excludedBody.innerHTML = '<tr><td colspan="8" class="muted">No streams were excluded.</td></tr>';
             }
 
             card.style.display = '';
