@@ -2139,12 +2139,33 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         'hdr', 'hdr10', 'dolby', 'vision',
     }
     
+    _NUMERIC_WORD_ALIASES = {
+        'one': '1',
+        'two': '2',
+        'three': '3',
+        'four': '4',
+        'five': '5',
+        'six': '6',
+        'seven': '7',
+        'eight': '8',
+        'nine': '9',
+        'ten': '10',
+    }
+
     def canonicalize_name(text):
         """Lowercase and normalize punctuation/whitespace for name comparisons."""
         lowered = text.lower()
         cleaned = re.sub(r'[^0-9a-z]', ' ', lowered)
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        return cleaned
+        if not cleaned:
+            return cleaned
+        tokens = cleaned.split(' ')
+        normalized_tokens = [
+            _NUMERIC_WORD_ALIASES.get(token, token)
+            for token in tokens
+            if token
+        ]
+        return ' '.join(normalized_tokens)
     
     def strip_quality(text):
         """Remove quality indicators"""
