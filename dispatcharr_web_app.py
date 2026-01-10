@@ -2033,7 +2033,7 @@ def _get_job_results(job_id):
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None):
+    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None, clear_learned_rules=False):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -2047,6 +2047,7 @@ class Job:
         self.selected_stream_ids = selected_stream_ids
         self.stream_name_regex = stream_name_regex
         self.stream_name_regex_override = stream_name_regex_override
+        self.clear_learned_rules = clear_learned_rules
         self.selection_pattern_id = selection_pattern_id
         self.selection_pattern_name = selection_pattern_name
         self.regex_preset_id = regex_preset_id
@@ -2090,6 +2091,7 @@ class Job:
             'stream_name_regex_override': self.stream_name_regex_override,
             'selected_stream_ids': self.selected_stream_ids,
             'exclude_plus_one': self.exclude_plus_one,
+            'clear_learned_rules': self.clear_learned_rules,
             'status': self.status,
             'progress': self.progress,
             'total': self.total,
@@ -2484,6 +2486,7 @@ def run_job_worker(job, api, config):
                         stream_name_regex_override=getattr(job, 'stream_name_regex_override', None),
                         all_streams_override=all_streams,
                         all_channels_override=all_channels,
+                        clear_learned_rules=job.clear_learned_rules,
                     )
                     if isinstance(result, dict) and result.get('error'):
                         refresh_stats['channels_failed'] += 1
@@ -2852,7 +2855,8 @@ def run_job_worker(job, api, config):
                 exclude_plus_one=job.exclude_plus_one,
                 allowed_stream_ids=job.selected_stream_ids,
                 stream_name_regex=stream_name_regex,
-                stream_name_regex_override=job.stream_name_regex_override
+                stream_name_regex_override=job.stream_name_regex_override,
+                clear_learned_rules=job.clear_learned_rules
             )
             
             if 'error' in refresh_result:
@@ -3597,6 +3601,7 @@ def api_refresh_preview():
         exclude_plus_one = data.get('exclude_plus_one', False)
         stream_name_regex = data.get('stream_name_regex')
         stream_name_regex_override = data.get('stream_name_regex_override')
+        clear_learned_rules = bool(data.get('clear_learned_rules', False))
 
         if not channel_id:
             return jsonify({'success': False, 'error': 'Channel ID is required'}), 400
@@ -3623,7 +3628,8 @@ def api_refresh_preview():
             preview=True,
             stream_name_regex=stream_name_regex,
             stream_name_regex_override=stream_name_regex_override,
-            provider_names=provider_names
+            provider_names=provider_names,
+            clear_learned_rules=clear_learned_rules
         )
 
         if 'error' in preview:
@@ -3658,6 +3664,7 @@ def api_start_job():
         selected_stream_ids = data.get('selected_stream_ids')
         stream_name_regex = data.get('stream_name_regex')
         stream_name_regex_override = data.get('stream_name_regex_override')
+        clear_learned_rules = bool(data.get('clear_learned_rules', False))
 
         if not job_type:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
@@ -3779,7 +3786,8 @@ def api_start_job():
             selection_pattern_id=selection_pattern_id,
             selection_pattern_name=selection_pattern_name,
             regex_preset_id=regex_preset_id,
-            regex_preset_name=regex_preset_name
+            regex_preset_name=regex_preset_name,
+            clear_learned_rules=clear_learned_rules
         )
 
         # Initialize API and config

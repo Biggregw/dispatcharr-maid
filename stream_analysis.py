@@ -2110,7 +2110,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
         return summary
     logging.info("Reordering complete!")
 
-def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_plus_one=False, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None):
+def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_plus_one=False, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None, clear_learned_rules=False):
     """
     Find and add all matching streams from all providers for a specific channel
 
@@ -2241,6 +2241,42 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         with open(deny_path, 'a', encoding='utf-8') as handle:
             for record in records:
                 handle.write(json.dumps(record, ensure_ascii=False) + '\n')
+
+    def _clear_channel_denies(target_channel_id):
+        deny_path = _deny_log_path()
+        if not os.path.exists(deny_path):
+            return
+        try:
+            retained_lines = []
+            removed = False
+            with open(deny_path, 'r', encoding='utf-8') as handle:
+                for line in handle:
+                    raw_line = line.strip()
+                    if not raw_line:
+                        continue
+                    try:
+                        record = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        retained_lines.append(line)
+                        continue
+                    if str(record.get('channel_id')) == str(target_channel_id):
+                        removed = True
+                        continue
+                    retained_lines.append(line)
+            if not removed:
+                return
+            if retained_lines:
+                tmp_path = f"{deny_path}.tmp"
+                with open(tmp_path, 'w', encoding='utf-8') as handle:
+                    handle.writelines(retained_lines)
+                os.replace(tmp_path, deny_path)
+            else:
+                os.remove(deny_path)
+        except OSError as exc:
+            logging.error(f"Failed clearing deny log: {exc}")
+
+    if clear_learned_rules:
+        _clear_channel_denies(channel_id)
 
     # Optional regex for stream name filtering (applied after base match + wildcard include/exclude).
     _stream_name_re = None
@@ -2566,7 +2602,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
 
     deny_overrides = _stream_name_override_re is not None
-    denied_stream_ids = set() if deny_overrides else _load_channel_denies(channel_id)
+    denied_stream_ids = set() if (deny_overrides or clear_learned_rules) else _load_channel_denies(channel_id)
     deny_records = []
     record_denies = allowed_stream_ids is not None and not preview
 
