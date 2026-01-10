@@ -2138,6 +2138,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         '720p', '1080p', '1440p', '2160p', '4320p',
         'hdr', 'hdr10', 'dolby', 'vision',
     }
+
+    _REGION_NEUTRAL_TOKENS = {
+        'england', 'wales', 'scotland', 'ni', 'northern',
+        'london', 'midlands', 'yorkshire',
+        'north', 'south', 'east', 'west'
+    }
     
     _NUMERIC_WORD_ALIASES = {
         'one': '1',
@@ -2222,7 +2228,11 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     def _passes_semantic_suffix(selected_tokens, stream_tokens):
         suffix_tokens = [token for token in stream_tokens if token not in selected_tokens]
         for token in suffix_tokens:
-            if token not in _QUALITY_NEUTRAL_TOKENS and token not in _alias_neutral_tokens:
+            if (
+                token not in _QUALITY_NEUTRAL_TOKENS
+                and token not in _alias_neutral_tokens
+                and token not in _REGION_NEUTRAL_TOKENS
+            ):
                 return False
         return True
 
