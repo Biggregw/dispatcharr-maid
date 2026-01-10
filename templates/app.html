@@ -1250,11 +1250,17 @@
                 </div>
                 <div class="action-grid" style="margin: 12px 0 24px 0;">
                     <div class="action-panel">
-                        <button class="action-btn primary" onclick="showRefreshPreview()"
-                                style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
-                            <span>🔄</span>
-                            <span>Refresh Channel Streams</span>
-                        </button>
+                        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                            <button class="action-btn primary" onclick="showRefreshPreview()"
+                                    style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
+                                <span>🔄</span>
+                                <span>Refresh Channel Streams</span>
+                            </button>
+                            <label for="clearLearnedRulesCheckbox" style="display: flex; align-items: center; gap: 6px; font-size: 0.92em; color: #7c2d12;">
+                                <input type="checkbox" id="clearLearnedRulesCheckbox">
+                                Clear learned rules for this channel
+                            </label>
+                        </div>
                         <div class="action-help action-help--orange">
                             Adds matching streams to the selected channels using the filters above (include/exclude, regex).
                         </div>
@@ -2581,7 +2587,8 @@
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
                     exclude_plus_one: derivedExcludePlusOne,
                     stream_name_regex: regexFilterValue ? regexFilterValue : null,
-                    stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
+                    stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null,
+                    clear_learned_rules: isClearLearnedRulesChecked()
                 };
 
                 const response = await fetch('/api/refresh-preview', {
@@ -2630,6 +2637,17 @@
             if (submitButton) {
                 submitButton.disabled = false;
                 submitButton.textContent = 'Add Selected Streams';
+            }
+        }
+
+        function isClearLearnedRulesChecked() {
+            return Boolean(document.getElementById('clearLearnedRulesCheckbox')?.checked);
+        }
+
+        function resetClearLearnedRulesCheckbox() {
+            const checkbox = document.getElementById('clearLearnedRulesCheckbox');
+            if (checkbox) {
+                checkbox.checked = false;
             }
         }
 
@@ -2798,7 +2816,8 @@
                     exclude_plus_one: derivedExcludePlusOne,
                     selected_stream_ids: selectedStreamIds,
                     stream_name_regex: regexFilterValue ? regexFilterValue : null,
-                    stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
+                    stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null,
+                    clear_learned_rules: jobType === 'refresh_optimize' ? isClearLearnedRulesChecked() : false
                 };
 
                 // Button loading state (best-effort)
@@ -2984,6 +3003,7 @@
                         submitButton.textContent = 'Completed';
                         submitButton.disabled = true;
                     }
+                    resetClearLearnedRulesCheckbox();
                     refreshJobId = null;
                     setTimeout(() => closeRefreshPreview(), 1000);
                 } else {
