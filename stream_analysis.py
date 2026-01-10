@@ -2268,6 +2268,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             return False
 
         if _stream_name_override_re is not None:
+            # Regex-only override: bypass grammar and other channel filters.
             return bool(_stream_name_override_re.search(stream_name))
 
         stream_normalized = canonicalize_name(stream_name)
