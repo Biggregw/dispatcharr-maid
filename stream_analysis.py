@@ -2110,7 +2110,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
         return summary
     logging.info("Reordering complete!")
 
-def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None):
+def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, exclude_plus_one=False, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None):
     """
     Find and add all matching streams from all providers for a specific channel
 
@@ -2131,7 +2131,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     # Performance: precompile regexes used in matching loops
     _QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
-    _TIMESHIFT_RE = re.compile(r'\+\d')
+    _TIMESHIFT_SEMANTIC_RE = re.compile(r'(?:\+\s*\d+|\bplus\s*\d+\b)', flags=re.IGNORECASE)
     
     def normalize(text):
         """Remove spaces and lowercase"""
@@ -2171,7 +2171,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     if isinstance(stream_name_regex_override, str) and stream_name_regex_override.strip():
         try:
             _stream_name_override_re = re.compile(stream_name_regex_override.strip(), flags=re.IGNORECASE)
-            logging.info("Using stream-name REGEX OVERRIDE (base/include/exclude/+1 rules ignored).")
+            logging.info("Using stream-name REGEX OVERRIDE (base/include/exclude rules ignored).")
         except re.error as exc:
             logging.error(f"Invalid stream_name_regex_override: {exc}")
             return {'error': f'Invalid regex override: {exc}'}
@@ -2186,6 +2186,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     
     def matches_stream(stream_name):
         """Check if stream matches the selected channel (fast path; precomputed filters)."""
+        if exclude_plus_one and _TIMESHIFT_SEMANTIC_RE.search(stream_name):
+            return False
+
         if _stream_name_override_re is not None:
             return bool(_stream_name_override_re.search(stream_name))
 
@@ -2196,7 +2199,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if _selected_numeric_re and not _selected_numeric_re.search(stream_name):
             return False
         
-        stream_has_timeshift = bool(_TIMESHIFT_RE.search(stream_name))
+        stream_has_timeshift = bool(_TIMESHIFT_SEMANTIC_RE.search(stream_name))
         
         if _selected_has_timeshift and not stream_has_timeshift:
             return False
@@ -2257,7 +2260,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     # In override mode these values are unused, but we still set safe defaults.
     selected_cleaned = strip_quality(search_name)
     _selected_normalized = normalize(selected_cleaned)
-    _selected_has_timeshift = bool(_TIMESHIFT_RE.search(search_name))
+    _selected_has_timeshift = bool(_TIMESHIFT_SEMANTIC_RE.search(search_name))
     numeric_match = re.search(r'(?:^|\s)(\d+)\s*$', selected_cleaned)
     if numeric_match:
         numeric_token = numeric_match.group(1)
