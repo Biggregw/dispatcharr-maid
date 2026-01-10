@@ -2309,9 +2309,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             stream_name = stream.get('name')
             if not stream_name:
                 continue
+            stream_tokens = tokenize_canonical(stream_name)
+            if not _passes_semantic_suffix(_selected_tokens, stream_tokens):
+                continue
             tokens = {
-                token for token in tokenize_canonical(stream_name)
-                if token and token not in _QUALITY_NEUTRAL_TOKENS
+                token for token in stream_tokens
+                if token not in _selected_tokens and token not in _QUALITY_NEUTRAL_TOKENS
             }
             if not tokens:
                 continue
