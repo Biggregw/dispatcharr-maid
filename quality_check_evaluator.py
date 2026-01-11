@@ -215,6 +215,25 @@ def _load_last_unstable_suggestion_times() -> Dict[str, datetime]:
     return last_seen
 
 
+def _load_last_top_ranked_suggestion_times() -> Dict[tuple[str, str], datetime]:
+    last_seen: Dict[tuple[str, str], datetime] = {}
+    for record in _read_ndjson(SUGGESTIONS_PATH):
+        if record.get("reason") != "top_ranked_but_unused":
+            continue
+        channel_id = record.get("channel_id")
+        stream_id = record.get("stream_id")
+        if not channel_id or not stream_id:
+            continue
+        timestamp = _parse_timestamp(record.get("timestamp"))
+        if not timestamp:
+            continue
+        key = (channel_id, str(stream_id))
+        existing = last_seen.get(key)
+        if not existing or timestamp > existing:
+            last_seen[key] = timestamp
+    return last_seen
+
+
 def _collect_top_stream_ids_before_unstable(
     cutoff: datetime,
     last_unstable_time_by_channel_id: Dict[str, datetime],
@@ -276,16 +295,66 @@ def _collect_top_stream_ids_after_unstable(
     return top_stream_ids
 
 
+def _collect_top_ranked_counts(
+    cutoff: datetime,
+    last_top_ranked_time_by_channel_stream: Dict[tuple[str, str], datetime],
+):
+    channel_names: Dict[str, str] = {}
+    top_counts: Dict[str, Counter] = defaultdict(Counter)
+
+    for record in _read_ndjson(QUALITY_CHECKS_PATH):
+        if not _is_real_playback(record, "quality_checks"):
+            continue
+        timestamp = _parse_timestamp(record.get("timestamp"))
+        if not timestamp:
+            logging.warning("Missing or invalid timestamp in quality_checks entry")
+            continue
+        if not _within_window(timestamp, cutoff):
+            continue
+        channel_id = record.get("channel_id")
+        if not channel_id:
+            continue
+        if record.get("order_index") != 0:
+            continue
+        stream_id = record.get("stream_id")
+        if not stream_id:
+            continue
+        channel_name = record.get("channel_name")
+        if channel_name:
+            channel_names[channel_id] = channel_name
+        stream_key = (channel_id, str(stream_id))
+        stream_cutoff = max(
+            cutoff,
+            last_top_ranked_time_by_channel_stream.get(stream_key, cutoff),
+        )
+        if not _within_window(timestamp, stream_cutoff):
+            continue
+        top_counts[channel_id][str(stream_id)] += 1
+
+    return channel_names, top_counts
+
+
 def evaluate_quality_checks() -> None:
     now = _utc_now()
     cutoff = now - timedelta(hours=WINDOW_HOURS)
     last_suggestion_time_by_channel_id = _load_last_suggestion_times()
     last_unstable_time_by_channel_id = _load_last_unstable_suggestion_times()
+    last_top_ranked_time_by_channel_stream = (
+        _load_last_top_ranked_suggestion_times()
+    )
 
     channel_names, top_counts, top_observations = _collect_quality_checks(
         cutoff,
         last_suggestion_time_by_channel_id,
     )
+    (
+        top_ranked_channel_names,
+        top_ranked_counts,
+    ) = _collect_top_ranked_counts(
+        cutoff,
+        last_top_ranked_time_by_channel_stream,
+    )
+    channel_names.update(top_ranked_channel_names)
     top_stream_ids_before_unstable = _collect_top_stream_ids_before_unstable(
         cutoff,
         last_unstable_time_by_channel_id,
@@ -360,7 +429,7 @@ def evaluate_quality_checks() -> None:
 
         if selection_exists and selection_record_counts.get(channel_id, 0) > 0:
             final_ids = final_stream_ids.get(channel_id, set())
-            for stream_id, count in counts.items():
+            for stream_id, count in top_ranked_counts.get(channel_id, {}).items():
                 if count < 2:
                     continue
                 if stream_id in final_ids:
