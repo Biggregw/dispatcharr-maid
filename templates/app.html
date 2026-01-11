@@ -939,17 +939,17 @@
 
             <div style="margin: 25px 0 15px 0; color: #2d3748;">
                 <div class="action-section-title" style="margin: 10px 0;">
-                    <span>Quality update</span>
+                    <span>Optimize Streams</span>
                 </div>
                 <div class="action-grid" style="margin: 12px 0 24px 0;">
                     <div class="action-stack">
                         <button class="action-btn primary" onclick="startApplyQualityJob(event)"
                                 style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
                             <span>✅</span>
-                            <span>Quality Check (Apply Changes)</span>
+                            <span>Optimize Streams</span>
                         </button>
                         <div class="action-help">
-                            Analyzes, scores, and reorders streams. No streams are removed.
+                            Reorders streams based on quality analysis. No streams are removed.
                         </div>
                     </div>
                 </div>
@@ -1154,22 +1154,6 @@
 
     </div>
 
-    <div id="apply-confirm-modal" class="modal-overlay hidden">
-        <div class="modal">
-            <div class="modal-header">
-                <div class="modal-title">Run Apply Changes now?</div>
-                <button class="btn btn-back" onclick="closeApplyConfirmModal()">✖</button>
-            </div>
-            <div class="modal-body">
-                <p style="margin: 0; color: #374151;">Applying changes updates Dispatcharr immediately.</p>
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-back" onclick="closeApplyConfirmModal()">Cancel</button>
-                <button class="btn btn-next" onclick="confirmApplyWithoutPreview()">Proceed anyway</button>
-            </div>
-        </div>
-    </div>
-
     <div class="quality-insight-modal" id="quality-insight-modal" aria-hidden="true">
         <div class="quality-insight-backdrop" data-quality-insight-close></div>
         <div class="quality-insight-dialog" role="dialog" aria-modal="true" aria-labelledby="quality-insight-title">
@@ -1205,8 +1189,6 @@
         const terminalStatuses = ['completed', 'failed', 'cancelled'];
         let pendingHistoryHighlightJobId = null;
         const lastRenderedStatuses = {};
-        let hasRunPreviewPlan = false;
-        let pendingApplyButton = null;
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
@@ -1819,8 +1801,8 @@
         function jobTypeLabel(jobType) {
             return {
                 refresh_optimize: 'Refresh Channel Streams',
-                pattern_refresh_full_cleanup: 'Saved Job (Refresh + QC)',
-                full_cleanup: 'Quality Check (Apply Changes)',
+                pattern_refresh_full_cleanup: 'Saved Job (Refresh + Optimize Streams)',
+                full_cleanup: 'Optimize Streams',
                 full: 'Full Job',
                 fetch: 'Fetch Streams',
                 analyze: 'Analyze Streams',
@@ -1830,32 +1812,13 @@
             }[jobType] || jobType;
         }
 
-        function closeApplyConfirmModal() {
-            pendingApplyButton = null;
-            document.getElementById('apply-confirm-modal').classList.add('hidden');
-        }
-
-        function showApplyConfirmModal(clickedBtn) {
-            pendingApplyButton = clickedBtn || null;
-            document.getElementById('apply-confirm-modal').classList.remove('hidden');
-        }
-
-        function confirmApplyWithoutPreview() {
-            const clickedBtn = pendingApplyButton;
-            closeApplyConfirmModal();
-            return startJob('full_cleanup', null, clickedBtn ? { currentTarget: clickedBtn } : null);
-        }
-
         function startApplyQualityJob(event) {
             if (event) {
                 event.preventDefault();
                 event.stopPropagation();
             }
             const clickedBtn = getClickedButton(event);
-            if (hasRunPreviewPlan) {
-                return startJob('full_cleanup', null, clickedBtn ? { currentTarget: clickedBtn } : event);
-            }
-            return showApplyConfirmModal(clickedBtn);
+            return startJob('full_cleanup', null, clickedBtn ? { currentTarget: clickedBtn } : event);
         }
 
         function renderOptimisticStartingJob(jobType, groupNames, channelNames) {
@@ -2009,6 +1972,25 @@
             }
         }
         
+        function getOptimizeStreamsOutcome(job) {
+            if (!job || job.job_type !== 'full_cleanup') {
+                return null;
+            }
+            if (job.status === 'completed') {
+                return 'Optimize Streams completed.';
+            }
+            if (job.status === 'failed') {
+                return 'Optimize Streams failed.';
+            }
+            if (job.status === 'cancelled') {
+                return 'Optimize Streams cancelled.';
+            }
+            if (job.status === 'running' || job.status === 'queued') {
+                return 'Optimizing streams...';
+            }
+            return null;
+        }
+
         function reconcileJobForRender(job) {
             const isTerminal = terminalStatuses.includes(job.status);
             const terminalStep = {
@@ -2016,9 +1998,10 @@
                 failed: 'Failed.',
                 cancelled: 'Cancelled.'
             }[job.status];
+            const optimizeOutcome = getOptimizeStreamsOutcome(job);
             return {
                 ...job,
-                current_step: isTerminal ? (terminalStep || job.current_step) : (job.current_step || 'Starting...')
+                current_step: optimizeOutcome || (isTerminal ? (terminalStep || job.current_step) : (job.current_step || 'Starting...'))
             };
         }
 
@@ -2331,7 +2314,7 @@
                     html += `
                         <div class="stats-grid">
                             <div class="stat-box">
-                                <div class="stat-label">Total Analyzed</div>
+                                <div class="stat-label">Streams Reviewed</div>
                                 <div class="stat-value">${job.result_summary.total.toLocaleString()}</div>
                             </div>
                             <div class="stat-box">
@@ -2489,7 +2472,7 @@
                 let typeLabel = {
                     'refresh_optimize': 'Refresh',
                     'pattern_refresh_full_cleanup': 'Saved Job',
-                    'full_cleanup': 'Quality Check (Apply Changes)',
+                    'full_cleanup': 'Optimize Streams',
                     'full': 'Full Job',
                     'fetch': 'Fetch',
                     'analyze': 'Analyze',
@@ -2510,10 +2493,14 @@
                     if (job.result_summary.job_type === 'refresh') {
                         streamInfo = `${job.result_summary.new_count || 0} streams`;
                     } else if (job.result_summary.total) {
-                        // For analysis jobs, show how many were analyzed
-                        streamInfo = `${job.result_summary.total} analyzed`;
+                        // For analysis jobs, show how many were reviewed
+                        streamInfo = `${job.result_summary.total} reviewed`;
                     }
                 }
+                const optimizeStatus = getOptimizeStreamsOutcome(job);
+                const statusLabel = job.job_type === 'full_cleanup'
+                    ? (optimizeStatus || job.status)
+                    : (streamInfo || job.status);
                 
                 const isHighlighted = pendingHistoryHighlightJobId && pendingHistoryHighlightJobId === job.job_id;
 
@@ -2526,7 +2513,7 @@
                         </div>
                         <div class="history-meta">
                             <span class="history-status ${statusClass}">
-                                ${streamInfo || job.status}
+                                ${statusLabel}
                             </span>
                             <button class="text-btn" onclick="viewJobResults('${job.job_id}'); event.stopPropagation();">
                                 View Results
