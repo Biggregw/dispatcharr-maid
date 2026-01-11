@@ -329,6 +329,9 @@
                 </button>
             </div>
             <div class="quality-insight-body">
+                {% if quality_insight_last_issue %}
+                    <div class="quality-insight-subtext">{{ quality_insight_last_issue }}</div>
+                {% endif %}
                 <div class="quality-insight-loading">Loading…</div>
                 <div class="quality-insight-empty quality-insight-hidden">
                     No quality insight data in the last 12 hours.
