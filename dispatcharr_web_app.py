@@ -136,7 +136,7 @@ def login_required(view):
     return wrapped
 
 
-@app.before_first_request
+@app.before_request
 def _launch_quality_insight_polling():
     _start_quality_insight_polling()
 
