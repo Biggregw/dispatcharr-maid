@@ -84,6 +84,7 @@
             <a href="/" class="btn">← Back to Control Panel</a>
             <a href="/api/results/csv" class="btn" id="export-csv-link">📥 Export CSV</a>
             <button type="button" class="quality-insight-trigger" id="quality-insight-open">
+                <span class="quality-insight-status quality-insight-status-{{ quality_insight_status|default('green') }}" aria-hidden="true"></span>
                 Quality insight
             </button>
             <span style="display:inline-block;color:white;font-weight:600;margin-left:10px;">Run:</span>
