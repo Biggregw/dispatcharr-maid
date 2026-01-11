@@ -12,6 +12,8 @@ from pathlib import Path
 import pandas as pd
 from flask import Flask, render_template, jsonify, request
 
+from quality_insight_utils import read_quality_insight_records
+
 app = Flask(__name__)
 
 
@@ -377,7 +379,60 @@ def get_config_info():
 @app.route('/')
 def index():
     """Main dashboard page"""
-    return render_template('index.html')
+    last_issue_summary = None
+    log_path = Path("logs") / "quality_check_suggestions.ndjson"
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=12)
+    last_issue = None
+    for record in read_quality_insight_records(log_path):
+        timestamp = _parse_quality_insight_timestamp(
+            record.get("timestamp")
+            or record.get("observed_at")
+            or record.get("created_at")
+        )
+        if not timestamp or timestamp < cutoff:
+            continue
+
+        if not last_issue or timestamp > last_issue["timestamp"]:
+            channel_name = (
+                record.get("channel_name")
+                or record.get("name")
+                or record.get("channel")
+            )
+            channel_id = record.get("channel_id") or record.get("id")
+            channel_label = channel_name or (
+                str(channel_id) if channel_id is not None else None
+            )
+            if not channel_label:
+                channel_label = "Unknown channel"
+            last_issue = {
+                "timestamp": timestamp,
+                "channel_label": channel_label,
+                "reason": (
+                    record.get("reason")
+                    or record.get("suggestion_reason")
+                    or record.get("message")
+                    or record.get("notes")
+                ),
+            }
+    if last_issue:
+        elapsed_seconds = max(
+            0, int((now - last_issue["timestamp"]).total_seconds())
+        )
+        total_minutes = elapsed_seconds // 60
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+        if hours > 0:
+            elapsed = f"{hours}h {minutes}m ago"
+        else:
+            elapsed = f"{minutes}m ago"
+        last_issue_summary = (
+            f"Last playback issue: {elapsed} ({last_issue['channel_label']})"
+        )
+    return render_template(
+        'index.html',
+        quality_insight_last_issue=last_issue_summary,
+    )
 
 
 @app.route('/api/quality-insights')

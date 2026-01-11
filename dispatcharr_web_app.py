@@ -34,6 +34,7 @@ from flask import json
 from flask.json.provider import DefaultJSONProvider
 
 import quality_check_evaluator
+from quality_insight_utils import read_quality_insight_records
 
 class NaNSafeJSONProvider(DefaultJSONProvider):
     def default(self, obj):
@@ -2716,9 +2717,60 @@ def index():
     auth_ok, auth_error = _ensure_dispatcharr_ready()
     if not auth_ok:
         return _render_auth_error(auth_error)
+    last_issue_summary = None
+    log_path = Path("logs") / "quality_check_suggestions.ndjson"
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=12)
+    last_issue = None
+    for record in read_quality_insight_records(log_path):
+        timestamp = _parse_quality_insight_timestamp(
+            record.get("timestamp")
+            or record.get("observed_at")
+            or record.get("created_at")
+        )
+        if not timestamp or timestamp < cutoff:
+            continue
+
+        if not last_issue or timestamp > last_issue["timestamp"]:
+            channel_name = (
+                record.get("channel_name")
+                or record.get("name")
+                or record.get("channel")
+            )
+            channel_id = record.get("channel_id") or record.get("id")
+            channel_label = channel_name or (
+                str(channel_id) if channel_id is not None else None
+            )
+            if not channel_label:
+                channel_label = "Unknown channel"
+            last_issue = {
+                "timestamp": timestamp,
+                "channel_label": channel_label,
+                "reason": (
+                    record.get("reason")
+                    or record.get("suggestion_reason")
+                    or record.get("message")
+                    or record.get("notes")
+                ),
+            }
+    if last_issue:
+        elapsed_seconds = max(
+            0, int((now - last_issue["timestamp"]).total_seconds())
+        )
+        total_minutes = elapsed_seconds // 60
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+        if hours > 0:
+            elapsed = f"{hours}h {minutes}m ago"
+        else:
+            elapsed = f"{minutes}m ago"
+        last_issue_summary = (
+            f"Last playback issue: {elapsed} ({last_issue['channel_label']})"
+        )
     return render_template(
         'app.html',
         quality_insight_status=_compute_quality_insight_status(window_hours=12),
+        quality_insight_last_issue=last_issue_summary,
     )
 
 
@@ -2736,9 +2788,60 @@ def results():
     auth_ok, auth_error = _ensure_dispatcharr_ready()
     if not auth_ok:
         return _render_auth_error(auth_error)
+    last_issue_summary = None
+    log_path = Path("logs") / "quality_check_suggestions.ndjson"
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=12)
+    last_issue = None
+    for record in read_quality_insight_records(log_path):
+        timestamp = _parse_quality_insight_timestamp(
+            record.get("timestamp")
+            or record.get("observed_at")
+            or record.get("created_at")
+        )
+        if not timestamp or timestamp < cutoff:
+            continue
+
+        if not last_issue or timestamp > last_issue["timestamp"]:
+            channel_name = (
+                record.get("channel_name")
+                or record.get("name")
+                or record.get("channel")
+            )
+            channel_id = record.get("channel_id") or record.get("id")
+            channel_label = channel_name or (
+                str(channel_id) if channel_id is not None else None
+            )
+            if not channel_label:
+                channel_label = "Unknown channel"
+            last_issue = {
+                "timestamp": timestamp,
+                "channel_label": channel_label,
+                "reason": (
+                    record.get("reason")
+                    or record.get("suggestion_reason")
+                    or record.get("message")
+                    or record.get("notes")
+                ),
+            }
+    if last_issue:
+        elapsed_seconds = max(
+            0, int((now - last_issue["timestamp"]).total_seconds())
+        )
+        total_minutes = elapsed_seconds // 60
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+        if hours > 0:
+            elapsed = f"{hours}h {minutes}m ago"
+        else:
+            elapsed = f"{minutes}m ago"
+        last_issue_summary = (
+            f"Last playback issue: {elapsed} ({last_issue['channel_label']})"
+        )
     return render_template(
         'results.html',
         quality_insight_status=_compute_quality_insight_status(window_hours=12),
+        quality_insight_last_issue=last_issue_summary,
     )
 
 

@@ -45,6 +45,8 @@
 
 .quality-insight-action {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
   margin-top: 12px;
 }
@@ -85,6 +87,13 @@
 .quality-insight-status-red {
   background: #e53e3e;
   box-shadow: 0 0 0 2px rgba(229, 62, 62, 0.2);
+}
+
+.quality-insight-subtext {
+  margin-top: 6px;
+  font-size: 0.78em;
+  color: #718096;
+  text-align: center;
 }
 
 .quality-insight-modal {

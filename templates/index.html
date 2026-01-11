@@ -290,6 +290,9 @@
                     <span class="quality-insight-status quality-insight-status-{{ quality_insight_status|default('green') }}" aria-hidden="true"></span>
                     Quality insight
                 </button>
+                {% if quality_insight_last_issue %}
+                    <span class="quality-insight-subtext">{{ quality_insight_last_issue }}</span>
+                {% endif %}
             </div>
         </div>
         
