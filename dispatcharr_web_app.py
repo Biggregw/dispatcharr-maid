@@ -17,8 +17,6 @@ import sys
 import threading
 import time
 import uuid
-import fcntl
-import requests
 from functools import wraps
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -55,6 +53,7 @@ from stream_analysis import (
     reorder_streams
 )
 from job_workspace import create_job_workspace
+from quality_insight_utils import read_quality_insight_records
 
 # Ensure logs always show up in Docker logs/stdout, even if something else
 # configured logging before this module is imported.
@@ -80,52 +79,6 @@ _dispatcharr_auth_state = {
     'last_error': None
 }
 
-_QUALITY_INSIGHT_EVENT_TYPES = {
-    "stream_switch",
-    "failover",
-    "buffering",
-    "playback_error",
-}
-
-
-def _parse_quality_insight_env_int(name, default, minimum=1):
-    value = os.getenv(name)
-    if value is None:
-        return default
-    try:
-        parsed = int(value)
-        if parsed < minimum:
-            raise ValueError
-        return parsed
-    except ValueError:
-        logging.warning("Invalid %s value: %s", name, value)
-        return default
-
-
-_QUALITY_INSIGHT_POLL_SECONDS = _parse_quality_insight_env_int(
-    "DISPATCHARR_QUALITY_INSIGHT_POLL_SECONDS", 15
-)
-_QUALITY_INSIGHT_WINDOW_SECONDS = _parse_quality_insight_env_int(
-    "DISPATCHARR_QUALITY_INSIGHT_WINDOW_SECONDS", 180
-)
-_QUALITY_INSIGHT_RED_ENTRY_THRESHOLD = _parse_quality_insight_env_int(
-    "DISPATCHARR_QUALITY_INSIGHT_RED_ENTRY_THRESHOLD", 2
-)
-_QUALITY_INSIGHT_LATCH_PATH = Path("logs") / "quality_latch.json"
-
-_quality_insight_lock = threading.Lock()
-_quality_insight_cache = {
-    "channels": {},
-    "live_status": {},
-    "last_event": None,
-    "updated_at": None,
-}
-_quality_insight_poll_started = False
-_quality_insight_poll_thread = None
-_quality_insight_latch_state = {}
-_quality_insight_api = None
-
-
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -135,10 +88,6 @@ def login_required(view):
 
     return wrapped
 
-
-@app.before_request
-def _launch_quality_insight_polling():
-    _start_quality_insight_polling()
 
 # Check authentication lazily on first UI request to avoid crashing when Dispatcharr is temporarily unavailable.
 def _ensure_dispatcharr_ready():
@@ -284,426 +233,43 @@ def _normalize_quality_confidence(value):
     return "low"
 
 
-def _load_quality_latch_state():
-    if not _QUALITY_INSIGHT_LATCH_PATH.exists():
-        return {}
-
-    try:
-        with _QUALITY_INSIGHT_LATCH_PATH.open("r", encoding="utf-8") as handle:
-            try:
-                fcntl.flock(handle, fcntl.LOCK_SH)
-            except OSError:
-                pass
-            data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-    latch_state = {}
-    if isinstance(data, list):
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            channel_id = item.get("channel_id")
-            if channel_id is None:
-                continue
-            channel_key = str(channel_id)
-            try:
-                red_entry_count = int(item.get("red_entry_count", 0))
-            except (TypeError, ValueError):
-                red_entry_count = 0
-            latch_state[channel_key] = {
-                "channel_id": channel_id,
-                "date": item.get("date"),
-                "red_entry_count": max(0, red_entry_count),
-                "persistent_red": bool(item.get("persistent_red")),
-            }
-    return latch_state
-
-
-def _save_quality_latch_state(latch_state):
-    _QUALITY_INSIGHT_LATCH_PATH.parent.mkdir(parents=True, exist_ok=True)
-    sorted_items = sorted(
-        latch_state.values(),
-        key=lambda item: str(item.get("channel_id", "")),
-    )
-    payload = [
-        {
-            "channel_id": item.get("channel_id"),
-            "date": item.get("date"),
-            "red_entry_count": item.get("red_entry_count", 0),
-            "persistent_red": bool(item.get("persistent_red")),
-        }
-        for item in sorted_items
-        if item.get("channel_id") is not None
-    ]
-
-    temp_path = _QUALITY_INSIGHT_LATCH_PATH.with_name(
-        f"{_QUALITY_INSIGHT_LATCH_PATH.name}.tmp"
-    )
-    try:
-        with temp_path.open("w", encoding="utf-8") as handle:
-            try:
-                fcntl.flock(handle, fcntl.LOCK_EX)
-            except OSError:
-                pass
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-        os.replace(temp_path, _QUALITY_INSIGHT_LATCH_PATH)
-    except OSError:
-        try:
-            if temp_path.exists():
-                temp_path.unlink()
-        except OSError:
-            pass
-
-
-def _normalize_channel_id(value):
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        value = value.get("id") or value.get("channel_id")
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return str(value)
-
-
-def _extract_event_channel_name(event):
-    if not isinstance(event, dict):
-        return None
-    channel = event.get("channel")
-    if isinstance(channel, dict):
-        return channel.get("name") or channel.get("channel_name")
-    return (
-        event.get("channel_name")
-        or event.get("channel")
-        or event.get("channel_title")
-    )
-
-
-def _extract_event_timestamp(event):
-    if not isinstance(event, dict):
-        return None
-    for key in ("timestamp", "created_at", "time", "occurred_at", "event_time"):
-        parsed = _parse_quality_insight_timestamp(event.get(key))
-        if parsed:
-            return parsed
-    return None
-
-
-def _extract_event_type(event):
-    if not isinstance(event, dict):
-        return None
-    value = (
-        event.get("event_type")
-        or event.get("type")
-        or event.get("event")
-        or event.get("kind")
-    )
-    if not isinstance(value, str):
-        return None
-    return value.strip().lower()
-
-
-def _fetch_dispatcharr_system_events(api, max_pages=5):
-    endpoint = "/api/system/events/?limit=200"
-    events = []
-    pages = 0
-    next_endpoint = endpoint
-
-    while next_endpoint and pages < max_pages:
-        payload = api.get(next_endpoint)
-
-        if isinstance(payload, dict) and "results" in payload:
-            batch = payload.get("results") or []
-            next_link = payload.get("next")
-        elif isinstance(payload, list):
-            batch = payload
-            next_link = None
-        else:
-            raise ValueError("Unexpected system events response shape.")
-
-        if isinstance(batch, list):
-            events.extend([item for item in batch if isinstance(item, dict)])
-
-        if next_link:
-            if "/api/" in next_link:
-                next_endpoint = "/api/" + next_link.split("/api/", 1)[1]
-            else:
-                next_endpoint = next_link
-        else:
-            next_endpoint = None
-        pages += 1
-
-    return events
-
-
-def _evaluate_quality_insight_live_state(counts, window_seconds):
-    window_minutes = max(1, int(window_seconds // 60))
-    switch_count = counts.get("stream_switch", 0)
-    failover_count = counts.get("failover", 0)
-    buffering_count = counts.get("buffering", 0)
-    playback_error_count = counts.get("playback_error", 0)
-
-    if (switch_count + failover_count) >= 2 or playback_error_count >= 1:
-        reasons = []
-        if (switch_count + failover_count) >= 2:
-            reasons.append(
-                f"Multiple stream switches or failovers in the last {window_minutes} minutes."
-            )
-        if playback_error_count >= 1:
-            reasons.append(
-                f"Playback error detected in the last {window_minutes} minutes."
-            )
-        return "red", reasons
-
-    reasons = []
-    if switch_count == 1:
-        reasons.append(
-            f"Single stream switch in the last {window_minutes} minutes."
-        )
-    if buffering_count >= 2:
-        reasons.append(
-            f"Repeated buffering events in the last {window_minutes} minutes."
-        )
-    if reasons:
-        return "amber", reasons
-
-    return "green", []
-
-
-def _get_quality_insight_api():
-    global _quality_insight_api
-    with _quality_insight_lock:
-        api = _quality_insight_api
-
-    if api is not None:
-        return api
-
-    try:
-        api = DispatcharrAPI()
-        api.login()
-    except Exception as exc:
-        logging.warning("Quality insight poll failed: %s", exc)
-        return None
-
-    with _quality_insight_lock:
-        _quality_insight_api = api
-    return api
-
-
-def _poll_quality_insights():
+def _get_quality_insight_last_issue_summary():
+    log_path = Path("logs") / "quality_check_suggestions.ndjson"
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(seconds=_QUALITY_INSIGHT_WINDOW_SECONDS)
-
-    api = _get_quality_insight_api()
-    if api is None:
-        return False
-
-    try:
-        events = _fetch_dispatcharr_system_events(api)
-        logging.info("Quality insight poll fetched %d events", len(events))
-    except Exception as exc:
-        logging.warning("Quality insight poll failed: %s", exc)
-        return False
-
-    channel_counts = {}
-    channel_names = {}
-    last_event = None
-
-    for event in events:
-        event_type = _extract_event_type(event)
-        if event_type not in _QUALITY_INSIGHT_EVENT_TYPES:
-            continue
-
-        timestamp = _extract_event_timestamp(event)
+    cutoff = now - timedelta(hours=12)
+    last_issue = None
+    for record in read_quality_insight_records(log_path):
+        timestamp = _parse_quality_insight_timestamp(
+            record.get("timestamp")
+            or record.get("observed_at")
+            or record.get("created_at")
+        )
         if not timestamp or timestamp < cutoff:
             continue
 
-        channel_id = _normalize_channel_id(
-            event.get("channel_id")
-            or event.get("channel")
-            or event.get("channel_pk")
-        )
-        if channel_id is None:
-            continue
-
-        channel_key = str(channel_id)
-        counts = channel_counts.setdefault(channel_key, {})
-        counts[event_type] = counts.get(event_type, 0) + 1
-
-        channel_name = _extract_event_channel_name(event)
-        if channel_name:
-            channel_names[channel_key] = channel_name
-
-        if not last_event or timestamp > last_event["timestamp"]:
-            channel_label = channel_name or str(channel_id)
-            last_event = {
-                "timestamp": timestamp,
-                "channel_label": channel_label or "Unknown channel",
-            }
-
-    today = now.date().isoformat()
-    latch_updated = False
-    channel_states = {}
-    live_status = {}
-    latch_snapshot = None
-
-    with _quality_insight_lock:
-        previous_live_status = dict(_quality_insight_cache.get("live_status", {}))
-        channel_keys = set(channel_counts.keys())
-        channel_keys.update(
-            key for key, value in _quality_insight_latch_state.items()
-            if value.get("persistent_red")
-        )
-
-        for channel_key in channel_keys:
-            counts = channel_counts.get(channel_key, {})
-            live_state, live_reasons = _evaluate_quality_insight_live_state(
-                counts, _QUALITY_INSIGHT_WINDOW_SECONDS
+        if not last_issue or timestamp > last_issue["timestamp"]:
+            channel_name = (
+                record.get("channel_name")
+                or record.get("name")
+                or record.get("channel")
             )
-            live_status[channel_key] = live_state
-
-            latch_entry = _quality_insight_latch_state.get(channel_key)
-            if not latch_entry:
-                latch_entry = {
-                    "channel_id": int(channel_key)
-                    if channel_key.isdigit()
-                    else channel_key,
-                    "date": today,
-                    "red_entry_count": 0,
-                    "persistent_red": False,
-                }
-                _quality_insight_latch_state[channel_key] = latch_entry
-
-            if (
-                live_state == "red"
-                and previous_live_status.get(channel_key) != "red"
-            ):
-                if latch_entry.get("date") != today and not latch_entry.get(
-                    "persistent_red"
-                ):
-                    latch_entry["date"] = today
-                    latch_entry["red_entry_count"] = 0
-
-                latch_entry["red_entry_count"] = latch_entry.get("red_entry_count", 0) + 1
-                if (
-                    latch_entry["red_entry_count"]
-                    >= _QUALITY_INSIGHT_RED_ENTRY_THRESHOLD
-                ):
-                    latch_entry["persistent_red"] = True
-                latch_updated = True
-
-            persistent_red = bool(latch_entry.get("persistent_red"))
-            effective_state = "red" if persistent_red else live_state
-            reasons = list(live_reasons)
-            if persistent_red:
-                persistent_reason = "Persistent red flag from repeated failures."
-                if persistent_reason not in reasons:
-                    reasons.append(persistent_reason)
-
-            if effective_state != "green" and not reasons:
-                reasons = ["Playback issues detected in recent system events."]
-
-            channel_name = channel_names.get(channel_key)
-            if not channel_name:
-                cached = _quality_insight_cache.get("channels", {}).get(channel_key)
-                if cached:
-                    channel_name = cached.get("channel_name")
-
-            channel_states[channel_key] = {
-                "channel_id": latch_entry.get("channel_id"),
-                "channel_name": channel_name or "Unknown channel",
-                "live_state": live_state,
-                "effective_state": effective_state,
-                "reasons": reasons,
-                "persistent_red": persistent_red,
+            channel_id = record.get("channel_id") or record.get("id")
+            channel_label = channel_name or (
+                str(channel_id) if channel_id is not None else None
+            )
+            if not channel_label:
+                channel_label = "Unknown channel"
+            last_issue = {
+                "timestamp": timestamp,
+                "channel_label": channel_label,
             }
 
-        if latch_updated:
-            latch_snapshot = dict(_quality_insight_latch_state)
-
-        _quality_insight_cache["channels"] = channel_states
-        _quality_insight_cache["live_status"] = live_status
-        _quality_insight_cache["last_event"] = last_event
-        _quality_insight_cache["updated_at"] = now
-
-    if latch_snapshot is not None:
-        _save_quality_latch_state(latch_snapshot)
-
-    return True
-
-
-def _run_quality_insight_poll_loop():
-    # Single in-process background poller to keep UI responsiveness predictable.
-    logging.info(
-        "Starting quality insight poll loop (interval=%s seconds).",
-        _QUALITY_INSIGHT_POLL_SECONDS,
-    )
-    while True:
-        try:
-            _poll_quality_insights()
-        except Exception as exc:
-            logging.warning("Quality insight poll error: %s", exc)
-        time.sleep(_QUALITY_INSIGHT_POLL_SECONDS)
-
-
-def _start_quality_insight_polling():
-    global _quality_insight_poll_started, _quality_insight_poll_thread
-    with _quality_insight_lock:
-        if _quality_insight_poll_started:
-            return
-        _quality_insight_poll_started = True
-        _quality_insight_latch_state.update(_load_quality_latch_state())
-
-    _quality_insight_poll_thread = threading.Thread(
-        target=_run_quality_insight_poll_loop,
-        name="quality_insight_poll",
-        daemon=True,
-    )
-    _quality_insight_poll_thread.start()
-
-
-def _get_cached_quality_insights():
-    with _quality_insight_lock:
-        channels = list(_quality_insight_cache.get("channels", {}).values())
-
-    window_hours = round(_QUALITY_INSIGHT_WINDOW_SECONDS / 3600, 2)
-    results = []
-    for channel in channels:
-        results.append(
-            {
-                "channel_id": channel.get("channel_id"),
-                "channel_name": channel.get("channel_name") or "Unknown channel",
-                "rag_status": channel.get("effective_state", "green"),
-                "reasons": channel.get("reasons") or [],
-                "window_hours": window_hours,
-            }
-        )
-
-    results.sort(
-        key=lambda item: (
-            (item["channel_name"] or "").lower(),
-            str(item["channel_id"] or ""),
-        )
-    )
-    return results
-
-
-def _get_quality_insight_last_issue_summary():
-    with _quality_insight_lock:
-        last_event = _quality_insight_cache.get("last_event")
-
-    if not last_event:
+    if not last_issue:
         return None
 
-    timestamp = last_event.get("timestamp")
-    if not timestamp:
-        return None
-
-    now = datetime.now(timezone.utc)
-    elapsed_seconds = max(0, int((now - timestamp).total_seconds()))
+    elapsed_seconds = max(
+        0, int((now - last_issue["timestamp"]).total_seconds())
+    )
     total_minutes = elapsed_seconds // 60
     hours = total_minutes // 60
     minutes = total_minutes % 60
@@ -711,8 +277,9 @@ def _get_quality_insight_last_issue_summary():
         elapsed = f"{hours}h {minutes}m ago"
     else:
         elapsed = f"{minutes}m ago"
-    channel_label = last_event.get("channel_label") or "Unknown channel"
-    return f"Last playback issue: {elapsed} ({channel_label})"
+    return (
+        f"Last playback issue: {elapsed} ({last_issue['channel_label']})"
+    )
 
 
 def _load_quality_insight_acknowledgements():
@@ -753,11 +320,122 @@ def _load_quality_insight_acknowledgements():
 
 
 def _collect_quality_insights(window_hours=12):
-    return _get_cached_quality_insights()
+    log_path = Path("logs") / "quality_check_suggestions.ndjson"
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=window_hours)
+    acknowledgements = _load_quality_insight_acknowledgements()
+    channels = {}
+
+    for record in read_quality_insight_records(log_path):
+        channel_id = record.get("channel_id") or record.get("id")
+        channel_name = (
+            record.get("channel_name")
+            or record.get("name")
+            or record.get("channel")
+        )
+        channel_key = str(channel_id) if channel_id is not None else channel_name
+        if not channel_key:
+            channel_key = f"unknown-{len(channels)}"
+
+        timestamp = _parse_quality_insight_timestamp(
+            record.get("timestamp")
+            or record.get("observed_at")
+            or record.get("created_at")
+        )
+        reason = (
+            record.get("reason")
+            or record.get("suggestion_reason")
+            or record.get("message")
+            or record.get("notes")
+        )
+        confidence = _normalize_quality_confidence(
+            record.get("confidence")
+            or record.get("confidence_level")
+            or record.get("confidence_score")
+        )
+
+        channel_entry = channels.setdefault(
+            channel_key,
+            {
+                "channel_id": channel_id,
+                "channel_name": channel_name,
+                "suggestions": [],
+            },
+        )
+        if channel_entry["channel_id"] is None and channel_id is not None:
+            channel_entry["channel_id"] = channel_id
+        if not channel_entry["channel_name"] and channel_name:
+            channel_entry["channel_name"] = channel_name
+
+        channel_entry["suggestions"].append(
+            {
+                "timestamp": timestamp,
+                "confidence": confidence,
+                "reason": reason,
+            }
+        )
+
+    results = []
+    for channel in channels.values():
+        recent = [
+            suggestion
+            for suggestion in channel["suggestions"]
+            if suggestion["timestamp"] and suggestion["timestamp"] >= cutoff
+        ]
+        reasons = []
+        seen_reasons = set()
+        high_count = 0
+        medium_count = 0
+        low_count = 0
+        for suggestion in recent:
+            confidence = suggestion["confidence"]
+            if confidence == "high":
+                high_count += 1
+            elif confidence == "medium":
+                medium_count += 1
+            else:
+                low_count += 1
+            reason = suggestion["reason"]
+            if reason and reason not in seen_reasons:
+                seen_reasons.add(reason)
+                reasons.append(reason)
+
+        if not recent:
+            rag_status = "green"
+            reasons = []
+        elif high_count > 0 or medium_count >= 2:
+            rag_status = "red"
+        else:
+            rag_status = "amber"
+
+        channel_id = channel["channel_id"]
+        ack_key = str(channel_id) if channel_id is not None else None
+        acknowledgement = acknowledgements.get(ack_key) if ack_key else None
+        if acknowledgement and now < acknowledgement["acknowledged_until"]:
+            rag_status = "green"
+            reasons = []
+
+        results.append(
+            {
+                "channel_id": channel_id,
+                "channel_name": channel["channel_name"] or "Unknown channel",
+                "rag_status": rag_status,
+                "reasons": reasons,
+                "window_hours": window_hours,
+            }
+        )
+
+    results.sort(
+        key=lambda item: (
+            (item["channel_name"] or "").lower(),
+            str(item["channel_id"] or ""),
+        )
+    )
+    return results
 
 
 def _compute_quality_insight_status(window_hours=12):
-    insights = _get_cached_quality_insights()
+    insights = _collect_quality_insights(window_hours=window_hours)
     if not insights:
         return "green"
     status_order = {"green": 0, "amber": 1, "red": 2}
