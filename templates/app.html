@@ -1067,27 +1067,16 @@
 
                 <div class="action-section-title" style="margin: 10px 0;">
                     <span style="color:#6366f1;">2️⃣</span>
-                    <span>Quality Check actions (after refresh)</span>
+                    <span>Optimize Streams (after refresh)</span>
                 </div>
                 <div class="action-grid" style="margin: 12px 0;">
                     <div class="action-stack">
                         <button class="action-btn primary" onclick="startApplyQualityJob(event)"
                                 style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
                             <span>✅</span>
-                            <span>Quality Check (Apply Changes)</span>
+                            <span>Optimize Streams</span>
                         </button>
-
-                        <button class="action-btn primary" onclick="startJob('full_cleanup_plan', null, event)"
-                                style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
-                            <span>🔎</span>
-                            <span>Quality Check (Read-Only)</span>
-                        </button>
-
-                        <div class="action-help">
-                            <div style="font-weight: 700; color: #2d3748; margin-bottom: 6px;">Which one should I use?</div>
-                            <div><strong>Apply Changes</strong> will analyze + score, then <strong>order</strong> streams immediately (no streams are removed).</div>
-                            <div style="margin-top: 6px;"><strong>Quality Check (Read-Only)</strong> computes the same ordering without applying any changes.</div>
-                        </div>
+                        <div class="action-help">Reorders streams based on quality analysis. No streams are removed.</div>
                     </div>
                 </div>
             </div>
@@ -1175,22 +1164,6 @@
 
     </div>
 
-    <div id="apply-confirm-modal" class="modal-overlay hidden">
-        <div class="modal">
-            <div class="modal-header">
-                <div class="modal-title">Run Apply Changes now?</div>
-                <button class="btn btn-back" onclick="closeApplyConfirmModal()">✖</button>
-            </div>
-            <div class="modal-body">
-                <p style="margin: 0; color: #374151;">Applying changes updates Dispatcharr immediately.</p>
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-back" onclick="closeApplyConfirmModal()">Cancel</button>
-                <button class="btn btn-next" onclick="confirmApplyWithoutPreview()">Proceed anyway</button>
-            </div>
-        </div>
-    </div>
-
     <div class="quality-insight-modal" id="quality-insight-modal" aria-hidden="true">
         <div class="quality-insight-backdrop" data-quality-insight-close></div>
         <div class="quality-insight-dialog" role="dialog" aria-modal="true" aria-labelledby="quality-insight-title">
@@ -1226,8 +1199,6 @@
         const terminalStatuses = ['completed', 'failed', 'cancelled'];
         let pendingHistoryHighlightJobId = null;
         const lastRenderedStatuses = {};
-        let hasRunPreviewPlan = false;
-        let pendingApplyButton = null;
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
@@ -1858,32 +1829,16 @@
         function jobTypeLabel(jobType) {
             return {
                 refresh_optimize: 'Refresh Channel Streams',
-                pattern_refresh_full_cleanup: 'Saved Job (Refresh + QC)',
-                full_cleanup_plan: 'Quality Check (Read-Only)',
-                full_cleanup: 'Quality Check (Apply Changes)',
+                pattern_refresh_full_cleanup: 'Saved Job (Refresh + Optimize Streams)',
+                full_cleanup_plan: 'Optimize Streams (No changes)',
+                full_cleanup: 'Optimize Streams',
                 full: 'Full Job',
                 fetch: 'Fetch Streams',
-                analyze: 'Analyze Streams',
-                score: 'Score Streams',
+                analyze: 'Review Streams',
+                score: 'Rank Streams',
                 reorder: 'Reorder Streams',
                 cleanup: 'Reorder Streams'
             }[jobType] || jobType;
-        }
-
-        function closeApplyConfirmModal() {
-            pendingApplyButton = null;
-            document.getElementById('apply-confirm-modal').classList.add('hidden');
-        }
-
-        function showApplyConfirmModal(clickedBtn) {
-            pendingApplyButton = clickedBtn || null;
-            document.getElementById('apply-confirm-modal').classList.remove('hidden');
-        }
-
-        function confirmApplyWithoutPreview() {
-            const clickedBtn = pendingApplyButton;
-            closeApplyConfirmModal();
-            return startJob('full_cleanup', null, clickedBtn ? { currentTarget: clickedBtn } : null);
         }
 
         function startApplyQualityJob(event) {
@@ -1891,11 +1846,7 @@
                 event.preventDefault();
                 event.stopPropagation();
             }
-            const clickedBtn = getClickedButton(event);
-            if (hasRunPreviewPlan) {
-                return startJob('full_cleanup', null, clickedBtn ? { currentTarget: clickedBtn } : event);
-            }
-            return showApplyConfirmModal(clickedBtn);
+            return startJob('full_cleanup', null, event);
         }
 
         function renderOptimisticStartingJob(jobType, groupNames, channelNames) {
@@ -2049,6 +2000,41 @@
             }
         }
         
+        function formatQualityStep(job) {
+            const step = (job.current_step || '').toLowerCase();
+            if (job.status === 'completed') {
+                return job.job_type === 'full_cleanup_plan'
+                    ? 'Optimization results ready.'
+                    : 'Optimize Streams completed.';
+            }
+            if (job.status === 'failed') {
+                return job.job_type === 'full_cleanup_plan'
+                    ? 'Optimization did not finish.'
+                    : 'Optimize Streams failed.';
+            }
+            if (job.status === 'cancelled') {
+                return job.job_type === 'full_cleanup_plan'
+                    ? 'Optimization stopped.'
+                    : 'Optimize Streams cancelled.';
+            }
+            if (step.includes('analy')) {
+                return 'Reviewing stream quality…';
+            }
+            if (step.includes('score')) {
+                return 'Ranking streams…';
+            }
+            if (step.includes('cleanup') || step.includes('reorder') || step.includes('apply')) {
+                return 'Reordering streams…';
+            }
+            if (step.includes('plan') || step.includes('preview')) {
+                return 'Preparing stream order…';
+            }
+            if (step.includes('fetch')) {
+                return 'Gathering streams…';
+            }
+            return job.job_type === 'full_cleanup_plan' ? 'Building optimization results…' : 'Optimizing streams…';
+        }
+
         function reconcileJobForRender(job) {
             const isTerminal = terminalStatuses.includes(job.status);
             const terminalStep = {
@@ -2056,9 +2042,12 @@
                 failed: 'Failed.',
                 cancelled: 'Cancelled.'
             }[job.status];
+            const isQualityJob = ['full_cleanup', 'full_cleanup_plan', 'pattern_refresh_full_cleanup'].includes(job.job_type);
             return {
                 ...job,
-                current_step: isTerminal ? (terminalStep || job.current_step) : (job.current_step || 'Starting...')
+                current_step: isQualityJob
+                    ? formatQualityStep(job)
+                    : (isTerminal ? (terminalStep || job.current_step) : (job.current_step || 'Starting...'))
             };
         }
 
@@ -2208,8 +2197,8 @@
             const planReminderStatuses = ['queued', 'running', 'completed'];
             const showPlanReminder = job.job_type === 'full_cleanup_plan' && planReminderStatuses.includes(job.status);
             const planReminderCopy = job.status === 'completed'
-                ? 'Read-Only Quality Check finished. Open Results to inspect the checks.'
-                : 'Read-Only Quality Check runs do not apply changes. Open Results to inspect the checks when it finishes.';
+                ? 'Optimization results are ready. Open Results to review the recommended order.'
+                : 'Optimization results do not change streams. Open Results to review the recommended order when it finishes.';
             
             const processed = typeof job.stage_progress === 'number'
                 ? job.stage_progress
@@ -2381,7 +2370,7 @@
                     html += `
                         <div class="stats-grid">
                             <div class="stat-box">
-                                <div class="stat-label">Total Analyzed</div>
+                                <div class="stat-label">Streams Reviewed</div>
                                 <div class="stat-value">${job.result_summary.total.toLocaleString()}</div>
                             </div>
                             <div class="stat-box">
@@ -2536,13 +2525,13 @@
                 
                 let typeLabel = {
                     'refresh_optimize': 'Refresh',
-                    'pattern_refresh_full_cleanup': 'Saved Job',
-                    'full_cleanup_plan': 'Quality Check (Read-Only)',
-                    'full_cleanup': 'Quality Check (Apply Changes)',
+                    'pattern_refresh_full_cleanup': 'Saved Job (Refresh + Optimize Streams)',
+                    'full_cleanup_plan': 'Optimize Streams (No changes)',
+                    'full_cleanup': 'Optimize Streams',
                     'full': 'Full Job',
                     'fetch': 'Fetch',
-                    'analyze': 'Analyze',
-                    'score': 'Score',
+                    'analyze': 'Review',
+                    'score': 'Rank',
                     'reorder': 'Reorder',
                     'cleanup': 'Reorder'
                 }[job.job_type] || job.job_type;
@@ -2560,7 +2549,20 @@
                         streamInfo = `${job.result_summary.new_count || 0} streams`;
                     } else if (job.result_summary.total) {
                         // For analysis jobs, show how many were analyzed
-                        streamInfo = `${job.result_summary.total} analyzed`;
+                        streamInfo = `${job.result_summary.total} reviewed`;
+                    }
+                }
+
+                let statusText = streamInfo || job.status;
+                if (['full_cleanup', 'full_cleanup_plan', 'pattern_refresh_full_cleanup'].includes(job.job_type)) {
+                    if (job.status === 'completed') {
+                        statusText = job.job_type === 'full_cleanup_plan'
+                            ? 'Optimization results ready'
+                            : 'Streams reordered';
+                    } else if (job.status === 'failed') {
+                        statusText = 'Optimization failed';
+                    } else if (job.status === 'cancelled') {
+                        statusText = 'Optimization stopped';
                     }
                 }
                 
@@ -2575,7 +2577,7 @@
                         </div>
                         <div class="history-meta">
                             <span class="history-status ${statusClass}">
-                                ${streamInfo || job.status}
+                                ${statusText}
                             </span>
                             <button class="text-btn" onclick="viewJobResults('${job.job_id}'); event.stopPropagation();">
                                 View Results
