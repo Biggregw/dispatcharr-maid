@@ -398,6 +398,48 @@ def _collect_quality_insights(window_hours=12):
     return results
 
 
+def _compute_quality_insight_status(window_hours=12):
+    log_path = Path("logs") / "quality_check_suggestions.ndjson"
+    if not log_path.exists():
+        return "green"
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=window_hours)
+    saw_medium = False
+    try:
+        with log_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                timestamp = _parse_quality_insight_timestamp(
+                    record.get("timestamp")
+                    or record.get("observed_at")
+                    or record.get("created_at")
+                )
+                if not timestamp or timestamp < cutoff:
+                    continue
+
+                confidence = _normalize_quality_confidence(
+                    record.get("confidence")
+                    or record.get("confidence_level")
+                    or record.get("confidence_score")
+                )
+                if confidence == "high":
+                    return "red"
+                if confidence == "medium":
+                    saw_medium = True
+    except OSError:
+        return "green"
+
+    return "amber" if saw_medium else "green"
+
+
 def _run_dispatcharr_snapshot_loop():
     lock_path = Path("dispatcharr_snapshot_loop.pid")
     lock_file = None
@@ -2674,7 +2716,10 @@ def index():
     auth_ok, auth_error = _ensure_dispatcharr_ready()
     if not auth_ok:
         return _render_auth_error(auth_error)
-    return render_template('app.html')
+    return render_template(
+        'app.html',
+        quality_insight_status=_compute_quality_insight_status(window_hours=12),
+    )
 
 
 @app.route('/health')
@@ -2691,7 +2736,10 @@ def results():
     auth_ok, auth_error = _ensure_dispatcharr_ready()
     if not auth_ok:
         return _render_auth_error(auth_error)
-    return render_template('results.html')
+    return render_template(
+        'results.html',
+        quality_insight_status=_compute_quality_insight_status(window_hours=12),
+    )
 
 
 @app.route('/api/groups')

@@ -58,12 +58,33 @@
   font-size: 0.9em;
   font-weight: 600;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .quality-insight-trigger:hover {
   transform: translateY(-1px);
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.18);
+}
+
+.quality-insight-status {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #38a169;
+  box-shadow: 0 0 0 2px rgba(56, 161, 105, 0.18);
+}
+
+.quality-insight-status-amber {
+  background: #d69e2e;
+  box-shadow: 0 0 0 2px rgba(214, 158, 46, 0.2);
+}
+
+.quality-insight-status-red {
+  background: #e53e3e;
+  box-shadow: 0 0 0 2px rgba(229, 62, 62, 0.2);
 }
 
 .quality-insight-modal {
