@@ -17,6 +17,8 @@ SUGGESTIONS_PATH = LOGS_DIR / "quality_check_suggestions.ndjson"
 WINDOW_HOURS = 12
 MIN_TOP_OBSERVATIONS = 2
 PLAYBACK_SOURCE = "playback"
+DISPATCHARR_SOURCE = "dispatcharr"
+QUALITY_INSIGHT_SOURCES = {PLAYBACK_SOURCE, DISPATCHARR_SOURCE}
 
 
 def _utc_now() -> datetime:
@@ -65,23 +67,23 @@ def _within_window(timestamp: datetime, cutoff: datetime) -> bool:
 
 def _is_real_playback(record: Dict, log_label: str) -> bool:
     """
-    Guard insight inputs so they only reflect real playback activity.
+    Guard insight inputs so they only reflect supported evaluation sources.
 
-    Without an explicit playback source marker we cannot safely tell if a record
-    came from diagnostics (quality checks, snapshots, planning, etc.), so we
-    skip it and log loudly to avoid contaminating insights.
+    Without an explicit source marker we cannot safely tell if a record came
+    from diagnostics (quality checks, snapshots, planning, etc.), so we skip it
+    and log loudly to avoid contaminating insights.
     """
     source = (record.get("source") or "").strip().lower()
     if not source:
         logging.warning(
-            "Skipping %s entry without explicit playback source; "
-            "cannot safely attribute to real playback.",
+            "Skipping %s entry without explicit source; "
+            "cannot safely attribute to quality insight inputs.",
             log_label,
         )
         return False
-    if source != PLAYBACK_SOURCE:
+    if source not in QUALITY_INSIGHT_SOURCES:
         logging.info(
-            "Ignoring non-playback %s entry from source '%s'.",
+            "Ignoring unsupported %s entry from source '%s'.",
             log_label,
             source,
         )
@@ -154,8 +156,8 @@ def _collect_selection_outcomes(cutoff: datetime):
     return channel_names, final_stream_ids, switch_counts, record_counts
 
 
-def _write_suggestions(suggestions: Iterable[Dict]) -> None:
-    if not suggestions:
+def _write_suggestions(suggestions: Iterable[Dict], *, force_write: bool = False) -> None:
+    if not suggestions and not force_write:
         logging.info("No suggestions to write")
         return
     try:
@@ -249,7 +251,12 @@ def evaluate_quality_checks() -> None:
             )
             emit(channel_id, channel_name, None, "repeated_switching", "high")
 
-    _write_suggestions(suggestions)
+    has_quality_records = any(top_observations.values())
+    has_selection_records = any(selection_record_counts.values())
+    _write_suggestions(
+        suggestions,
+        force_write=has_quality_records or has_selection_records,
+    )
 
 
 def main() -> None:
