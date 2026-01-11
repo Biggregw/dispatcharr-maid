@@ -440,7 +440,7 @@
         function getPhaseIndicator(stepText) {
             const step = (stepText || '').toLowerCase();
             if (step.includes('cleanup')) {
-                return { icon: '🧹', text: 'Cleaning up streams…' };
+                return { icon: '🧹', text: 'Optimizing stream order…' };
             }
             if (step.includes('reorder')) {
                 return { icon: '↕️', text: 'Reordering channels…' };
