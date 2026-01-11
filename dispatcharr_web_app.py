@@ -504,9 +504,6 @@ def _poll_quality_insights():
     try:
         events = _fetch_dispatcharr_system_events(api)
     except Exception as exc:
-        with _quality_insight_lock:
-            if _quality_insight_api is api:
-                _quality_insight_api = None
         logging.warning("Quality insight poll failed: %s", exc)
         return False
 
