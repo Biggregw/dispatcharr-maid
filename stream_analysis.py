@@ -2131,6 +2131,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     import os
     import re
     from datetime import datetime, timezone
+    from difflib import SequenceMatcher
 
     # Performance: precompile regexes used in matching loops
     _QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
@@ -2164,6 +2165,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         'nine': '9',
         'ten': '10',
     }
+    _RESOLUTION_TOKEN_RE = re.compile(r'^\d{3,4}p$|^\d+k$', flags=re.IGNORECASE)
+    _GENERIC_MATCH_TOKENS = {'tv', 'channel', 'live', 'stream'}
+    _DISCOVERY_CONFIDENCE_FLOOR = 0.45
 
     def canonicalize_name(text):
         """Lowercase and normalize punctuation/whitespace for name comparisons."""
@@ -2173,11 +2177,16 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if not cleaned:
             return cleaned
         tokens = cleaned.split(' ')
-        normalized_tokens = [
-            _NUMERIC_WORD_ALIASES.get(token, token)
-            for token in tokens
-            if token
-        ]
+        normalized_tokens = []
+        for token in tokens:
+            if not token:
+                continue
+            normalized = _NUMERIC_WORD_ALIASES.get(token, token)
+            if normalized in _QUALITY_NEUTRAL_TOKENS:
+                continue
+            if _RESOLUTION_TOKEN_RE.match(normalized):
+                continue
+            normalized_tokens.append(normalized)
         return ' '.join(normalized_tokens)
     
     def strip_quality(text):
@@ -2411,7 +2420,39 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             return True
         return False
 
-    def matches_stream(stream_name):
+    def _match_tokens(tokens):
+        return [token for token in tokens if token not in _GENERIC_MATCH_TOKENS]
+
+    def _passes_token_overlap(selected_tokens, stream_tokens):
+        if not selected_tokens or not stream_tokens:
+            return False
+        overlap = set(selected_tokens) & set(stream_tokens)
+        if not overlap:
+            return False
+        min_overlap = 1 if len(selected_tokens) <= 2 else 2
+        if len(overlap) < min_overlap:
+            return False
+        if len(overlap) == 1:
+            token = next(iter(overlap))
+            if token in _GENERIC_MATCH_TOKENS:
+                return False
+        return True
+
+    def _discovery_confidence(selected_tokens, stream_tokens, selected_name, stream_name):
+        if not selected_tokens or not stream_tokens:
+            return 0.0
+        overlap = set(selected_tokens) & set(stream_tokens)
+        if not overlap:
+            return 0.0
+        overlap_ratio = len(overlap) / max(1, len(selected_tokens))
+        coverage_ratio = len(overlap) / max(1, len(stream_tokens))
+        similarity = SequenceMatcher(None, selected_name, stream_name).ratio()
+        score = (0.55 * overlap_ratio) + (0.25 * coverage_ratio) + (0.2 * similarity)
+        if any(token.isdigit() for token in overlap):
+            score += 0.05
+        return min(score, 1.0)
+
+    def _legacy_matches_stream(stream_name):
         """Check if stream matches the selected channel (fast path; precomputed filters)."""
         if exclude_plus_one and _TIMESHIFT_SEMANTIC_RE.search(stream_name):
             return False
@@ -2421,7 +2462,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             return bool(_stream_name_override_re.search(stream_name))
 
         stream_normalized = canonicalize_name(stream_name)
-        
+
         if _selected_normalized not in stream_normalized:
             if not _allows_trailing_one_equivalence(selected_cleaned, stream_name):
                 return False
@@ -2466,6 +2507,76 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if _stream_name_re and not _stream_name_re.search(stream_name):
             return False
         
+        return True
+
+    def matches_stream(stream_name):
+        """Check if stream matches the selected channel with token-based filtering."""
+        if exclude_plus_one and _TIMESHIFT_SEMANTIC_RE.search(stream_name):
+            return False
+
+        if _stream_name_override_re is not None:
+            # Regex-only override: bypass grammar and other channel filters.
+            return bool(_stream_name_override_re.search(stream_name))
+
+        stream_normalized = canonicalize_name(stream_name)
+        stream_tokens = tokenize_canonical(stream_name)
+        selected_match_tokens = _match_tokens(_selected_tokens or [])
+        stream_match_tokens = _match_tokens(stream_tokens)
+
+        if not _passes_token_overlap(selected_match_tokens, stream_match_tokens):
+            if not _allows_trailing_one_equivalence(selected_cleaned, stream_name):
+                return False
+
+        if _selected_numeric_re and not _selected_numeric_re.search(stream_normalized):  # use canonical form so word-number aliases (e.g., "one"->"1") pass
+            if not (
+                _allows_numeric_one_equivalence(selected_cleaned, stream_name)
+                or _allows_trailing_one_equivalence(selected_cleaned, stream_name)
+            ):
+                return False
+
+        stream_has_timeshift = bool(_TIMESHIFT_SEMANTIC_RE.search(stream_name))
+
+        if _selected_has_timeshift and not stream_has_timeshift:
+            return False
+        if not _selected_has_timeshift and stream_has_timeshift:
+            return False
+
+        if _selected_tokens is not None:
+            if not _passes_semantic_suffix(_selected_tokens, stream_tokens):
+                if not _allows_trailing_one_equivalence(selected_cleaned, stream_name):
+                    return False
+
+        if _derived_negative_tokens:
+            suffix_tokens = _extract_suffix_tokens(stream_name)
+            for token in suffix_tokens:
+                if token in _derived_negative_tokens:
+                    logging.info(
+                        f"Rejected stream due to derived negative token '{token}': {stream_name}"
+                    )
+                    return False
+
+        if _include_regexes:
+            stream_lower = stream_name.lower()
+            if not any(r.search(stream_lower) for r in _include_regexes):
+                return False
+
+        if _exclude_regexes:
+            stream_lower = stream_name.lower()
+            if any(r.search(stream_lower) for r in _exclude_regexes):
+                return False
+
+        if _stream_name_re and not _stream_name_re.search(stream_name):
+            return False
+
+        confidence = _discovery_confidence(
+            selected_match_tokens,
+            stream_match_tokens,
+            _selected_normalized,
+            stream_normalized
+        )
+        if confidence < _DISCOVERY_CONFIDENCE_FLOOR:
+            return False
+
         return True
     
     logging.info(f"Refreshing channel {channel_id} from all providers...")
@@ -2595,12 +2706,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     
     logging.info(f"Checking {len(all_streams)} streams from all providers...")
 
-    if _stream_name_override_re is None:
+    def _derive_negative_tokens(match_func):
         preview_only_streams = []
         for stream in all_streams:
             stream_name = stream.get('name', '')
             stream_id = stream.get('id')
-            if not matches_stream(stream_name):
+            if not match_func(stream_name):
                 continue
             if stream_id in current_stream_ids:
                 continue
@@ -2622,20 +2733,14 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             for token in stream_tokens:
                 preview_token_counts[token] += 1
 
-        _derived_negative_tokens = {
+        return {
             token for token, count in preview_token_counts.items()
             if count >= 2 and token not in current_suffix_tokens
         }
-        if _derived_negative_tokens:
-            sorted_tokens = ', '.join(sorted(_derived_negative_tokens))
-            logging.info(f"Derived negative tokens learned: {sorted_tokens}")
     
     # Preview responses can become very large when regex override is broad.
     # Cap the returned stream list while still computing accurate counts.
     _PREVIEW_STREAM_LIMIT = 250
-
-    total_matching = 0
-    preview_truncated = False
 
     allowed_set = None
     if allowed_stream_ids is not None:
@@ -2646,74 +2751,111 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     # Build filtered streams (used for actual update) and a capped list of
     # detailed streams for preview/UI.
-    filtered_streams = []   # used when preview=False (full set)
-    preview_streams = []    # capped list returned to UI when preview=True
-    filtered_count = 0      # accurate count after all filtering (and allowed_set)
-
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
 
     deny_overrides = _stream_name_override_re is not None
     denied_stream_ids = set() if (deny_overrides or clear_learned_rules) else _load_channel_denies(channel_id)
-    deny_records = []
-    record_denies = allowed_stream_ids is not None and not preview
+    def _collect_streams(match_func):
+        total_matching = 0
+        preview_truncated = False
+        filtered_streams = []
+        preview_streams = []
+        filtered_count = 0
+        deny_records_local = []
 
-    for stream in all_streams:
-        stream_name = stream.get('name', '')
-        stream_id = stream.get('id')
-        provider_id = stream.get('m3u_account')
-        provider_name = stream.get('m3u_account_name')
+        for stream in all_streams:
+            stream_name = stream.get('name', '')
+            stream_id = stream.get('id')
+            provider_id = stream.get('m3u_account')
+            provider_name = stream.get('m3u_account_name')
 
-        if provider_name is None and provider_lookup and provider_id is not None:
-            provider_name = provider_lookup.get(str(provider_id))
+            if provider_name is None and provider_lookup and provider_id is not None:
+                provider_name = provider_lookup.get(str(provider_id))
 
-        if (
-            denied_stream_ids
-            and stream_id is not None
-            and int(stream_id) in denied_stream_ids
-            and not (allowed_set is not None and int(stream_id) in allowed_set)
-        ):
-            logging.info(
-                f"Rejected stream {stream_id} for channel {channel_id} due to persisted deny"
-            )
-            continue
+            if (
+                denied_stream_ids
+                and stream_id is not None
+                and int(stream_id) in denied_stream_ids
+                and not (allowed_set is not None and int(stream_id) in allowed_set)
+            ):
+                logging.info(
+                    f"Rejected stream {stream_id} for channel {channel_id} due to persisted deny"
+                )
+                continue
 
-        if not matches_stream(stream_name):
-            continue
+            if not match_func(stream_name):
+                continue
 
-        total_matching += 1
+            total_matching += 1
 
-        if allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
-            if record_denies and stream_id is not None:
-                deny_records.append({
-                    'channel_id': int(channel_id),
-                    'stream_id': int(stream_id),
-                    'stream_name': stream_name,
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                })
-            continue
+            if allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
+                if record_denies and stream_id is not None:
+                    deny_records_local.append({
+                        'channel_id': int(channel_id),
+                        'stream_id': int(stream_id),
+                        'stream_name': stream_name,
+                        'timestamp': datetime.now(timezone.utc).isoformat()
+                    })
+                continue
 
-        filtered_count += 1
+            filtered_count += 1
 
-        detailed_stream = {
-            'id': stream_id,
-            'name': stream_name,
-            'provider_id': provider_id,
-            'provider_name': provider_name,
-            # Pass through service metadata if the source stream already includes it.
-            'service_name': stream.get('service_name'),
-            'service_provider': stream.get('service_provider'),
-            # URL is not used by the UI and can be large/sensitive; omit.
-            'resolution': stream.get('resolution'),
-            'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate')
+            detailed_stream = {
+                'id': stream_id,
+                'name': stream_name,
+                'provider_id': provider_id,
+                'provider_name': provider_name,
+                # Pass through service metadata if the source stream already includes it.
+                'service_name': stream.get('service_name'),
+                'service_provider': stream.get('service_provider'),
+                # URL is not used by the UI and can be large/sensitive; omit.
+                'resolution': stream.get('resolution'),
+                'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate')
+            }
+
+            if preview:
+                if len(preview_streams) < _PREVIEW_STREAM_LIMIT:
+                    preview_streams.append(detailed_stream)
+                else:
+                    preview_truncated = True
+            else:
+                filtered_streams.append(detailed_stream)
+
+        return {
+            'total_matching': total_matching,
+            'preview_truncated': preview_truncated,
+            'filtered_streams': filtered_streams,
+            'preview_streams': preview_streams,
+            'filtered_count': filtered_count,
+            'deny_records': deny_records_local
         }
 
-        if preview:
-            if len(preview_streams) < _PREVIEW_STREAM_LIMIT:
-                preview_streams.append(detailed_stream)
-            else:
-                preview_truncated = True
-        else:
-            filtered_streams.append(detailed_stream)
+    record_denies = allowed_stream_ids is not None and not preview
+    _derived_negative_tokens = set()
+    matcher = matches_stream
+
+    if _stream_name_override_re is None:
+        _derived_negative_tokens = _derive_negative_tokens(matcher)
+        if _derived_negative_tokens:
+            sorted_tokens = ', '.join(sorted(_derived_negative_tokens))
+            logging.info(f"Derived negative tokens learned: {sorted_tokens}")
+
+    collected = _collect_streams(matcher)
+
+    if _stream_name_override_re is None and collected['total_matching'] == 0:
+        logging.info("No matches with token-based filters; falling back to legacy matching.")
+        _derived_negative_tokens = _derive_negative_tokens(_legacy_matches_stream)
+        if _derived_negative_tokens:
+            sorted_tokens = ', '.join(sorted(_derived_negative_tokens))
+            logging.info(f"Derived negative tokens learned: {sorted_tokens}")
+        collected = _collect_streams(_legacy_matches_stream)
+
+    total_matching = collected['total_matching']
+    preview_truncated = collected['preview_truncated']
+    filtered_streams = collected['filtered_streams']
+    preview_streams = collected['preview_streams']
+    filtered_count = collected['filtered_count']
+    deny_records = collected['deny_records']
 
     logging.info(f"Found {total_matching} matching streams")
 
