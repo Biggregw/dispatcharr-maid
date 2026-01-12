@@ -237,6 +237,11 @@ def _normalize_quality_confidence(value):
 QUALITY_INSIGHT_WINDOW_HOURS = 168
 _QUALITY_INSIGHT_ACK_CACHE = {"mtime": None, "data": {}}
 _QUALITY_INSIGHT_RESET_CACHE = {"mtime": None, "data": {}}
+_QUALITY_INSIGHT_SUGGESTION_CACHE = {
+    "mtime": None,
+    "channels": None,
+    "results_cache": {"key": None, "results": None, "status": None},
+}
 
 
 def _load_quality_insight_acknowledgements():
@@ -328,73 +333,114 @@ def _load_quality_check_resets():
 def _collect_quality_insights(window_hours=QUALITY_INSIGHT_WINDOW_HOURS, include_status=False):
     log_path = Path("logs") / "quality_check_suggestions.ndjson"
     if not log_path.exists():
+        _QUALITY_INSIGHT_SUGGESTION_CACHE["mtime"] = None
+        _QUALITY_INSIGHT_SUGGESTION_CACHE["channels"] = None
+        _QUALITY_INSIGHT_SUGGESTION_CACHE["results_cache"] = {
+            "key": None,
+            "results": None,
+            "status": None,
+        }
         if include_status:
             return [], "green"
         return []
+
+    try:
+        mtime = log_path.stat().st_mtime
+    except FileNotFoundError:
+        _QUALITY_INSIGHT_SUGGESTION_CACHE["mtime"] = None
+        _QUALITY_INSIGHT_SUGGESTION_CACHE["channels"] = None
+        _QUALITY_INSIGHT_SUGGESTION_CACHE["results_cache"] = {
+            "key": None,
+            "results": None,
+            "status": None,
+        }
+        if include_status:
+            return [], "green"
+        return []
+
+    if _QUALITY_INSIGHT_SUGGESTION_CACHE["mtime"] != mtime:
+        _QUALITY_INSIGHT_SUGGESTION_CACHE["mtime"] = mtime
+        _QUALITY_INSIGHT_SUGGESTION_CACHE["channels"] = None
+        _QUALITY_INSIGHT_SUGGESTION_CACHE["results_cache"] = {
+            "key": None,
+            "results": None,
+            "status": None,
+        }
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=window_hours)
     acknowledgements = _load_quality_insight_acknowledgements()
     resets = _load_quality_check_resets()
-    channels = {}
+    ack_mtime = _QUALITY_INSIGHT_ACK_CACHE["mtime"]
+    reset_mtime = _QUALITY_INSIGHT_RESET_CACHE["mtime"]
+    cache_key = (window_hours, now, ack_mtime, reset_mtime)
+    cached_results = _QUALITY_INSIGHT_SUGGESTION_CACHE["results_cache"]
+    if cached_results["key"] == cache_key:
+        if include_status:
+            return cached_results["results"], cached_results["status"]
+        return cached_results["results"]
 
-    with log_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+    channels = _QUALITY_INSIGHT_SUGGESTION_CACHE["channels"]
+    if channels is None:
+        channels = {}
+        with log_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
 
-            channel_id = record.get("channel_id") or record.get("id")
-            channel_name = (
-                record.get("channel_name")
-                or record.get("name")
-                or record.get("channel")
-            )
-            channel_key = str(channel_id) if channel_id is not None else channel_name
-            if not channel_key:
-                channel_key = f"unknown-{len(channels)}"
+                channel_id = record.get("channel_id") or record.get("id")
+                channel_name = (
+                    record.get("channel_name")
+                    or record.get("name")
+                    or record.get("channel")
+                )
+                channel_key = str(channel_id) if channel_id is not None else channel_name
+                if not channel_key:
+                    channel_key = f"unknown-{len(channels)}"
 
-            timestamp = _parse_quality_insight_timestamp(
-                record.get("timestamp")
-                or record.get("observed_at")
-                or record.get("created_at")
-            )
-            reason = (
-                record.get("reason")
-                or record.get("suggestion_reason")
-                or record.get("message")
-                or record.get("notes")
-            )
-            confidence = _normalize_quality_confidence(
-                record.get("confidence")
-                or record.get("confidence_level")
-                or record.get("confidence_score")
-            )
+                timestamp = _parse_quality_insight_timestamp(
+                    record.get("timestamp")
+                    or record.get("observed_at")
+                    or record.get("created_at")
+                )
+                reason = (
+                    record.get("reason")
+                    or record.get("suggestion_reason")
+                    or record.get("message")
+                    or record.get("notes")
+                )
+                confidence = _normalize_quality_confidence(
+                    record.get("confidence")
+                    or record.get("confidence_level")
+                    or record.get("confidence_score")
+                )
 
-            channel_entry = channels.setdefault(
-                channel_key,
-                {
-                    "channel_id": channel_id,
-                    "channel_name": channel_name,
-                    "suggestions": [],
-                },
-            )
-            if channel_entry["channel_id"] is None and channel_id is not None:
-                channel_entry["channel_id"] = channel_id
-            if not channel_entry["channel_name"] and channel_name:
-                channel_entry["channel_name"] = channel_name
+                channel_entry = channels.setdefault(
+                    channel_key,
+                    {
+                        "channel_id": channel_id,
+                        "channel_name": channel_name,
+                        "suggestions": [],
+                    },
+                )
+                if channel_entry["channel_id"] is None and channel_id is not None:
+                    channel_entry["channel_id"] = channel_id
+                if not channel_entry["channel_name"] and channel_name:
+                    channel_entry["channel_name"] = channel_name
 
-            channel_entry["suggestions"].append(
-                {
-                    "timestamp": timestamp,
-                    "confidence": confidence,
-                    "reason": reason,
-                }
-            )
+                channel_entry["suggestions"].append(
+                    {
+                        "timestamp": timestamp,
+                        "confidence": confidence,
+                        "reason": reason,
+                    }
+                )
+        _QUALITY_INSIGHT_SUGGESTION_CACHE["channels"] = channels
 
     results = []
     saw_high = False
@@ -460,6 +506,11 @@ def _collect_quality_insights(window_hours=QUALITY_INSIGHT_WINDOW_HOURS, include
         )
     )
     status = "red" if saw_high else "amber" if saw_medium else "green"
+    _QUALITY_INSIGHT_SUGGESTION_CACHE["results_cache"] = {
+        "key": cache_key,
+        "results": results,
+        "status": status,
+    }
     if include_status:
         return results, status
     return results
