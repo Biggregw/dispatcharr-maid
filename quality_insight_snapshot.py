@@ -244,7 +244,10 @@ def _collect_quality_insights(window_hours: int) -> Tuple[list, str]:
             }
         )
 
-    results.sort(
+    filtered_results = [
+        item for item in results if item["rag_status"] in {"amber", "red"}
+    ]
+    filtered_results.sort(
         key=lambda item: (
             (item["channel_name"] or "").lower(),
             str(item["channel_id"] or ""),
@@ -252,7 +255,7 @@ def _collect_quality_insights(window_hours: int) -> Tuple[list, str]:
     )
 
     status = "red" if saw_high else "amber" if saw_medium else "green"
-    return results, status
+    return filtered_results, status
 
 
 def _snapshot_source_mtimes() -> Dict[str, float | None]:
