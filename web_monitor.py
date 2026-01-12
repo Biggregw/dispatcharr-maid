@@ -12,273 +12,13 @@ from pathlib import Path
 import pandas as pd
 from flask import Flask, render_template, jsonify, request
 
+from quality_insight_snapshot import (
+    QUALITY_INSIGHT_WINDOW_HOURS,
+    read_quality_insight_snapshot,
+    refresh_quality_insight_snapshot,
+)
+
 app = Flask(__name__)
-
-QUALITY_INSIGHT_WINDOW_HOURS = 168
-_QUALITY_INSIGHT_ACK_CACHE = {"mtime": None, "data": {}}
-_QUALITY_INSIGHT_RESET_CACHE = {"mtime": None, "data": {}}
-
-
-def _parse_quality_insight_timestamp(value):
-    if not value:
-        return None
-    if isinstance(value, (int, float)):
-        try:
-            return datetime.fromtimestamp(float(value), tz=timezone.utc)
-        except (ValueError, OSError):
-            return None
-    if isinstance(value, str):
-        candidate = value.strip()
-        if not candidate:
-            return None
-        if candidate.endswith("Z"):
-            candidate = candidate[:-1] + "+00:00"
-        try:
-            parsed = datetime.fromisoformat(candidate)
-            if parsed.tzinfo is None:
-                return parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
-        except ValueError:
-            return None
-    return None
-
-
-def _normalize_quality_confidence(value):
-    if value is None:
-        return "low"
-    if isinstance(value, (int, float)):
-        confidence = float(value)
-        if confidence >= 0.8:
-            return "high"
-        if confidence >= 0.5:
-            return "medium"
-        return "low"
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if "high" in normalized:
-            return "high"
-        if "medium" in normalized or "med" in normalized:
-            return "medium"
-        if "low" in normalized:
-            return "low"
-    return "low"
-
-
-def _load_quality_insight_acknowledgements():
-    log_path = Path("logs") / "quality_check_acknowledgements.ndjson"
-    try:
-        mtime = log_path.stat().st_mtime
-    except FileNotFoundError:
-        _QUALITY_INSIGHT_ACK_CACHE["mtime"] = None
-        _QUALITY_INSIGHT_ACK_CACHE["data"] = {}
-        return {}
-
-    if _QUALITY_INSIGHT_ACK_CACHE["mtime"] == mtime:
-        return _QUALITY_INSIGHT_ACK_CACHE["data"]
-
-    acknowledgements = {}
-    with log_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            channel_id = record.get("channel_id")
-            if channel_id is None:
-                continue
-            timestamp = _parse_quality_insight_timestamp(record.get("timestamp"))
-            acknowledged_until = _parse_quality_insight_timestamp(
-                record.get("acknowledged_until")
-            )
-            if not timestamp or not acknowledged_until:
-                continue
-
-            channel_key = str(channel_id)
-            existing = acknowledgements.get(channel_key)
-            if not existing or timestamp > existing["timestamp"]:
-                acknowledgements[channel_key] = {
-                    "timestamp": timestamp,
-                    "acknowledged_until": acknowledged_until,
-                }
-
-    _QUALITY_INSIGHT_ACK_CACHE["mtime"] = mtime
-    _QUALITY_INSIGHT_ACK_CACHE["data"] = acknowledgements
-    return acknowledgements
-
-
-def _load_quality_check_resets():
-    log_path = Path("logs") / "quality_checks.ndjson"
-    try:
-        mtime = log_path.stat().st_mtime
-    except FileNotFoundError:
-        _QUALITY_INSIGHT_RESET_CACHE["mtime"] = None
-        _QUALITY_INSIGHT_RESET_CACHE["data"] = {}
-        return {}
-
-    if _QUALITY_INSIGHT_RESET_CACHE["mtime"] == mtime:
-        return _QUALITY_INSIGHT_RESET_CACHE["data"]
-
-    resets = {}
-    with log_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            channel_id = record.get("channel_id")
-            if channel_id is None:
-                continue
-            timestamp = _parse_quality_insight_timestamp(record.get("timestamp"))
-            if not timestamp:
-                continue
-
-            channel_key = str(channel_id)
-            existing = resets.get(channel_key)
-            if not existing or timestamp > existing:
-                resets[channel_key] = timestamp
-
-    _QUALITY_INSIGHT_RESET_CACHE["mtime"] = mtime
-    _QUALITY_INSIGHT_RESET_CACHE["data"] = resets
-    return resets
-
-
-def _collect_quality_insights(window_hours=QUALITY_INSIGHT_WINDOW_HOURS):
-    log_path = Path("logs") / "quality_check_suggestions.ndjson"
-    if not log_path.exists():
-        return []
-
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=window_hours)
-    acknowledgements = _load_quality_insight_acknowledgements()
-    resets = _load_quality_check_resets()
-    channels = {}
-
-    with log_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            channel_id = record.get("channel_id") or record.get("id")
-            channel_name = (
-                record.get("channel_name")
-                or record.get("name")
-                or record.get("channel")
-            )
-            channel_key = str(channel_id) if channel_id is not None else channel_name
-            if not channel_key:
-                channel_key = f"unknown-{len(channels)}"
-
-            timestamp = _parse_quality_insight_timestamp(
-                record.get("timestamp")
-                or record.get("observed_at")
-                or record.get("created_at")
-            )
-            reason = (
-                record.get("reason")
-                or record.get("suggestion_reason")
-                or record.get("message")
-                or record.get("notes")
-            )
-            confidence = _normalize_quality_confidence(
-                record.get("confidence")
-                or record.get("confidence_level")
-                or record.get("confidence_score")
-            )
-
-            channel_entry = channels.setdefault(
-                channel_key,
-                {
-                    "channel_id": channel_id,
-                    "channel_name": channel_name,
-                    "suggestions": [],
-                },
-            )
-            if channel_entry["channel_id"] is None and channel_id is not None:
-                channel_entry["channel_id"] = channel_id
-            if not channel_entry["channel_name"] and channel_name:
-                channel_entry["channel_name"] = channel_name
-
-            channel_entry["suggestions"].append(
-                {
-                    "timestamp": timestamp,
-                    "confidence": confidence,
-                    "reason": reason,
-                }
-            )
-
-    results = []
-    for channel in channels.values():
-        channel_id = channel["channel_id"]
-        reset_key = str(channel_id) if channel_id is not None else None
-        reset_time = resets.get(reset_key) if reset_key else None
-        recent_cutoff = max(cutoff, reset_time) if reset_time else cutoff
-        recent = [
-            suggestion
-            for suggestion in channel["suggestions"]
-            if suggestion["timestamp"] and suggestion["timestamp"] >= recent_cutoff
-        ]
-        reasons = []
-        seen_reasons = set()
-        high_count = 0
-        medium_count = 0
-        low_count = 0
-        for suggestion in recent:
-            confidence = suggestion["confidence"]
-            if confidence == "high":
-                high_count += 1
-            elif confidence == "medium":
-                medium_count += 1
-            else:
-                low_count += 1
-            reason = suggestion["reason"]
-            if reason and reason not in seen_reasons:
-                seen_reasons.add(reason)
-                reasons.append(reason)
-
-        if not recent:
-            rag_status = "green"
-            reasons = []
-        elif high_count > 0 or medium_count >= 2:
-            rag_status = "red"
-        else:
-            rag_status = "amber"
-
-        ack_key = str(channel_id) if channel_id is not None else None
-        acknowledgement = acknowledgements.get(ack_key) if ack_key else None
-        if acknowledgement and now < acknowledgement["acknowledged_until"]:
-            rag_status = "green"
-            reasons = []
-
-        results.append(
-            {
-                "channel_id": channel_id,
-                "channel_name": channel["channel_name"] or "Unknown channel",
-                "rag_status": rag_status,
-                "reasons": reasons,
-                "window_hours": window_hours,
-            }
-        )
-
-    results.sort(
-        key=lambda item: (
-            (item["channel_name"] or "").lower(),
-            str(item["channel_id"] or ""),
-        )
-    )
-    return results
 
 
 def get_current_progress():
@@ -441,7 +181,10 @@ def index():
 def api_quality_insights():
     """Read-only quality insight summary for the last 7 days."""
     try:
-        return jsonify(_collect_quality_insights(window_hours=QUALITY_INSIGHT_WINDOW_HOURS))
+        results, _ = read_quality_insight_snapshot(
+            window_hours=QUALITY_INSIGHT_WINDOW_HOURS
+        )
+        return jsonify(results)
     except Exception as exc:
         print(f"Quality insights unavailable: {exc}")
         return jsonify([])
@@ -485,6 +228,10 @@ def api_quality_insights_acknowledge():
     }
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    try:
+        refresh_quality_insight_snapshot()
+    except Exception as exc:
+        print(f"Quality insight snapshot refresh failed: {exc}")
 
     return jsonify({"success": True})
 
