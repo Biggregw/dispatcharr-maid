@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable
 
+from quality_insight_snapshot import refresh_quality_insight_snapshot
+
 LOGS_DIR = Path("logs")
 QUALITY_CHECKS_PATH = LOGS_DIR / "quality_checks.ndjson"
 SUGGESTIONS_PATH = LOGS_DIR / "quality_check_suggestions.ndjson"
@@ -162,6 +164,10 @@ def evaluate_quality_checks() -> None:
             emit(channel_id, channel_name, "unstable_top_stream", "medium")
 
     _write_suggestions(suggestions, force_write=saw_any)
+    try:
+        refresh_quality_insight_snapshot()
+    except Exception as exc:
+        logging.warning("Quality insight snapshot refresh failed: %s", exc)
 
 
 def main() -> None:
