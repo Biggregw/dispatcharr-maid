@@ -2560,7 +2560,42 @@ def api_channels():
         api.login()
         
         all_channels = api.fetch_channels()
-        
+
+        stream_counts = {}
+        try:
+            next_url = '/api/channels/streams/?limit=100'
+            while next_url:
+                payload = api.get(next_url)
+                if isinstance(payload, dict) and 'results' in payload:
+                    results = payload.get('results') or []
+                    next_link = payload.get('next')
+                elif isinstance(payload, list):
+                    results = payload
+                    next_link = None
+                else:
+                    raise ValueError("Unexpected streams response shape; expected dict or list.")
+
+                for stream in results:
+                    if not isinstance(stream, dict):
+                        continue
+                    channel_id = stream.get('channel')
+                    if channel_id is None:
+                        channel_id = stream.get('channel_id')
+                    if isinstance(channel_id, dict):
+                        channel_id = channel_id.get('id')
+                    channel_id = _safe_int(channel_id)
+                    if channel_id is None:
+                        continue
+                    stream_counts[channel_id] = stream_counts.get(channel_id, 0) + 1
+
+                if next_link:
+                    next_url = next_link.split('/api/')[-1]
+                    next_url = '/api/' + next_url
+                else:
+                    next_url = None
+        except Exception as exc:
+            logging.warning("Failed to fetch stream counts for channels: %s", exc)
+
         # Filter by selected groups
         filtered_channels = [
             ch for ch in all_channels 
@@ -2576,13 +2611,15 @@ def api_channels():
             group_id = channel.get('channel_group_id')
             if group_id not in channels_by_group:
                 channels_by_group[group_id] = []
+            channel_id = _safe_int(channel.get('id'))
 
             channels_by_group[group_id].append({
                 'id': channel['id'],
                 'channel_number': channel.get('channel_number'),
                 'name': channel.get('name', 'Unknown'),
                 'channel_group_id': group_id,
-                'base_search_text': channel.get('name', 'Unknown')
+                'base_search_text': channel.get('name', 'Unknown'),
+                'stream_count': stream_counts.get(channel_id, 0)
             })
         
         return jsonify({'success': True, 'channels': channels_by_group})

@@ -236,6 +236,13 @@
             color: #2d3748;
             font-size: 0.95em;
         }
+
+        .channel-stream-count {
+            color: #718096;
+            font-size: 0.85em;
+            margin-left: 6px;
+            white-space: nowrap;
+        }
         
         /* Action buttons */
         .action-grid {
@@ -1353,6 +1360,7 @@
                                 <input type="checkbox" id="channel-${ch.id}" onchange="updateChannelSelection()" ${selectedChannelSet?.has(Number(ch.id)) ? 'checked' : ''}>
                                 <span class="channel-number">${ch.channel_number}</span>
                                 <span class="channel-name">${ch.name}</span>
+                                <span class="channel-stream-count">· ${ch.stream_count} stream${ch.stream_count === 1 ? '' : 's'}</span>
                             </div>
                         `).join('')}
                     </div>
