@@ -235,12 +235,21 @@ def _normalize_quality_confidence(value):
 
 
 QUALITY_INSIGHT_WINDOW_HOURS = 168
+_QUALITY_INSIGHT_ACK_CACHE = {"mtime": None, "data": {}}
+_QUALITY_INSIGHT_RESET_CACHE = {"mtime": None, "data": {}}
 
 
 def _load_quality_insight_acknowledgements():
     log_path = Path("logs") / "quality_check_acknowledgements.ndjson"
-    if not log_path.exists():
+    try:
+        mtime = log_path.stat().st_mtime
+    except FileNotFoundError:
+        _QUALITY_INSIGHT_ACK_CACHE["mtime"] = None
+        _QUALITY_INSIGHT_ACK_CACHE["data"] = {}
         return {}
+
+    if _QUALITY_INSIGHT_ACK_CACHE["mtime"] == mtime:
+        return _QUALITY_INSIGHT_ACK_CACHE["data"]
 
     acknowledgements = {}
     with log_path.open("r", encoding="utf-8") as handle:
@@ -271,13 +280,22 @@ def _load_quality_insight_acknowledgements():
                     "acknowledged_until": acknowledged_until,
                 }
 
+    _QUALITY_INSIGHT_ACK_CACHE["mtime"] = mtime
+    _QUALITY_INSIGHT_ACK_CACHE["data"] = acknowledgements
     return acknowledgements
 
 
 def _load_quality_check_resets():
     log_path = Path("logs") / "quality_checks.ndjson"
-    if not log_path.exists():
+    try:
+        mtime = log_path.stat().st_mtime
+    except FileNotFoundError:
+        _QUALITY_INSIGHT_RESET_CACHE["mtime"] = None
+        _QUALITY_INSIGHT_RESET_CACHE["data"] = {}
         return {}
+
+    if _QUALITY_INSIGHT_RESET_CACHE["mtime"] == mtime:
+        return _QUALITY_INSIGHT_RESET_CACHE["data"]
 
     resets = {}
     with log_path.open("r", encoding="utf-8") as handle:
@@ -302,12 +320,16 @@ def _load_quality_check_resets():
             if not existing or timestamp > existing:
                 resets[channel_key] = timestamp
 
+    _QUALITY_INSIGHT_RESET_CACHE["mtime"] = mtime
+    _QUALITY_INSIGHT_RESET_CACHE["data"] = resets
     return resets
 
 
-def _collect_quality_insights(window_hours=QUALITY_INSIGHT_WINDOW_HOURS):
+def _collect_quality_insights(window_hours=QUALITY_INSIGHT_WINDOW_HOURS, include_status=False):
     log_path = Path("logs") / "quality_check_suggestions.ndjson"
     if not log_path.exists():
+        if include_status:
+            return [], "green"
         return []
 
     now = datetime.now(timezone.utc)
@@ -375,6 +397,8 @@ def _collect_quality_insights(window_hours=QUALITY_INSIGHT_WINDOW_HOURS):
             )
 
     results = []
+    saw_high = False
+    saw_medium = False
     for channel in channels.values():
         channel_id = channel["channel_id"]
         reset_key = str(channel_id) if channel_id is not None else None
@@ -394,8 +418,10 @@ def _collect_quality_insights(window_hours=QUALITY_INSIGHT_WINDOW_HOURS):
             confidence = suggestion["confidence"]
             if confidence == "high":
                 high_count += 1
+                saw_high = True
             elif confidence == "medium":
                 medium_count += 1
+                saw_medium = True
             else:
                 low_count += 1
             reason = suggestion["reason"]
@@ -433,55 +459,16 @@ def _collect_quality_insights(window_hours=QUALITY_INSIGHT_WINDOW_HOURS):
             str(item["channel_id"] or ""),
         )
     )
+    status = "red" if saw_high else "amber" if saw_medium else "green"
+    if include_status:
+        return results, status
     return results
 
 
-def _compute_quality_insight_status(window_hours=QUALITY_INSIGHT_WINDOW_HOURS):
-    log_path = Path("logs") / "quality_check_suggestions.ndjson"
-    if not log_path.exists():
-        return "green"
-
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=window_hours)
-    resets = _load_quality_check_resets()
-    saw_medium = False
-    try:
-        with log_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                channel_id = record.get("channel_id") or record.get("id")
-                reset_key = str(channel_id) if channel_id is not None else None
-                reset_time = resets.get(reset_key) if reset_key else None
-                timestamp = _parse_quality_insight_timestamp(
-                    record.get("timestamp")
-                    or record.get("observed_at")
-                    or record.get("created_at")
-                )
-                if not timestamp or timestamp < cutoff:
-                    continue
-                if reset_time and timestamp < reset_time:
-                    continue
-
-                confidence = _normalize_quality_confidence(
-                    record.get("confidence")
-                    or record.get("confidence_level")
-                    or record.get("confidence_score")
-                )
-                if confidence == "high":
-                    return "red"
-                if confidence == "medium":
-                    saw_medium = True
-    except OSError:
-        return "green"
-
-    return "amber" if saw_medium else "green"
+def _compute_quality_insight_status(quality_insight_status):
+    if quality_insight_status in {"red", "amber", "green"}:
+        return quality_insight_status
+    return "green"
 
 
 def _run_dispatcharr_snapshot_loop():
@@ -2760,10 +2747,14 @@ def index():
     auth_ok, auth_error = _ensure_dispatcharr_ready()
     if not auth_ok:
         return _render_auth_error(auth_error)
+    _, quality_insight_status = _collect_quality_insights(
+        window_hours=QUALITY_INSIGHT_WINDOW_HOURS,
+        include_status=True,
+    )
     return render_template(
         'app.html',
         quality_insight_status=_compute_quality_insight_status(
-            window_hours=QUALITY_INSIGHT_WINDOW_HOURS
+            quality_insight_status
         ),
     )
 
@@ -2782,10 +2773,14 @@ def results():
     auth_ok, auth_error = _ensure_dispatcharr_ready()
     if not auth_ok:
         return _render_auth_error(auth_error)
+    _, quality_insight_status = _collect_quality_insights(
+        window_hours=QUALITY_INSIGHT_WINDOW_HOURS,
+        include_status=True,
+    )
     return render_template(
         'results.html',
         quality_insight_status=_compute_quality_insight_status(
-            window_hours=QUALITY_INSIGHT_WINDOW_HOURS
+            quality_insight_status
         ),
     )
 
