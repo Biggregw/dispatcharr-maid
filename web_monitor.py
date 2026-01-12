@@ -15,6 +15,8 @@ from flask import Flask, render_template, jsonify, request
 app = Flask(__name__)
 
 QUALITY_INSIGHT_WINDOW_HOURS = 168
+_QUALITY_INSIGHT_ACK_CACHE = {"mtime": None, "data": {}}
+_QUALITY_INSIGHT_RESET_CACHE = {"mtime": None, "data": {}}
 
 
 def _parse_quality_insight_timestamp(value):
@@ -64,8 +66,15 @@ def _normalize_quality_confidence(value):
 
 def _load_quality_insight_acknowledgements():
     log_path = Path("logs") / "quality_check_acknowledgements.ndjson"
-    if not log_path.exists():
+    try:
+        mtime = log_path.stat().st_mtime
+    except FileNotFoundError:
+        _QUALITY_INSIGHT_ACK_CACHE["mtime"] = None
+        _QUALITY_INSIGHT_ACK_CACHE["data"] = {}
         return {}
+
+    if _QUALITY_INSIGHT_ACK_CACHE["mtime"] == mtime:
+        return _QUALITY_INSIGHT_ACK_CACHE["data"]
 
     acknowledgements = {}
     with log_path.open("r", encoding="utf-8") as handle:
@@ -96,13 +105,22 @@ def _load_quality_insight_acknowledgements():
                     "acknowledged_until": acknowledged_until,
                 }
 
+    _QUALITY_INSIGHT_ACK_CACHE["mtime"] = mtime
+    _QUALITY_INSIGHT_ACK_CACHE["data"] = acknowledgements
     return acknowledgements
 
 
 def _load_quality_check_resets():
     log_path = Path("logs") / "quality_checks.ndjson"
-    if not log_path.exists():
+    try:
+        mtime = log_path.stat().st_mtime
+    except FileNotFoundError:
+        _QUALITY_INSIGHT_RESET_CACHE["mtime"] = None
+        _QUALITY_INSIGHT_RESET_CACHE["data"] = {}
         return {}
+
+    if _QUALITY_INSIGHT_RESET_CACHE["mtime"] == mtime:
+        return _QUALITY_INSIGHT_RESET_CACHE["data"]
 
     resets = {}
     with log_path.open("r", encoding="utf-8") as handle:
@@ -127,6 +145,8 @@ def _load_quality_check_resets():
             if not existing or timestamp > existing:
                 resets[channel_key] = timestamp
 
+    _QUALITY_INSIGHT_RESET_CACHE["mtime"] = mtime
+    _QUALITY_INSIGHT_RESET_CACHE["data"] = resets
     return resets
 
 
