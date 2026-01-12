@@ -18,6 +18,20 @@ document.addEventListener('DOMContentLoaded', () => {
     element.classList.toggle('quality-insight-hidden', !isVisible);
   };
 
+  const formatWindowLabel = (windowHours) => {
+    const hours = Number(windowHours);
+    if (!Number.isFinite(hours) || hours <= 0) {
+      return 'last 7 days';
+    }
+    if (hours >= 24 && hours % 24 === 0) {
+      const days = hours / 24;
+      const unit = days === 1 ? 'day' : 'days';
+      return `last ${days} ${unit}`;
+    }
+    const unit = hours === 1 ? 'hour' : 'hours';
+    return `last ${hours} ${unit}`;
+  };
+
   const renderInsights = (items) => {
     if (!listEl) {
       return;
@@ -66,8 +80,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const note = document.createElement('div');
       const windowHours = item.window_hours || 12;
+      const windowLabel = formatWindowLabel(windowHours);
       note.className = 'quality-insight-note';
-      note.textContent = `Observational only. Based on the last ${windowHours} hours.`;
+      note.textContent = `Observational only. Based on the ${windowLabel}.`;
       detail.appendChild(note);
 
       if (item.channel_id) {

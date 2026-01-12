@@ -14,6 +14,8 @@ from flask import Flask, render_template, jsonify, request
 
 app = Flask(__name__)
 
+QUALITY_INSIGHT_WINDOW_HOURS = 168
+
 
 def _parse_quality_insight_timestamp(value):
     if not value:
@@ -97,7 +99,38 @@ def _load_quality_insight_acknowledgements():
     return acknowledgements
 
 
-def _collect_quality_insights(window_hours=12):
+def _load_quality_check_resets():
+    log_path = Path("logs") / "quality_checks.ndjson"
+    if not log_path.exists():
+        return {}
+
+    resets = {}
+    with log_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            channel_id = record.get("channel_id")
+            if channel_id is None:
+                continue
+            timestamp = _parse_quality_insight_timestamp(record.get("timestamp"))
+            if not timestamp:
+                continue
+
+            channel_key = str(channel_id)
+            existing = resets.get(channel_key)
+            if not existing or timestamp > existing:
+                resets[channel_key] = timestamp
+
+    return resets
+
+
+def _collect_quality_insights(window_hours=QUALITY_INSIGHT_WINDOW_HOURS):
     log_path = Path("logs") / "quality_check_suggestions.ndjson"
     if not log_path.exists():
         return []
@@ -105,6 +138,7 @@ def _collect_quality_insights(window_hours=12):
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=window_hours)
     acknowledgements = _load_quality_insight_acknowledgements()
+    resets = _load_quality_check_resets()
     channels = {}
 
     with log_path.open("r", encoding="utf-8") as handle:
@@ -167,10 +201,14 @@ def _collect_quality_insights(window_hours=12):
 
     results = []
     for channel in channels.values():
+        channel_id = channel["channel_id"]
+        reset_key = str(channel_id) if channel_id is not None else None
+        reset_time = resets.get(reset_key) if reset_key else None
+        recent_cutoff = max(cutoff, reset_time) if reset_time else cutoff
         recent = [
             suggestion
             for suggestion in channel["suggestions"]
-            if suggestion["timestamp"] and suggestion["timestamp"] >= cutoff
+            if suggestion["timestamp"] and suggestion["timestamp"] >= recent_cutoff
         ]
         reasons = []
         seen_reasons = set()
@@ -198,7 +236,6 @@ def _collect_quality_insights(window_hours=12):
         else:
             rag_status = "amber"
 
-        channel_id = channel["channel_id"]
         ack_key = str(channel_id) if channel_id is not None else None
         acknowledgement = acknowledgements.get(ack_key) if ack_key else None
         if acknowledgement and now < acknowledgement["acknowledged_until"]:
@@ -382,9 +419,9 @@ def index():
 
 @app.route('/api/quality-insights')
 def api_quality_insights():
-    """Read-only quality insight summary for the last 12 hours."""
+    """Read-only quality insight summary for the last 7 days."""
     try:
-        return jsonify(_collect_quality_insights(window_hours=12))
+        return jsonify(_collect_quality_insights(window_hours=QUALITY_INSIGHT_WINDOW_HOURS))
     except Exception as exc:
         print(f"Quality insights unavailable: {exc}")
         return jsonify([])
