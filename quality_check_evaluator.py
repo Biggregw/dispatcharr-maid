@@ -14,7 +14,7 @@ LOGS_DIR = Path("logs")
 QUALITY_CHECKS_PATH = LOGS_DIR / "quality_checks.ndjson"
 SUGGESTIONS_PATH = LOGS_DIR / "quality_check_suggestions.ndjson"
 
-WINDOW_HOURS = 12
+WINDOW_HOURS = 168
 DISPATCHARR_SOURCE = "dispatcharr"
 
 
