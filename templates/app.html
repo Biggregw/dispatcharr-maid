@@ -193,6 +193,19 @@
             overflow-y: auto;
         }
 
+        .channel-actions {
+            display: flex;
+            gap: 12px;
+            margin: 8px 0 12px;
+            flex-wrap: wrap;
+        }
+
+        .text-btn[disabled] {
+            color: #a0aec0;
+            cursor: not-allowed;
+            text-decoration: none;
+        }
+
         .channel-item {
             display: flex;
             align-items: center;
@@ -879,7 +892,7 @@
         
         <!-- Step 1: Scope Selection -->
         <div class="card" id="step-1">
-            <h2>📋 Step 1: Select Groups & Exclude Channels</h2>
+            <h2>📋 Step 1: Select Groups & Channels</h2>
 
             <div id="group-loading" class="alert alert-info">
                 <span class="spinner"></span> Loading channel groups...
@@ -887,7 +900,7 @@
             <div id="group-error" class="alert alert-error hidden"></div>
             <div id="group-container" class="hidden">
                 <div class="alert alert-info">
-                    Select at least one group to continue. Expand a group to optionally exclude specific channels.
+                    Select at least one group to continue. Expand a group to optionally refine channels.
                 </div>
                 <div class="group-grid" id="group-grid"></div>
                 <div class="selection-summary">
@@ -1051,7 +1064,7 @@
         let allGroups = [];
         let allChannels = {};
         const groupExpansionState = {};
-        const groupChannelExclusions = {};
+        const groupChannelSelections = {};
         const groupChannelLoading = new Set();
         let currentJobId = null;
         let jobCheckInterval = null;
@@ -1254,12 +1267,12 @@
             updateStep1Button();
         }
 
-        function getGroupExclusions(groupId) {
+        function getGroupChannelSelections(groupId) {
             const key = String(groupId);
-            if (!groupChannelExclusions[key]) {
-                groupChannelExclusions[key] = new Set();
+            if (!groupChannelSelections[key]) {
+                groupChannelSelections[key] = new Set();
             }
-            return groupChannelExclusions[key];
+            return groupChannelSelections[key];
         }
 
         // Toggle group selection
@@ -1269,10 +1282,10 @@
                 if (!selectedGroups.includes(normalizedId)) {
                     selectedGroups.push(normalizedId);
                 }
-                getGroupExclusions(normalizedId);
+                getGroupChannelSelections(normalizedId);
             } else {
                 selectedGroups = selectedGroups.filter(id => id !== normalizedId);
-                delete groupChannelExclusions[String(normalizedId)];
+                delete groupChannelSelections[String(normalizedId)];
             }
             renderGroups();
             updateSelectionState();
@@ -1332,14 +1345,14 @@
                 return;
             }
 
-            const exclusions = getGroupExclusions(normalizedId);
+            const selections = getGroupChannelSelections(normalizedId);
             const channelMarkup = channels.map(ch => {
-                const isExcluded = exclusions.has(ch.id);
+                const isSelectedChannel = selections.has(ch.id);
                 const isDisabled = !isSelected;
                 return `
                     <div class="channel-item ${isDisabled ? 'disabled' : ''}" data-channel-id="${ch.id}" data-base-search-text="${ch.base_search_text || ch.name}">
-                        <input type="checkbox" ${isExcluded ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} aria-label="Exclude channel ${ch.name}">
-                        <span class="channel-exclude-label">Exclude</span>
+                        <input type="checkbox" ${isSelectedChannel ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} aria-label="Include channel ${ch.name}">
+                        <span class="channel-exclude-label">Include</span>
                         <span class="channel-number">${ch.channel_number}</span>
                         <span class="channel-name">${ch.name}</span>
                         <span class="channel-stream-count">· ${ch.stream_count} stream${ch.stream_count === 1 ? '' : 's'}</span>
@@ -1349,10 +1362,28 @@
 
             container.innerHTML = `
                 <div class="alert alert-info">
-                    Channels can only be excluded after their group is selected.
+                    Channels can only be refined after their group is selected.
+                </div>
+                <div class="channel-actions">
+                    <button type="button" class="text-btn channel-action-btn" ${isSelected ? '' : 'disabled'} data-action="select-all">Select all</button>
+                    <button type="button" class="text-btn channel-action-btn" ${isSelected ? '' : 'disabled'} data-action="deselect-all">Deselect all</button>
                 </div>
                 <div class="channel-list">${channelMarkup}</div>
             `;
+
+            container.querySelectorAll('.channel-action-btn').forEach(button => {
+                button.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (!isSelected) return;
+                    const action = button.dataset.action;
+                    if (action === 'select-all') {
+                        toggleAllChannels(normalizedId, true);
+                    } else if (action === 'deselect-all') {
+                        toggleAllChannels(normalizedId, false);
+                    }
+                });
+            });
 
             container.querySelectorAll('.channel-item input[type="checkbox"]').forEach(checkbox => {
                 const channelId = parseInt(checkbox.closest('.channel-item').dataset.channelId, 10);
@@ -1363,26 +1394,28 @@
         }
 
         function toggleChannelSelection(groupId, channelId, isChecked) {
-            const exclusions = getGroupExclusions(groupId);
+            const selections = getGroupChannelSelections(groupId);
             if (isChecked) {
-                exclusions.add(channelId);
+                selections.add(channelId);
             } else {
-                exclusions.delete(channelId);
+                selections.delete(channelId);
             }
             updateSelectionState();
         }
 
         function hasChannelRefinements() {
-            return selectedGroups.some(groupId => getGroupExclusions(groupId).size > 0);
+            return selectedGroups.some(groupId => getGroupChannelSelections(groupId).size > 0);
         }
 
         function getSelectedChannelCount() {
-            const total = selectedGroups.reduce((sum, groupId) => {
+            return selectedGroups.reduce((sum, groupId) => {
                 const group = allGroups.find(g => g.id === groupId);
+                const selections = getGroupChannelSelections(groupId);
+                if (selections.size > 0) {
+                    return sum + selections.size;
+                }
                 return sum + (group?.channel_count || 0);
             }, 0);
-            const excluded = selectedGroups.reduce((sum, groupId) => sum + getGroupExclusions(groupId).size, 0);
-            return Math.max(total - excluded, 0);
         }
 
         function computeSelectedChannelsFromLoadedData() {
@@ -1396,12 +1429,12 @@
                 if (!channels) {
                     return null;
                 }
-                const exclusions = getGroupExclusions(groupId);
-                channels.forEach(ch => {
-                    if (!exclusions.has(ch.id)) {
-                        selected.push(ch.id);
-                    }
-                });
+                const selections = getGroupChannelSelections(groupId);
+                if (selections.size === 0) {
+                    channels.forEach(ch => selected.push(ch.id));
+                    continue;
+                }
+                selections.forEach(id => selected.push(id));
             }
             return selected;
         }
@@ -1430,12 +1463,8 @@
                 return;
             }
 
-            const total = selectedGroups.reduce((sum, groupId) => {
-                const group = allGroups.find(g => g.id === groupId);
-                return sum + (group?.channel_count || 0);
-            }, 0);
             const remaining = getSelectedChannelCount();
-            document.getElementById('selected-channels-summary').textContent = `${remaining} of ${total} channels`;
+            document.getElementById('selected-channels-summary').textContent = `${remaining} selected channel${remaining === 1 ? '' : 's'}`;
         }
 
         function updateRefreshUiState() {
@@ -1477,18 +1506,19 @@
             // Selection rules (explicit):
             // - Group checked → all channels implicitly included.
             // - Group unchecked → all channels excluded.
-            // - Group checked + some channels excluded → only remaining channels included.
+            // - Group checked + some channels selected → only selected channels included.
+            // Channels start unticked to avoid implying implicit channel selection.
             await ensureChannelsLoaded([...selectedGroups]);
 
             const selected = [];
             for (const groupId of selectedGroups) {
-                const exclusions = getGroupExclusions(groupId);
+                const selections = getGroupChannelSelections(groupId);
                 const channels = allChannels[groupId] || [];
-                channels.forEach(ch => {
-                    if (!exclusions.has(ch.id)) {
-                        selected.push(ch.id);
-                    }
-                });
+                if (selections.size === 0) {
+                    channels.forEach(ch => selected.push(ch.id));
+                    continue;
+                }
+                selections.forEach(id => selected.push(id));
             }
             return selected;
         }
@@ -1538,6 +1568,21 @@
 
             const remaining = getSelectedChannelCount();
             document.getElementById('final-channels-summary').textContent = `${remaining} specific channel${remaining === 1 ? '' : 's'}`;
+        }
+
+        function toggleAllChannels(groupId, shouldSelect) {
+            const selections = getGroupChannelSelections(groupId);
+            if (!shouldSelect) {
+                selections.clear();
+                renderGroups();
+                updateSelectionState();
+                return;
+            }
+
+            const channels = allChannels[groupId] || [];
+            channels.forEach(ch => selections.add(ch.id));
+            renderGroups();
+            updateSelectionState();
         }
 
         let derivedRefreshChannelId = null;
