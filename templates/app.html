@@ -933,7 +933,7 @@
             <div id="group-error" class="alert alert-error hidden"></div>
             <div id="group-container" class="hidden">
                 <div class="alert alert-info">
-                    Select at least one group to continue. Expand a group to optionally refine channels.
+                    Select at least one group to continue. Expand a group to optionally refine channels. Leaving all channels unchecked keeps the entire group in scope.
                 </div>
                 <div class="group-grid" id="group-grid"></div>
                 <div class="selection-summary">
@@ -943,7 +943,7 @@
                     </div>
                     <div class="summary-row">
                         <span class="summary-label">Channel Scope:</span>
-                        <span class="summary-value" id="selected-channels-summary">All channels</span>
+                        <span class="summary-value" id="selected-channels-summary">All channels in selected groups</span>
                     </div>
                 </div>
                 <div class="nav-buttons">
@@ -966,7 +966,7 @@
                 </div>
                 <div class="summary-row">
                     <span class="summary-label">Channels:</span>
-                    <span class="summary-value" id="final-channels-summary">All channels</span>
+                    <span class="summary-value" id="final-channels-summary">All channels in selected groups</span>
                 </div>
             </div>
 
@@ -1081,6 +1081,7 @@
         // Global state
         let selectedGroups = [];
         let selectedChannels = null; // null = all channels, [] = specific channels
+        const defaultChannelScopeLabel = 'All channels in selected groups';
         let allGroups = [];
         let allChannels = {};
         const groupExpansionState = {};
@@ -1328,11 +1329,11 @@
 
             container.innerHTML = `
                 <div class="alert alert-info">
-                    Channels can only be refined after their group is selected.
+                    Channels can only be refined after their group is selected. If none are checked, the full group stays included.
                 </div>
                 <div class="channel-actions">
                     <button type="button" class="text-btn channel-action-btn" ${isSelected ? '' : 'disabled'} data-action="select-all">Select all</button>
-                    <button type="button" class="text-btn channel-action-btn" ${isSelected ? '' : 'disabled'} data-action="deselect-all">Deselect all</button>
+                    <button type="button" class="text-btn channel-action-btn" ${isSelected ? '' : 'disabled'} data-action="clear-all">Clear all</button>
                 </div>
                 <div class="channel-list">${channelMarkup}</div>
             `;
@@ -1345,7 +1346,7 @@
                     const action = button.dataset.action;
                     if (action === 'select-all') {
                         toggleAllChannels(normalizedId, true);
-                    } else if (action === 'deselect-all') {
+                    } else if (action === 'clear-all') {
                         toggleAllChannels(normalizedId, false);
                     }
                 });
@@ -1425,7 +1426,7 @@
             document.getElementById('selected-groups-summary').textContent = groupNames || 'None';
 
             if (!hasChannelRefinements()) {
-                document.getElementById('selected-channels-summary').textContent = 'All channels';
+                document.getElementById('selected-channels-summary').textContent = defaultChannelScopeLabel;
                 return;
             }
 
@@ -1474,10 +1475,10 @@
             }
 
             // Selection rules (explicit):
-            // - Group checked → all channels implicitly included.
-            // - Group unchecked → all channels excluded.
+            // - Group checked → group included.
+            // - Group checked + no channels selected → all channels in that group included.
             // - Group checked + some channels selected → only selected channels included.
-            // Channels start unticked to avoid implying implicit channel selection.
+            // Channels start unticked; channel selection is always opt-in.
             await ensureChannelsLoaded([...selectedGroups]);
 
             const selected = [];
@@ -1552,7 +1553,7 @@
             document.getElementById('final-groups-summary').textContent = groupNames;
 
             if (!hasChannelRefinements()) {
-                document.getElementById('final-channels-summary').textContent = 'All channels';
+                document.getElementById('final-channels-summary').textContent = defaultChannelScopeLabel;
                 return;
             }
 
@@ -1876,7 +1877,7 @@
                 }).join(', ');
                 
                 // Get channel names
-                let channelNames = 'All channels';
+                let channelNames = defaultChannelScopeLabel;
                 if (selectedChannelsForPayload && selectedChannelsForPayload.length > 0) {
                     const names = selectedChannelsForPayload.map(id => {
                         // Find channel in allChannels
@@ -2503,7 +2504,7 @@
                 
                 // Build context line: Group > Channel
                 let context = job.group_names || 'Unknown';
-                if (job.channel_names && job.channel_names !== 'All channels') {
+                if (job.channel_names && !['All channels', defaultChannelScopeLabel].includes(job.channel_names)) {
                     context += ` > ${job.channel_names}`;
                 }
                 
