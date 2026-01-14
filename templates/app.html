@@ -66,54 +66,12 @@
             color: #1f2937;
         }
         
-        /* Step indicator */
-        .steps {
-            display: flex;
-            justify-content: center;
-            margin-bottom: 30px;
-            gap: 20px;
-        }
-        
-        .step {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 20px;
-            border-radius: 25px;
-            background: rgba(255,255,255,0.2);
-            color: white;
-            font-weight: 600;
-        }
-        
-        .step.active {
-            background: white;
-            color: #667eea;
-        }
-        
-        .step.completed {
-            background: #48bb78;
-            color: white;
-        }
-        
-        .step-number {
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.3);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-        }
-        
-        .step.active .step-number {
-            background: #667eea;
-            color: white;
-        }
-        
-        .step.completed .step-number {
-            background: white;
-            color: #48bb78;
+        .current-job {
+            padding: 16px;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+            margin-top: 16px;
         }
         
         /* Group selection */
@@ -358,13 +316,6 @@
             transform: none;
         }
         
-        /* Navigation buttons */
-        .nav-buttons {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 20px;
-        }
-        
         .btn {
             padding: 12px 30px;
             border: none;
@@ -483,15 +434,6 @@
             .action-btn {
                 padding: 12px 14px;
                 font-size: 0.98em;
-            }
-
-            .nav-buttons {
-                flex-direction: column;
-                gap: 10px;
-            }
-
-            .nav-buttons .btn {
-                width: 100%;
             }
         }
 
@@ -911,21 +853,9 @@
             </div>
         </div>
         
-        <!-- Step Indicator -->
-        <div class="steps">
-            <div class="step active" id="step-indicator-1">
-                <div class="step-number">1</div>
-                <span>Select Scope</span>
-            </div>
-            <div class="step" id="step-indicator-2">
-                <div class="step-number">2</div>
-                <span>Run Jobs</span>
-            </div>
-        </div>
-        
-        <!-- Step 1: Scope Selection -->
-        <div class="card" id="step-1">
-            <h2>📋 Step 1: Select Groups & Channels</h2>
+        <!-- Scope Selection -->
+        <div class="card" id="scope-selection">
+            <h2>1. Scope selection</h2>
 
             <div id="group-loading" class="alert alert-info">
                 <span class="spinner"></span> Loading channel groups...
@@ -936,44 +866,28 @@
                     Select at least one group to continue. Expand a group to optionally refine channels. Leaving all channels unchecked keeps the entire group in scope.
                 </div>
                 <div class="group-grid" id="group-grid"></div>
-                <div class="selection-summary">
-                    <div class="summary-row">
-                        <span class="summary-label">Selected Groups:</span>
-                        <span class="summary-value" id="selected-groups-summary"></span>
-                    </div>
-                    <div class="summary-row">
-                        <span class="summary-label">Channel Scope:</span>
-                        <span class="summary-value" id="selected-channels-summary">All channels in selected groups</span>
-                    </div>
-                </div>
-                <div class="nav-buttons">
-                    <div></div>
-                    <button class="btn btn-next" id="btn-next-1" onclick="goToStep2()" disabled>
-                        Next: Run Jobs →
-                    </button>
-                </div>
             </div>
         </div>
         
-        <!-- Step 2: Actions & Jobs -->
-        <div class="card hidden" id="step-2">
-            <h2 class="section-title">Run Jobs</h2>
+        <!-- Run Controls -->
+        <div class="card" id="run-controls">
+            <h2 class="section-title">2. Run controls</h2>
             
             <div class="selection-summary run-jobs-summary">
                 <div class="summary-row">
                     <span class="summary-label">Groups:</span>
-                    <span class="summary-value" id="final-groups-summary"></span>
+                    <span class="summary-value" id="selected-groups-summary"></span>
                 </div>
                 <div class="summary-row">
                     <span class="summary-label">Channels:</span>
-                    <span class="summary-value" id="final-channels-summary">All channels in selected groups</span>
+                    <span class="summary-value" id="selected-channels-summary">All channels in selected groups</span>
                 </div>
             </div>
 
             <div class="run-jobs-controls">
                 <div class="action-grid run-jobs-actions">
                     <div class="action-stack">
-                        <button class="action-btn primary" onclick="startApplyQualityJob(event)"
+                        <button class="action-btn primary" id="optimize-streams-button" onclick="startApplyQualityJob(event)" disabled
                                 style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
                             <span>✅</span>
                             <span>Optimize Streams</span>
@@ -995,29 +909,35 @@
                     </div>
                 </div>
             </div>
-
-            <div class="nav-buttons">
-                <button class="btn btn-back" onclick="goToStep1()">
-                    ← Back to Scope
-                </button>
-            </div>
         </div>
         
-        <!-- Current Job Status -->
-        <div class="card hidden" id="current-job-card">
-            <h2>📊 Current Job</h2>
-            <div id="current-job-content"></div>
+        <!-- Results & Explanations -->
+        <div class="card" id="results-section">
+            <h2 class="section-title">3. Results & explanations</h2>
+            <div class="alert alert-info">
+                Track the ordering logic as jobs run, then open results from job history to review the recommended order and narrative breakdown.
+            </div>
+            <div class="current-job hidden" id="current-job-card">
+                <h3 style="margin-bottom: 12px; color: #1f2937;">📊 Current Job</h3>
+                <div id="current-job-content"></div>
+            </div>
         </div>
         
         <!-- Job History -->
         <div class="card">
-            <h2>📈 Job History</h2>
-            <div id="history-loading" class="alert alert-info">
-                <span class="spinner"></span> Loading job history...
-            </div>
-            <div id="history-container" class="hidden">
-                <div class="history-list" id="history-list"></div>
-            </div>
+            <details>
+                <summary style="cursor: pointer; font-weight: 700; color: #1f2937; font-size: 1.1em;">
+                    📈 Job History
+                </summary>
+                <div style="margin-top: 16px;">
+                    <div id="history-loading" class="alert alert-info">
+                        <span class="spinner"></span> Loading job history...
+                    </div>
+                    <div id="history-container" class="hidden">
+                        <div class="history-list" id="history-list"></div>
+                    </div>
+                </div>
+            </details>
         </div>
 
     </div>
@@ -1155,7 +1075,6 @@
         document.addEventListener('DOMContentLoaded', function() {
             loadGroups();
             loadJobHistory();
-            syncStepIndicators();
 
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
@@ -1231,7 +1150,7 @@
             });
 
             updateScopeSummary();
-            updateStep1Button();
+            updateRunControlsState();
         }
 
         function getGroupChannelSelections(groupId) {
@@ -1416,6 +1335,11 @@
 
             updateScopeSummary();
             updateRefreshUiState();
+            updateRunControlsState();
+
+            if (selectedChannels && selectedChannels.length === 1) {
+                loadDerivedRefreshFilters(selectedChannels[0]);
+            }
         }
 
         function updateScopeSummary() {
@@ -1494,71 +1418,11 @@
             return selected;
         }
 
-        // Update step 1 button
-        function updateStep1Button() {
-            const btn = document.getElementById('btn-next-1');
-            btn.disabled = selectedGroups.length === 0;
-        }
-
-        // Keep step indicators in sync with the currently visible card.
-        function syncStepIndicators() {
-            const step1Card = document.getElementById('step-1');
-            const step2Card = document.getElementById('step-2');
-            const indicator1 = document.getElementById('step-indicator-1');
-            const indicator2 = document.getElementById('step-indicator-2');
-
-            if (!indicator1 || !indicator2) return;
-
-            const step1Visible = step1Card && !step1Card.classList.contains('hidden');
-            const step2Visible = step2Card && !step2Card.classList.contains('hidden');
-
-            indicator1.classList.remove('active', 'completed');
-            indicator2.classList.remove('active', 'completed');
-
-            if (step2Visible && !step1Visible) {
-                indicator1.classList.add('completed');
-                indicator2.classList.add('active');
-                return;
+        function updateRunControlsState() {
+            const btn = document.getElementById('optimize-streams-button');
+            if (btn) {
+                btn.disabled = selectedGroups.length === 0;
             }
-
-            indicator1.classList.add('active');
-        }
-
-        // Go to step 2
-        async function goToStep2() {
-            if (selectedGroups.length === 0) return;
-
-            // Switch cards
-            document.getElementById('step-1').classList.add('hidden');
-            document.getElementById('step-2').classList.remove('hidden');
-            syncStepIndicators();
-
-            updateFinalSummary();
-
-            if (hasChannelRefinements()) {
-                selectedChannels = await getSelectedChannelsForPayload();
-                updateRefreshUiState();
-            }
-
-            if (selectedChannels && selectedChannels.length === 1) {
-                loadDerivedRefreshFilters(selectedChannels[0]);
-            }
-        }
-
-        function updateFinalSummary() {
-            const groupNames = selectedGroups.map(id => {
-                const group = allGroups.find(g => g.id === id);
-                return group ? group.name : id;
-            }).join(', ');
-            document.getElementById('final-groups-summary').textContent = groupNames;
-
-            if (!hasChannelRefinements()) {
-                document.getElementById('final-channels-summary').textContent = defaultChannelScopeLabel;
-                return;
-            }
-
-            const remaining = getSelectedChannelCount();
-            document.getElementById('final-channels-summary').textContent = `${remaining} specific channel${remaining === 1 ? '' : 's'}`;
         }
 
         function toggleAllChannels(groupId, shouldSelect) {
@@ -1612,13 +1476,6 @@
             } finally {
                 derivedRefreshInFlight = false;
             }
-        }
-
-        // Go back to step 1
-        function goToStep1() {
-            document.getElementById('step-1').classList.remove('hidden');
-            document.getElementById('step-2').classList.add('hidden');
-            syncStepIndicators();
         }
 
         // Refresh preview helpers
