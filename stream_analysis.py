@@ -15,7 +15,7 @@ import threading
 import time
 from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -1314,7 +1314,143 @@ def _calculate_legacy_score(row, scoring_cfg):
     return score
 
 
-def _score_streams_proxy_first(df, include_provider_name, output_csv, update_stats, api):
+def _parse_history_timestamp(value):
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OSError, ValueError, TypeError):
+            return None
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        if candidate.endswith("Z"):
+            candidate = candidate[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def _read_ndjson(path):
+    if not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+    except Exception as exc:
+        logging.warning("Failed to read historical log %s: %s", path, exc)
+    return []
+
+
+def _historical_stream_penalties(window_hours=24):
+    """Compute capped, time-limited penalties from prior failover evidence."""
+    logs_dir = Path("logs")
+    quality_checks_path = logs_dir / "quality_checks.ndjson"
+    suggestions_path = logs_dir / "quality_check_suggestions.ndjson"
+
+    if not quality_checks_path.exists() and not suggestions_path.exists():
+        return {}
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=window_hours)
+    top_streams_by_channel = defaultdict(list)
+    penalties = defaultdict(float)
+
+    for record in _read_ndjson(quality_checks_path):
+        timestamp = _parse_history_timestamp(record.get("timestamp"))
+        if not timestamp or timestamp < cutoff:
+            continue
+        try:
+            order_index = int(record.get("order_index") or 0)
+        except (TypeError, ValueError):
+            order_index = 0
+        if order_index != 0:
+            continue
+        channel_id = record.get("channel_id")
+        stream_id = record.get("stream_id") or record.get("id")
+        if channel_id is None or stream_id is None:
+            continue
+        top_streams_by_channel[str(channel_id)].append(
+            (timestamp, str(stream_id))
+        )
+
+    for channel_key, timeline in top_streams_by_channel.items():
+        if not timeline:
+            continue
+        timeline.sort(key=lambda item: item[0])
+        last_stream = None
+        for timestamp, stream_id in timeline:
+            if last_stream and stream_id != last_stream:
+                # Playback swap/failover evidence: penalize the stream that was replaced.
+                penalties[last_stream] -= 10.0
+            last_stream = stream_id
+
+    for record in _read_ndjson(suggestions_path):
+        timestamp = _parse_history_timestamp(
+            record.get("timestamp")
+            or record.get("observed_at")
+            or record.get("created_at")
+        )
+        if not timestamp or timestamp < cutoff:
+            continue
+        channel_id = record.get("channel_id") or record.get("id")
+        if channel_id is None:
+            continue
+        reason = str(
+            record.get("reason")
+            or record.get("suggestion_reason")
+            or record.get("message")
+            or ""
+        ).lower()
+        if not reason:
+            continue
+        channel_key = str(channel_id)
+        timeline = top_streams_by_channel.get(channel_key, [])
+        if not timeline:
+            continue
+        last_stream = None
+        for entry_time, stream_id in timeline:
+            if entry_time <= timestamp:
+                last_stream = stream_id
+            else:
+                break
+        if not last_stream:
+            continue
+        if "unstable" in reason or "switch" in reason:
+            # Probe-level instability signal from suggestions: small deterministic penalty.
+            penalties[last_stream] -= 5.0
+
+    capped = {}
+    for stream_id, penalty in penalties.items():
+        capped[stream_id] = max(penalty, -15.0)
+    return capped
+
+
+def _apply_historical_penalties(summary, penalties):
+    if not penalties:
+        summary['historical_penalty'] = 0.0
+        return summary
+    summary['historical_penalty'] = summary['stream_id'].apply(
+        lambda stream_id: penalties.get(str(stream_id), 0.0)
+    )
+    return summary
+
+
+def _score_streams_proxy_first(df, include_provider_name, output_csv, update_stats, api, historical_penalties):
     # Convert types
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
     df['frames_decoded'] = pd.to_numeric(df['frames_decoded'], errors='coerce')
@@ -1394,7 +1530,12 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
     summary['score'] = summary['startup_score'] + summary['stability_score']
     # Continuous ordering score uses all available metadata and a soft validation penalty.
     summary['ordering_score'] = summary.apply(_continuous_ordering_score, axis=1)
-    summary['ordering_score'] = summary['ordering_score'] + summary['stream_id'].apply(_stable_tiebreaker)
+    summary = _apply_historical_penalties(summary, historical_penalties)
+    summary['ordering_score'] = (
+        summary['ordering_score']
+        + summary['historical_penalty']
+        + summary['stream_id'].apply(_stable_tiebreaker)
+    )
 
     df_sorted = summary.sort_values(
         by=['channel_number', 'ordering_score'],
@@ -1412,7 +1553,7 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
         'avg_frames_dropped', 'dropped_frame_percentage', 'fps', 'resolution',
         'video_codec', 'audio_codec', 'interlaced_status', 'status', 'score',
         'validation_result', 'validation_reason',
-        'startup_score', 'stability_score', 'ordering_score'
+        'startup_score', 'stability_score', 'historical_penalty', 'ordering_score'
     ]
     for col in final_columns:
         if col not in df_sorted.columns:
@@ -1447,7 +1588,7 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
                     logging.warning(f"Could not update stats for stream {stream_id}: {e}")
 
 
-def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, update_stats, api):
+def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, update_stats, api, historical_penalties):
     logging.info("Using legacy scoring (resolution/bitrate driven)")
 
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
@@ -1484,7 +1625,12 @@ def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, up
         lambda row: _calculate_legacy_score(row, scoring_cfg), axis=1
     )
     summary['ordering_score'] = summary.apply(_continuous_ordering_score, axis=1)
-    summary['ordering_score'] = summary['ordering_score'] + summary['stream_id'].apply(_stable_tiebreaker)
+    summary = _apply_historical_penalties(summary, historical_penalties)
+    summary['ordering_score'] = (
+        summary['ordering_score']
+        + summary['historical_penalty']
+        + summary['stream_id'].apply(_stable_tiebreaker)
+    )
 
     df_sorted = summary.sort_values(
         by=['channel_number', 'ordering_score'],
@@ -1500,7 +1646,7 @@ def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, up
     final_columns += [
         'avg_bitrate_kbps', 'avg_frames_decoded', 'avg_frames_dropped',
         'dropped_frame_percentage', 'fps', 'resolution', 'video_codec', 'audio_codec',
-        'interlaced_status', 'status', 'score', 'ordering_score'
+        'interlaced_status', 'status', 'score', 'historical_penalty', 'ordering_score'
     ]
     for col in final_columns:
         if col not in df_sorted.columns:
@@ -1577,11 +1723,12 @@ def score_streams(api, config, input_csv=None,
 
     include_provider_name = 'm3u_account_name' in df.columns
     proxy_first = bool(scoring_cfg.get('proxy_first', scoring_cfg.get('proxy_startup_bias', False)))
+    historical_penalties = _historical_stream_penalties()
 
     if proxy_first:
-        _score_streams_proxy_first(df, include_provider_name, output_csv, update_stats, api)
+        _score_streams_proxy_first(df, include_provider_name, output_csv, update_stats, api, historical_penalties)
     else:
-        _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, update_stats, api)
+        _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, update_stats, api, historical_penalties)
 
 
 def _parse_resolution(resolution):

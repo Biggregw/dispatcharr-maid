@@ -980,10 +980,10 @@
                 <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
                     <select id="analysisProfile" style="padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em;">
                         <option value="fast">Fast</option>
-                        <option value="balanced" selected>Balanced (default)</option>
-                        <option value="deep">Deep</option>
+                        <option value="balanced">Balanced</option>
+                        <option value="deep" selected>Deep (default)</option>
                     </select>
-                    <span style="color:#4b5563; font-size:0.95em;">Choose how deep the analysis should probe. Balanced matches today’s defaults.</span>
+                    <span style="color:#4b5563; font-size:0.95em;">Choose how deep the analysis should probe. Deep matches today’s defaults.</span>
                 </div>
                 <details style="margin-top: 12px; padding: 12px; background: #eef2ff; border-radius: 6px; border-left: 3px solid #6366f1;">
                     <summary style="font-weight:600; color:#4338ca; cursor:pointer;">Advanced analysis settings</summary>
@@ -1830,7 +1830,7 @@
                     channels: selectedChannels,
                     group_names: groupNames,
                     channel_names: channelNames,
-                    analysis_profile: document.getElementById('analysisProfile')?.value || 'balanced',
+                    analysis_profile: document.getElementById('analysisProfile')?.value || 'deep',
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
