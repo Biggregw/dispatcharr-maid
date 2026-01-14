@@ -1677,33 +1677,28 @@ def _job_update_stage_progress(job, processed=None, total=None, failed=None):
 
 
 def _job_recompute_overall(job):
-    if not job._stage_defs:
-        # Fall back to simple percent if possible
-        if getattr(job, 'total', 0):
-            try:
-                job.overall_progress = min(100.0, max(0.0, float(job.progress) / float(job.total) * 100.0))
-            except Exception:
-                job.overall_progress = 0.0
+    # Overall progress is derived from real completed work (processed/total streams),
+    # not weighted stages. Only update when we have per-stream totals to keep it
+    # monotonic and explainable.
+    if job.stage_key == 'analyze' and getattr(job, 'stage_total', 0):
+        try:
+            computed = min(
+                100.0,
+                max(0.0, float(job.stage_progress) / float(job.stage_total) * 100.0),
+            )
+        except Exception:
+            computed = 0.0
+        job.overall_progress = max(float(job.overall_progress or 0.0), float(computed))
         return
 
-    completed_weight = 0.0
-    for i, (_k, _n, w) in enumerate(job._stage_defs):
-        if i < job._stage_index:
-            completed_weight += float(w)
-
-    current_weight = 0.0
-    if job._stage_index < len(job._stage_defs):
-        current_weight = float(job._stage_defs[job._stage_index][2])
-
-    stage_fraction = 0.0
-    if getattr(job, 'stage_total', 0) and getattr(job, 'stage_progress', 0) is not None:
-        try:
-            stage_fraction = min(1.0, max(0.0, float(job.stage_progress) / float(job.stage_total)))
-        except Exception:
-            stage_fraction = 0.0
-
-    overall = (completed_weight + current_weight * stage_fraction) * 100.0
-    job.overall_progress = float(min(100.0, max(0.0, overall)))
+    if not job._stage_defs:
+        if getattr(job, 'total', 0):
+            try:
+                computed = min(100.0, max(0.0, float(job.progress) / float(job.total) * 100.0))
+            except Exception:
+                computed = 0.0
+            job.overall_progress = max(float(job.overall_progress or 0.0), float(computed))
+        return
 
 
 def run_job_worker(job, api, config):
