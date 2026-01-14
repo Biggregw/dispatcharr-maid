@@ -66,6 +66,10 @@
         .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
         details summary { cursor: pointer; }
         .plan-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+        .explanation-block { border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 14px; background: #fbfdff; margin-top: 12px; }
+        .explanation-block h3 { margin-bottom: 8px; font-size: 1.05em; color: #2d3748; }
+        .explanation-block ul { margin: 0 0 0 18px; }
+        .explanation-block li { margin-bottom: 6px; }
     </style>
 </head>
 <body>
@@ -508,6 +512,164 @@
             card.style.display = '';
         }
 
+        function parseResolutionValue(resolution) {
+            if (!resolution) return null;
+            const text = String(resolution).toLowerCase();
+            if (text.includes('x')) {
+                const parts = text.split('x');
+                if (parts.length >= 2) {
+                    const height = Number(parts[1].replace(/[^\d]/g, ''));
+                    if (!Number.isNaN(height) && height > 0) return height;
+                }
+            }
+            const match = text.match(/(\d{3,4})p/);
+            if (match) {
+                const val = Number(match[1]);
+                return Number.isNaN(val) ? null : val;
+            }
+            const digits = text.match(/(\d{3,4})/);
+            if (digits) {
+                const val = Number(digits[1]);
+                return Number.isNaN(val) ? null : val;
+            }
+            return null;
+        }
+
+        function isValidationOk(result) {
+            if (!result) return true;
+            const val = String(result).toLowerCase();
+            return ['ok', 'pass', 'passed', 'success'].includes(val);
+        }
+
+        function formatScore(score) {
+            if (score === null || score === undefined || score === 'N/A') return '—';
+            const num = Number(score);
+            if (Number.isNaN(num)) return escapeHtml(String(score));
+            return num.toFixed(1);
+        }
+
+        function buildReason(row, topRow) {
+            const reasons = [];
+            const validation = row?.validation_result;
+            if (validation && !isValidationOk(validation)) {
+                const base = `validation ${String(validation)}`;
+                if (row?.validation_reason) {
+                    reasons.push(`${base} (${row.validation_reason})`);
+                } else {
+                    reasons.push(base);
+                }
+            }
+
+            const topResolution = parseResolutionValue(topRow?.resolution);
+            const rowResolution = parseResolutionValue(row?.resolution);
+            if (topResolution && rowResolution && rowResolution < topResolution) {
+                reasons.push(`lower resolution (${rowResolution}p vs ${topResolution}p)`);
+            }
+
+            const topBitrate = Number(topRow?.bitrate_kbps);
+            const rowBitrate = Number(row?.bitrate_kbps);
+            if (!Number.isNaN(topBitrate) && !Number.isNaN(rowBitrate) && topBitrate > 0) {
+                if (rowBitrate < topBitrate * 0.9) {
+                    reasons.push(`lower bitrate (${Math.round(rowBitrate)} vs ${Math.round(topBitrate)} kbps)`);
+                }
+            }
+
+            const topScore = Number(topRow?.final_score);
+            const rowScore = Number(row?.final_score);
+            if (!Number.isNaN(topScore) && !Number.isNaN(rowScore) && rowScore < topScore) {
+                const diff = topScore - rowScore;
+                if (diff >= 0.1) {
+                    reasons.push(`score lower by ${diff.toFixed(1)} points`);
+                }
+            }
+
+            return reasons;
+        }
+
+        function renderOrderingExplanation(ordering) {
+            const card = document.getElementById('ordering-explanation-card');
+            if (!card) return;
+
+            const finalOrders = Array.isArray(ordering?.final_orders) ? ordering.final_orders : [];
+            if (!finalOrders.length) {
+                card.innerHTML = `
+                    <h2>Why streams were ordered this way</h2>
+                    <div class="muted small">No ordering explanation available for this run.</div>
+                `;
+                return;
+            }
+
+            const channelMap = new Map();
+            finalOrders.forEach((row) => {
+                const label = channelLabelFrom(row);
+                if (!channelMap.has(label)) {
+                    channelMap.set(label, []);
+                }
+                channelMap.get(label).push(row);
+            });
+
+            const sortedChannels = Array.from(channelMap.entries()).sort((a, b) => {
+                const aRow = a[1][0] || {};
+                const bRow = b[1][0] || {};
+                const chanA = `${aRow?.channel_number ?? ''}`.padStart(6, '0');
+                const chanB = `${bRow?.channel_number ?? ''}`.padStart(6, '0');
+                return chanA.localeCompare(chanB);
+            });
+
+            const blocks = sortedChannels.map(([label, rows]) => {
+                const ordered = [...rows].sort((a, b) => Number(a?.order ?? 0) - Number(b?.order ?? 0));
+                const top = ordered[0];
+                if (!top) return '';
+
+                const topProvider = providerLabelHtml(top?.provider_id) || escapeHtml(top?.provider_name || '');
+                const topScore = formatScore(top?.final_score);
+                const topResolution = top?.resolution ? escapeHtml(String(top.resolution)) : '—';
+                const topBitrate = fmtBitrate(top?.bitrate_kbps);
+                const topValidation = top?.validation_result ? escapeHtml(String(top.validation_result)) : '—';
+
+                const topLine = `Top stream: <strong>${escapeHtml(top?.stream_name || `Stream ${top?.stream_id ?? ''}`)}</strong> ` +
+                    `(provider ${topProvider || 'unknown'}, score ${topScore}, resolution ${topResolution}, bitrate ${topBitrate}, validation ${topValidation}).`;
+
+                const alternatives = ordered.slice(1, 3);
+                const alternativeLines = alternatives.map((row) => {
+                    const reasons = buildReason(row, top);
+                    const reasonText = reasons.length ? ` Reason(s): ${escapeHtml(reasons.join('; '))}.` : ' Score ranked below the top stream.';
+                    return `<li>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)} ranked after the top stream.${reasonText}</li>`;
+                });
+
+                const lowRanked = ordered.slice(Math.max(ordered.length - 2, 1));
+                const altIds = new Set(alternatives.map((r) => r?.stream_id));
+                const lowLines = lowRanked
+                    .filter((row) => !altIds.has(row?.stream_id))
+                    .map((row) => {
+                        const reasons = buildReason(row, top);
+                        const reasonText = reasons.length ? ` Reason(s): ${escapeHtml(reasons.join('; '))}.` : ' Ranked lower due to overall score.';
+                        return `<li>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)} was near the bottom.${reasonText}</li>`;
+                    });
+
+                const sections = [];
+                sections.push(`<li>${topLine}</li>`);
+                if (alternativeLines.length) {
+                    sections.push(`<li>Major alternatives:<ul>${alternativeLines.join('')}</ul></li>`);
+                }
+                if (lowLines.length) {
+                    sections.push(`<li>Low-ranked streams:<ul>${lowLines.join('')}</ul></li>`);
+                }
+
+                return `
+                    <div class="explanation-block">
+                        <h3>${escapeHtml(label)}</h3>
+                        <ul>${sections.join('')}</ul>
+                    </div>
+                `;
+            }).filter(Boolean);
+
+            card.innerHTML = `
+                <h2>Why streams were ordered this way</h2>
+                ${blocks.join('')}
+            `;
+        }
+
         fetch(resultsUrl)
             .then(r => r.json())
             .then(data => {
@@ -585,6 +747,7 @@
 
                 const orderingVisibility = data.ordering_visibility || r.ordering_visibility;
                 renderOrderingTables(orderingVisibility);
+                renderOrderingExplanation(orderingVisibility);
 
             })
             .catch(err => {
