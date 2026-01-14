@@ -275,6 +275,28 @@
             return `${num.toLocaleString()} kbps`;
         }
 
+        function fmtChannelLabel(row) {
+            if (!row || typeof row !== 'object') return 'Unknown channel';
+            const number = row.channel_number ?? row.channel_num ?? row.number;
+            const name = row.channel_name ?? row.name;
+            const id = row.channel_id ?? row.id;
+            const numberText = (number === null || number === undefined || number === '') ? '' : String(number);
+            const nameText = name ? String(name) : '';
+            let label = '';
+            if (numberText && nameText) {
+                label = `${numberText} - ${nameText}`;
+            } else if (numberText) {
+                label = `Channel ${numberText}`;
+            } else if (nameText) {
+                label = nameText;
+            } else if (id !== null && id !== undefined && id !== '') {
+                label = `Channel ${id}`;
+            } else {
+                label = 'Unknown channel';
+            }
+            return escapeHtml(label);
+        }
+
         function channelLabelFrom(row) {
             if (!row || typeof row !== 'object') return 'Unknown channel';
             const labelRow = {
@@ -455,27 +477,36 @@
             });
 
             finalBody.innerHTML = sortedFinal.map((row) => {
-                const providerCell = providerLabelHtml(row?.provider_id) || escapeHtml(row?.provider_name || '');
-                const serviceName = row?.service_name ? escapeHtml(String(row.service_name)) : '';
-                const serviceProvider = row?.service_provider ? escapeHtml(String(row.service_provider)) : '';
-                const validation = row?.validation_result ? escapeHtml(String(row.validation_result)) : '—';
-                const score = row?.final_score;
-                const scoreText = score === null || score === undefined ? '—' : escapeHtml(Number(score).toFixed ? Number(score).toFixed(1) : String(score));
-                return `
-                    <tr>
-                        <td>${channelLabelFrom(row)}</td>
-                        <td class="mono">${escapeHtml(row?.order ?? '')}</td>
-                        <td>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)}</td>
-                        <td>${providerCell}</td>
-                        <td>${serviceName}</td>
-                        <td>${serviceProvider}</td>
-                        <td>${escapeHtml(row?.resolution || '—')}</td>
-                        <td>${escapeHtml(row?.video_codec || '—')}</td>
-                        <td>${fmtBitrate(row?.bitrate_kbps)}</td>
-                        <td>${validation}</td>
-                        <td>${scoreText}</td>
-                    </tr>
-                `;
+                try {
+                    const providerCell = providerLabelHtml(row?.provider_id) || escapeHtml(row?.provider_name || '');
+                    const serviceName = row?.service_name ? escapeHtml(String(row.service_name)) : '';
+                    const serviceProvider = row?.service_provider ? escapeHtml(String(row.service_provider)) : '';
+                    const validation = row?.validation_result ? escapeHtml(String(row.validation_result)) : '—';
+                    const score = row?.final_score;
+                    const scoreText = score === null || score === undefined ? '—' : escapeHtml(Number(score).toFixed ? Number(score).toFixed(1) : String(score));
+                    return `
+                        <tr>
+                            <td>${channelLabelFrom(row)}</td>
+                            <td class="mono">${escapeHtml(row?.order ?? '')}</td>
+                            <td>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)}</td>
+                            <td>${providerCell}</td>
+                            <td>${serviceName}</td>
+                            <td>${serviceProvider}</td>
+                            <td>${escapeHtml(row?.resolution || '—')}</td>
+                            <td>${escapeHtml(row?.video_codec || '—')}</td>
+                            <td>${fmtBitrate(row?.bitrate_kbps)}</td>
+                            <td>${validation}</td>
+                            <td>${scoreText}</td>
+                        </tr>
+                    `;
+                } catch (err) {
+                    console.warn('Failed to render final order row:', err, row);
+                    return `
+                        <tr>
+                            <td colspan="11" class="muted">Unable to render a final-order row for this stream.</td>
+                        </tr>
+                    `;
+                }
             }).join('');
 
             const sortedExcluded = [...excluded].sort((a, b) => {
@@ -488,21 +519,30 @@
             });
 
             excludedBody.innerHTML = sortedExcluded.map((row) => {
-                const providerCell = providerLabelHtml(row?.provider_id) || escapeHtml(row?.provider_name || '');
-                const serviceName = row?.service_name ? escapeHtml(String(row.service_name)) : '';
-                const serviceProvider = row?.service_provider ? escapeHtml(String(row.service_provider)) : '';
-                return `
-                    <tr>
-                        <td>${channelLabelFrom(row)}</td>
-                        <td>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)}</td>
-                        <td>${providerCell}</td>
-                        <td>${serviceName}</td>
-                        <td>${serviceProvider}</td>
-                        <td>${escapeHtml(row?.resolution || '—')}</td>
-                        <td>${fmtBitrate(row?.bitrate_kbps)}</td>
-                        <td>${escapeHtml(row?.reason || '—')}</td>
-                    </tr>
-                `;
+                try {
+                    const providerCell = providerLabelHtml(row?.provider_id) || escapeHtml(row?.provider_name || '');
+                    const serviceName = row?.service_name ? escapeHtml(String(row.service_name)) : '';
+                    const serviceProvider = row?.service_provider ? escapeHtml(String(row.service_provider)) : '';
+                    return `
+                        <tr>
+                            <td>${channelLabelFrom(row)}</td>
+                            <td>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)}</td>
+                            <td>${providerCell}</td>
+                            <td>${serviceName}</td>
+                            <td>${serviceProvider}</td>
+                            <td>${escapeHtml(row?.resolution || '—')}</td>
+                            <td>${fmtBitrate(row?.bitrate_kbps)}</td>
+                            <td>${escapeHtml(row?.reason || '—')}</td>
+                        </tr>
+                    `;
+                } catch (err) {
+                    console.warn('Failed to render excluded row:', err, row);
+                    return `
+                        <tr>
+                            <td colspan="8" class="muted">Unable to render an excluded stream row.</td>
+                        </tr>
+                    `;
+                }
             }).join('');
 
             if (!excluded.length) {
@@ -617,58 +657,68 @@
             });
 
             const blocks = sortedChannels.map(([label, rows]) => {
-                const ordered = [...rows].sort((a, b) => Number(a?.order ?? 0) - Number(b?.order ?? 0));
-                const top = ordered[0];
-                if (!top) return '';
+                try {
+                    const ordered = [...rows].sort((a, b) => Number(a?.order ?? 0) - Number(b?.order ?? 0));
+                    const top = ordered[0];
+                    if (!top) return '';
 
-                const topName = escapeHtml(top?.stream_name || `Stream ${top?.stream_id ?? ''}`);
-                const topReasons = [];
-                if (top?.resolution) topReasons.push(`met ${escapeHtml(String(top.resolution))} resolution`);
-                if (top?.validation_result) {
-                    topReasons.push(isValidationOk(top.validation_result)
-                        ? 'passed validation'
-                        : `showed ${escapeHtml(String(top.validation_result))} validation`);
-                }
-                if (top?.bitrate_kbps) topReasons.push(`reported ${fmtBitrate(top.bitrate_kbps)}`);
-                if (top?.final_score !== null && top?.final_score !== undefined) {
-                    topReasons.push(`scored ${formatScore(top.final_score)}`);
-                }
-                const topReasonText = topReasons.length
-                    ? topReasons.join(', ')
-                    : 'ranked highest across the checks';
+                    const topName = escapeHtml(top?.stream_name || `Stream ${top?.stream_id ?? ''}`);
+                    const topReasons = [];
+                    if (top?.resolution) topReasons.push(`met ${escapeHtml(String(top.resolution))} resolution`);
+                    if (top?.validation_result) {
+                        topReasons.push(isValidationOk(top.validation_result)
+                            ? 'passed validation'
+                            : `showed ${escapeHtml(String(top.validation_result))} validation`);
+                    }
+                    if (top?.bitrate_kbps) topReasons.push(`reported ${fmtBitrate(top.bitrate_kbps)}`);
+                    if (top?.final_score !== null && top?.final_score !== undefined) {
+                        topReasons.push(`scored ${formatScore(top.final_score)}`);
+                    }
+                    const topReasonText = topReasons.length
+                        ? topReasons.join(', ')
+                        : 'ranked highest across the checks';
 
-                const topLine = `Slot 1 selected for <strong>${topName}</strong> because it ${topReasonText}.`;
+                    const topLine = `Slot 1 selected for <strong>${topName}</strong> because it ${topReasonText}.`;
 
-                const alternatives = ordered.slice(1, 3);
-                const alternativeLines = alternatives.map((row) => {
-                    const reasons = buildReason(row, top);
-                    const reasonText = reasons.length
-                        ? escapeHtml(reasons.join('; '))
-                        : 'ranked lower due to overall score';
-                    return `<li>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)} ranked lower because ${reasonText}.</li>`;
-                });
-
-                const lowRanked = ordered.slice(Math.max(ordered.length - 2, 1));
-                const altIds = new Set(alternatives.map((r) => r?.stream_id));
-                const lowReasons = new Set();
-                lowRanked
-                    .filter((row) => !altIds.has(row?.stream_id))
-                    .forEach((row) => {
-                        buildReason(row, top).forEach((reason) => lowReasons.add(reason));
+                    const alternatives = ordered.slice(1, 3);
+                    const alternativeLines = alternatives.map((row) => {
+                        const reasons = buildReason(row, top);
+                        const reasonText = reasons.length
+                            ? escapeHtml(reasons.join('; '))
+                            : 'ranked lower due to overall score';
+                        return `<li>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)} ranked lower because ${reasonText}.</li>`;
                     });
 
-                const lowSummary = lowReasons.size
-                    ? `Lower-ranked streams fell behind due to ${escapeHtml(Array.from(lowReasons).join('; '))}.`
-                    : 'Lower-ranked streams trailed the top pick on overall score.';
+                    const lowRanked = ordered.slice(Math.max(ordered.length - 2, 1));
+                    const altIds = new Set(alternatives.map((r) => r?.stream_id));
+                    const lowReasons = new Set();
+                    lowRanked
+                        .filter((row) => !altIds.has(row?.stream_id))
+                        .forEach((row) => {
+                            buildReason(row, top).forEach((reason) => lowReasons.add(reason));
+                        });
 
-                return `
-                    <div class="explanation-block">
-                        <h3>${escapeHtml(label)}</h3>
-                        <p>${topLine}</p>
-                        ${alternativeLines.length ? `<p class="muted small">Other streams ranked lower:</p><ul>${alternativeLines.join('')}</ul>` : ''}
-                        <p class="muted small">${lowSummary}</p>
-                    </div>
-                `;
+                    const lowSummary = lowReasons.size
+                        ? `Lower-ranked streams fell behind due to ${escapeHtml(Array.from(lowReasons).join('; '))}.`
+                        : 'Lower-ranked streams trailed the top pick on overall score.';
+
+                    return `
+                        <div class="explanation-block">
+                            <h3>${label}</h3>
+                            <p>${topLine}</p>
+                            ${alternativeLines.length ? `<p class="muted small">Other streams ranked lower:</p><ul>${alternativeLines.join('')}</ul>` : ''}
+                            <p class="muted small">${lowSummary}</p>
+                        </div>
+                    `;
+                } catch (err) {
+                    console.warn('Failed to render ordering explanation block:', err, rows);
+                    return `
+                        <div class="explanation-block">
+                            <h3>${label}</h3>
+                            <p class="muted small">Unable to render narrative details for this channel.</p>
+                        </div>
+                    `;
+                }
             }).filter(Boolean);
 
             card.innerHTML = `
