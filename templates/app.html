@@ -1150,66 +1150,11 @@
             });
         }
         
-        function syncRegexInputsFromAdvanced() {
-            const advanced = document.getElementById('advancedRegexInput');
-            const regexOnly = document.getElementById('regexOnlyMode');
-            const overrideInput = document.getElementById('streamNameRegexOverride');
-            const filterInput = document.getElementById('streamNameRegex');
-            if (!advanced || !regexOnly) return;
-
-            const value = (advanced.value || '').trim();
-            const useOnly = regexOnly.checked;
-
-            if (overrideInput) overrideInput.value = useOnly ? value : '';
-            if (filterInput) filterInput.value = useOnly ? '' : value;
-            updateRegexOnlyVisibility();
-        }
-
-        function syncAdvancedFieldFromInputs() {
-            const advanced = document.getElementById('advancedRegexInput');
-            const regexOnly = document.getElementById('regexOnlyMode');
-            const overrideInput = document.getElementById('streamNameRegexOverride');
-            const filterInput = document.getElementById('streamNameRegex');
-            if (!advanced || !regexOnly) return;
-
-            const overrideValue = (overrideInput?.value || '').trim();
-            const filterValue = (filterInput?.value || '').trim();
-
-            if (overrideValue) {
-                advanced.value = overrideValue;
-                regexOnly.checked = true;
-            } else {
-                advanced.value = filterValue;
-                regexOnly.checked = false;
-            }
-
-            updateRegexOnlyVisibility();
-        }
-
-        function updateRegexOnlyVisibility() {
-            const advanced = document.getElementById('advancedRegexInput');
-            const container = document.getElementById('regex-only-container');
-            if (!advanced || !container) return;
-
-            const hasValue = (advanced.value || '').trim().length > 0;
-            container.style.display = hasValue ? 'block' : 'none';
-        }
-
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             loadGroups();
             loadJobHistory();
             syncStepIndicators();
-
-            const advancedRegexInput = document.getElementById('advancedRegexInput');
-            const regexOnlyCheckbox = document.getElementById('regexOnlyMode');
-            if (advancedRegexInput) {
-                advancedRegexInput.addEventListener('input', syncRegexInputsFromAdvanced);
-            }
-            if (regexOnlyCheckbox) {
-                regexOnlyCheckbox.addEventListener('change', syncRegexInputsFromAdvanced);
-            }
-            syncAdvancedFieldFromInputs();
 
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
@@ -1503,9 +1448,13 @@
             if (!selectedChannels || selectedChannels.length !== 1) {
                 derivedRefreshChannelId = null;
                 derivedExcludePlusOne = false;
+                derivedStreamNameRegex = null;
+                derivedStreamNameRegexOverride = null;
             } else if (String(derivedRefreshChannelId) !== String(selectedChannels[0])) {
                 derivedRefreshChannelId = null;
                 derivedExcludePlusOne = false;
+                derivedStreamNameRegex = null;
+                derivedStreamNameRegexOverride = null;
             }
 
             // Show/hide refresh filters based on selection
@@ -1629,6 +1578,8 @@
         let derivedRefreshChannelId = null;
         let derivedRefreshInFlight = false;
         let derivedExcludePlusOne = false;
+        let derivedStreamNameRegex = null;
+        let derivedStreamNameRegexOverride = null;
 
         async function loadDerivedRefreshFilters(channelId) {
             if (!channelId) return;
@@ -1645,22 +1596,14 @@
                 const base = document.getElementById('baseSearchText');
                 const inc = document.getElementById('includeFilter');
                 const exc = document.getElementById('excludeFilter');
-                const overrideInput = document.getElementById('streamNameRegexOverride');
-                const filterInput = document.getElementById('streamNameRegex');
-
                 if (base && typeof derived.base_search_text === 'string') base.value = derived.base_search_text;
                 if (inc && typeof derived.include_filter === 'string') inc.value = derived.include_filter;
                 if (exc && typeof derived.exclude_filter === 'string') exc.value = derived.exclude_filter;
                 derivedExcludePlusOne = derived.exclude_plus_one === true;
-
-                if (overrideInput) overrideInput.value = '';
-                if (filterInput) filterInput.value = '';
-                syncAdvancedFieldFromInputs();
-
-                const refineDetails = document.getElementById('refine-matches');
-                const advancedDetails = document.getElementById('advanced-matching');
-                if (refineDetails) refineDetails.open = false;
-                if (advancedDetails) advancedDetails.open = false;
+                derivedStreamNameRegex = typeof derived.stream_name_regex === 'string' ? derived.stream_name_regex : null;
+                derivedStreamNameRegexOverride = typeof derived.stream_name_regex_override === 'string'
+                    ? derived.stream_name_regex_override
+                    : null;
 
                 derivedRefreshChannelId = channelId;
             } catch (e) {
@@ -1703,7 +1646,7 @@
             if (preview.preview_truncated) {
                 const limit = preview.preview_limit || refreshPreviewStreams.length;
                 const shown = Math.min(limit, refreshPreviewStreams.length);
-                description.textContent += ` Showing first ${shown} result(s) — refine your regex/filters to narrow matches.`;
+                description.textContent += ` Showing first ${shown} result(s) — refine your filters to narrow matches.`;
             }
 
             if (!refreshPreviewStreams.length) {
@@ -1747,8 +1690,6 @@
                 return;
             }
 
-            syncRegexInputsFromAdvanced();
-
             document.getElementById('refresh-preview-modal').classList.remove('hidden');
             document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-info preview-loading"><span class="loading-ellipsis">Searching for matching streams</span></div>';
             resetRefreshProgress();
@@ -1756,16 +1697,14 @@
             document.getElementById('refresh-preview-description').textContent = '';
 
             try {
-                const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
-                const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
                 const payload = {
                     channel_id: selectedChannelsForPreview[0],
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
                     exclude_plus_one: derivedExcludePlusOne,
-                    stream_name_regex: regexFilterValue ? regexFilterValue : null,
-                    stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null,
+                    stream_name_regex: derivedStreamNameRegex,
+                    stream_name_regex_override: derivedStreamNameRegexOverride,
                     clear_learned_rules: isClearLearnedRulesChecked()
                 };
 
@@ -1926,7 +1865,6 @@
         async function startJob(jobType, selectedStreamIds = null, event = null) {
             const clickedBtn = getClickedButton(event);
             try {
-                syncRegexInputsFromAdvanced();
                 const selectedChannelsForPayload = await getSelectedChannelsForPayload();
                 selectedChannels = selectedChannelsForPayload;
                 updateRefreshUiState();
@@ -1962,8 +1900,6 @@
                 const scrollToken = requestAutoScrollToCurrentJob();
                 maybeAutoScrollToCurrentJob(scrollToken);
                 
-                const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
-                const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
                 const payload = {
                     job_type: jobType,
                     groups: selectedGroups,
@@ -1976,8 +1912,8 @@
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
                     exclude_plus_one: derivedExcludePlusOne,
                     selected_stream_ids: selectedStreamIds,
-                    stream_name_regex: regexFilterValue ? regexFilterValue : null,
-                    stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null,
+                    stream_name_regex: derivedStreamNameRegex,
+                    stream_name_regex_override: derivedStreamNameRegexOverride,
                     clear_learned_rules: jobType === 'refresh_optimize' ? isClearLearnedRulesChecked() : false
                 };
 
@@ -2382,11 +2318,6 @@
                     if (job.result_summary.base_search_text) {
                         html += `<div style="margin-top: 15px; padding: 10px; background: #f0f4ff; border-radius: 5px;">
                             <strong>Primary Match:</strong> ${job.result_summary.base_search_text}
-                        </div>`;
-                    }
-                    if (job.result_summary.stream_name_regex_override) {
-                        html += `<div style="margin-top: 15px; padding: 10px; background: #fefce8; border-radius: 5px;">
-                            <strong>Advanced Regex (only):</strong> <code>${job.result_summary.stream_name_regex_override}</code>
                         </div>`;
                     }
                     if (job.result_summary.include_filter || job.result_summary.exclude_filter) {
