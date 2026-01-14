@@ -212,12 +212,20 @@
         .channel-item input[type="checkbox"] {
             width: 18px;
             height: 18px;
-            margin-right: 10px;
+            margin-right: 6px;
             cursor: pointer;
         }
 
         .channel-item input[type="checkbox"][disabled] {
             cursor: not-allowed;
+        }
+
+        .channel-exclude-label {
+            font-size: 0.75em;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #a0aec0;
+            margin-right: 10px;
         }
 
         .channel-number {
@@ -871,7 +879,7 @@
         
         <!-- Step 1: Scope Selection -->
         <div class="card" id="step-1">
-            <h2>📋 Step 1: Select Groups & Optional Channels</h2>
+            <h2>📋 Step 1: Select Groups & Exclude Channels</h2>
 
             <div id="group-loading" class="alert alert-info">
                 <span class="spinner"></span> Loading channel groups...
@@ -1327,11 +1335,11 @@
             const exclusions = getGroupExclusions(normalizedId);
             const channelMarkup = channels.map(ch => {
                 const isExcluded = exclusions.has(ch.id);
-                const isChecked = isSelected && !isExcluded;
                 const isDisabled = !isSelected;
                 return `
                     <div class="channel-item ${isDisabled ? 'disabled' : ''}" data-channel-id="${ch.id}" data-base-search-text="${ch.base_search_text || ch.name}">
-                        <input type="checkbox" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''}>
+                        <input type="checkbox" ${isExcluded ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} aria-label="Exclude channel ${ch.name}">
+                        <span class="channel-exclude-label">Exclude</span>
                         <span class="channel-number">${ch.channel_number}</span>
                         <span class="channel-name">${ch.name}</span>
                         <span class="channel-stream-count">· ${ch.stream_count} stream${ch.stream_count === 1 ? '' : 's'}</span>
@@ -1341,7 +1349,7 @@
 
             container.innerHTML = `
                 <div class="alert alert-info">
-                    Channels can only be deselected after their group is selected.
+                    Channels can only be excluded after their group is selected.
                 </div>
                 <div class="channel-list">${channelMarkup}</div>
             `;
@@ -1357,9 +1365,9 @@
         function toggleChannelSelection(groupId, channelId, isChecked) {
             const exclusions = getGroupExclusions(groupId);
             if (isChecked) {
-                exclusions.delete(channelId);
-            } else {
                 exclusions.add(channelId);
+            } else {
+                exclusions.delete(channelId);
             }
             updateSelectionState();
         }
@@ -1469,7 +1477,7 @@
             // Selection rules (explicit):
             // - Group checked → all channels implicitly included.
             // - Group unchecked → all channels excluded.
-            // - Group checked + some channels unchecked → only remaining channels included.
+            // - Group checked + some channels excluded → only remaining channels included.
             await ensureChannelsLoaded([...selectedGroups]);
 
             const selected = [];
