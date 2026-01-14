@@ -588,29 +588,62 @@
             return num.toFixed(1);
         }
 
-        function buildReason(row, topRow) {
-            const reasons = [];
+        function humanizeValidationDetail(detail) {
+            if (!detail) return '';
+            const text = String(detail);
+            const lower = text.toLowerCase();
+            const exactMap = {
+                err_timeout_excess: 'validation timeout during probing',
+                err_timeout: 'validation timeout',
+                err_probe_timeout: 'validation timeout during probing',
+                err_probe_fail: 'validation probe failure',
+                stream_unreachable: 'stream unreachable during validation',
+                err_unreachable: 'stream unreachable during validation',
+                err_http_status: 'unexpected HTTP response during validation',
+                err_invalid_response: 'invalid response during validation',
+                invalid_response: 'invalid response during validation'
+            };
+            if (Object.prototype.hasOwnProperty.call(exactMap, lower)) {
+                return exactMap[lower];
+            }
+            let cleaned = text;
+            Object.entries(exactMap).forEach(([key, value]) => {
+                const re = new RegExp(key, 'ig');
+                cleaned = cleaned.replace(re, value);
+            });
+            cleaned = cleaned.replace(/_/g, ' ').replace(/\berr\b/gi, 'error');
+            return cleaned;
+        }
+
+        function formatValidationSummary(result, reason) {
+            if (!result) return '';
+            if (isValidationOk(result)) return 'successful validation checks';
+            const detail = humanizeValidationDetail(reason || result);
+            return detail ? `validation issue (${detail})` : 'validation issue';
+        }
+
+        function collectFactors(row, topRow) {
+            const factors = new Set();
+            const detail = {};
             const validation = row?.validation_result;
             if (validation && !isValidationOk(validation)) {
-                const base = `validation ${String(validation)}`;
-                if (row?.validation_reason) {
-                    reasons.push(`${base} (${row.validation_reason})`);
-                } else {
-                    reasons.push(base);
-                }
+                factors.add('validation');
+                detail.validation = formatValidationSummary(validation, row?.validation_reason);
             }
 
             const topResolution = parseResolutionValue(topRow?.resolution);
             const rowResolution = parseResolutionValue(row?.resolution);
             if (topResolution && rowResolution && rowResolution < topResolution) {
-                reasons.push(`lower resolution (${rowResolution}p vs ${topResolution}p)`);
+                factors.add('resolution');
+                detail.resolution = `${rowResolution}p vs ${topResolution}p`;
             }
 
             const topBitrate = Number(topRow?.bitrate_kbps);
             const rowBitrate = Number(row?.bitrate_kbps);
             if (!Number.isNaN(topBitrate) && !Number.isNaN(rowBitrate) && topBitrate > 0) {
                 if (rowBitrate < topBitrate * 0.9) {
-                    reasons.push(`lower bitrate (${Math.round(rowBitrate)} vs ${Math.round(topBitrate)} kbps)`);
+                    factors.add('bitrate');
+                    detail.bitrate = `${Math.round(rowBitrate)} vs ${Math.round(topBitrate)} kbps`;
                 }
             }
 
@@ -619,11 +652,24 @@
             if (!Number.isNaN(topScore) && !Number.isNaN(rowScore) && rowScore < topScore) {
                 const diff = topScore - rowScore;
                 if (diff >= 0.1) {
-                    reasons.push(`score lower by ${diff.toFixed(1)} points`);
+                    factors.add('score');
+                    detail.score = `${diff.toFixed(1)} points behind`;
                 }
             }
 
-            return reasons;
+            return { factors, detail };
+        }
+
+        function formatFactorsList(factors) {
+            const phrases = {
+                validation: 'validation stability',
+                resolution: 'resolution consistency',
+                bitrate: 'effective bitrate',
+                score: 'overall quality score'
+            };
+            return Array.from(factors)
+                .map((f) => phrases[f])
+                .filter(Boolean);
         }
 
         function renderOrderingExplanation(ordering) {
@@ -664,50 +710,52 @@
 
                     const topName = escapeHtml(top?.stream_name || `Stream ${top?.stream_id ?? ''}`);
                     const topReasons = [];
-                    if (top?.resolution) topReasons.push(`met ${escapeHtml(String(top.resolution))} resolution`);
-                    if (top?.validation_result) {
-                        topReasons.push(isValidationOk(top.validation_result)
-                            ? 'passed validation'
-                            : `showed ${escapeHtml(String(top.validation_result))} validation`);
-                    }
-                    if (top?.bitrate_kbps) topReasons.push(`reported ${fmtBitrate(top.bitrate_kbps)}`);
+                    if (top?.resolution) topReasons.push(`stable ${escapeHtml(String(top.resolution))} resolution`);
+                    const validationSummary = formatValidationSummary(top?.validation_result, top?.validation_reason);
+                    if (validationSummary) topReasons.push(escapeHtml(validationSummary));
+                    if (top?.bitrate_kbps) topReasons.push(`strong bitrate (${fmtBitrate(top.bitrate_kbps)})`);
                     if (top?.final_score !== null && top?.final_score !== undefined) {
-                        topReasons.push(`scored ${formatScore(top.final_score)}`);
+                        topReasons.push(`highest overall quality score (${formatScore(top.final_score)})`);
                     }
                     const topReasonText = topReasons.length
                         ? topReasons.join(', ')
-                        : 'ranked highest across the checks';
+                        : 'the strongest overall performance across the checks';
 
-                    const topLine = `Slot 1 selected for <strong>${topName}</strong> because it ${topReasonText}.`;
+                    const topLine = `Chosen as the top stream: <strong>${topName}</strong> because it delivered ${topReasonText}.`;
 
-                    const alternatives = ordered.slice(1, 3);
-                    const alternativeLines = alternatives.map((row) => {
-                        const reasons = buildReason(row, top);
-                        const reasonText = reasons.length
-                            ? escapeHtml(reasons.join('; '))
-                            : 'ranked lower due to overall score';
-                        return `<li>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)} ranked lower because ${reasonText}.</li>`;
+                    const nonTop = ordered.slice(1);
+                    const factorSet = new Set();
+                    const validationHighlights = [];
+
+                    nonTop.forEach((row) => {
+                        const { factors, detail } = collectFactors(row, top);
+                        factors.forEach((f) => factorSet.add(f));
+                        if (detail.validation && validationHighlights.length < 2) {
+                            validationHighlights.push({
+                                name: escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`),
+                                note: escapeHtml(detail.validation)
+                            });
+                        }
                     });
 
-                    const lowRanked = ordered.slice(Math.max(ordered.length - 2, 1));
-                    const altIds = new Set(alternatives.map((r) => r?.stream_id));
-                    const lowReasons = new Set();
-                    lowRanked
-                        .filter((row) => !altIds.has(row?.stream_id))
-                        .forEach((row) => {
-                            buildReason(row, top).forEach((reason) => lowReasons.add(reason));
-                        });
+                    const factorsForSummary = new Set(factorSet);
+                    if (validationHighlights.length) factorsForSummary.delete('validation');
 
-                    const lowSummary = lowReasons.size
-                        ? `Lower-ranked streams fell behind due to ${escapeHtml(Array.from(lowReasons).join('; '))}.`
-                        : 'Lower-ranked streams trailed the top pick on overall score.';
+                    const factorList = formatFactorsList(factorsForSummary);
+                    const lowSummary = factorList.length
+                        ? `Other available streams ranked lower mainly due to ${escapeHtml(factorList.join(', '))}.`
+                        : 'Other available streams ranked lower on overall performance.';
+
+                    const bulletLines = validationHighlights.map((item) => (
+                        `<li>${item.name} showed ${item.note}.</li>`
+                    ));
 
                     return `
                         <div class="explanation-block">
                             <h3>${label}</h3>
                             <p>${topLine}</p>
-                            ${alternativeLines.length ? `<p class="muted small">Other streams ranked lower:</p><ul>${alternativeLines.join('')}</ul>` : ''}
                             <p class="muted small">${lowSummary}</p>
+                            ${bulletLines.length ? `<p class="muted small">Notable differences:</p><ul>${bulletLines.join('')}</ul>` : ''}
                         </div>
                     `;
                 } catch (err) {
