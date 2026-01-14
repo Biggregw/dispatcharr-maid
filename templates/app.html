@@ -90,36 +90,13 @@
             background: #fff;
         }
 
-        .group-item:hover {
-            border-color: #667eea;
-            background: #f7fafc;
-        }
-
-        .group-item.selected {
-            border-color: #667eea;
-            background: #eef2ff;
-        }
-
         .group-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             gap: 12px;
-        }
-
-        .group-select {
-            display: flex;
-            align-items: center;
-            gap: 10px;
             cursor: pointer;
-            flex: 1;
-        }
-
-        .group-item input[type="checkbox"] {
-            width: 20px;
-            height: 20px;
-            margin-right: 2px;
-            cursor: pointer;
+            padding: 6px 4px;
         }
 
         .group-name {
@@ -135,8 +112,13 @@
 
         .group-toggle {
             font-size: 1.1em;
-            padding: 4px 8px;
-            border-radius: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: #eef2ff;
+            border: 1px solid #c7d2fe;
+            font-weight: 700;
+            min-width: 44px;
+            text-align: center;
         }
 
         .group-channels {
@@ -165,6 +147,44 @@
             flex-wrap: wrap;
         }
 
+        .channel-actions .text-btn {
+            text-decoration: none;
+            border: 1px solid #cbd5f5;
+            background: #eef2ff;
+            border-radius: 8px;
+            padding: 6px 12px;
+        }
+
+        .channel-actions .text-btn:hover {
+            background: #e0e7ff;
+            color: #4338ca;
+        }
+
+        .channel-empty {
+            margin-top: 8px;
+            font-size: 0.9em;
+            color: #94a3b8;
+        }
+
+        .selection-summary {
+            background: #eef2ff;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.15);
+        }
+
+        .summary-value--emphasis {
+            color: #3730a3;
+        }
+
+        .summary-helper {
+            margin-top: 6px;
+            font-size: 0.85em;
+            color: #4b5563;
+        }
+
         .text-btn[disabled] {
             color: #a0aec0;
             cursor: not-allowed;
@@ -183,27 +203,11 @@
             background: #f7fafc;
         }
 
-        .channel-item.disabled {
-            opacity: 0.6;
-        }
-
         .channel-item input[type="checkbox"] {
             width: 18px;
             height: 18px;
             margin-right: 6px;
             cursor: pointer;
-        }
-
-        .channel-item input[type="checkbox"][disabled] {
-            cursor: not-allowed;
-        }
-
-        .channel-exclude-label {
-            font-size: 0.75em;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            color: #a0aec0;
-            margin-right: 10px;
         }
 
         .channel-number {
@@ -730,15 +734,6 @@
             color: #1f2937;
         }
         
-        /* Selection summary */
-        .selection-summary {
-            background: #eef2ff;
-            border: 2px solid #667eea;
-            border-radius: 10px;
-            padding: 15px;
-            margin: 20px 0;
-        }
-        
         .summary-row {
             display: flex;
             justify-content: space-between;
@@ -856,15 +851,15 @@
         <!-- Scope Selection -->
         <div class="card" id="scope-selection">
             <h2>1. Scope selection</h2>
+            <p style="margin-bottom: 12px; color: #4b5563; font-size: 0.95em;">
+                Select the channels you want to include. Expand a group to pick channels or use Select all.
+            </p>
 
             <div id="group-loading" class="alert alert-info">
                 <span class="spinner"></span> Loading channel groups...
             </div>
             <div id="group-error" class="alert alert-error hidden"></div>
             <div id="group-container" class="hidden">
-                <div class="alert alert-info">
-                    Select at least one group to continue. Expand a group to optionally refine channels. Leaving all channels unchecked keeps the entire group in scope.
-                </div>
                 <div class="group-grid" id="group-grid"></div>
             </div>
         </div>
@@ -875,13 +870,10 @@
             
             <div class="selection-summary run-jobs-summary">
                 <div class="summary-row">
-                    <span class="summary-label">Groups:</span>
-                    <span class="summary-value" id="selected-groups-summary"></span>
+                    <span class="summary-label">Channels selected:</span>
+                    <span class="summary-value summary-value--emphasis" id="selected-channels-summary">None yet</span>
                 </div>
-                <div class="summary-row">
-                    <span class="summary-label">Channels:</span>
-                    <span class="summary-value" id="selected-channels-summary">All channels in selected groups</span>
-                </div>
+                <div class="summary-helper">Only checked channels will be optimized.</div>
             </div>
 
             <div class="run-jobs-controls">
@@ -999,9 +991,7 @@
     <script src="{{ url_for('static', filename='quality_insight.js') }}"></script>
     <script>
         // Global state
-        let selectedGroups = [];
-        let selectedChannels = null; // null = all channels, [] = specific channels
-        const defaultChannelScopeLabel = 'All channels in selected groups';
+        let selectedChannels = [];
         let allGroups = [];
         let allChannels = {};
         const groupExpansionState = {};
@@ -1106,33 +1096,34 @@
 
             allGroups.forEach(group => {
                 const item = document.createElement('div');
-                const isSelected = selectedGroups.includes(group.id);
                 const isExpanded = Boolean(groupExpansionState[group.id]);
                 item.className = 'group-item';
 
                 item.innerHTML = `
-                    <div class="group-header">
-                        <label class="group-select">
-                            <input type="checkbox" id="group-${group.id}" ${isSelected ? 'checked' : ''}>
-                            <div>
-                                <div class="group-name">${group.name}</div>
-                                <div class="group-count">${group.channel_count} channels</div>
-                            </div>
-                        </label>
-                        <button type="button" class="text-btn group-toggle" aria-expanded="${isExpanded}" aria-controls="group-channels-${group.id}">
-                            ${isExpanded ? '▾' : '▸'}
+                    <div class="group-header" role="button" tabindex="0" aria-expanded="${isExpanded}" aria-controls="group-channels-${group.id}">
+                        <div>
+                            <div class="group-name">${group.name}</div>
+                            <div class="group-count">${group.channel_count} channels</div>
+                        </div>
+                        <button type="button" class="text-btn group-toggle" aria-hidden="true" tabindex="-1">
+                            ${isExpanded ? '▾ Collapse' : '▸ Expand'}
                         </button>
                     </div>
                     <div class="group-channels ${isExpanded ? '' : 'hidden'}" id="group-channels-${group.id}"></div>
                 `;
 
-                if (isSelected) {
-                    item.classList.add('selected');
-                }
-
-                const checkbox = item.querySelector(`#group-${group.id}`);
-                checkbox.addEventListener('change', (event) => {
-                    toggleGroupSelection(group.id, event.target.checked);
+                const header = item.querySelector('.group-header');
+                header.addEventListener('click', (event) => {
+                    if (event.target.closest('button, a, input')) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    toggleGroupExpansion(group.id);
+                });
+                header.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        toggleGroupExpansion(group.id);
+                    }
                 });
 
                 const toggleButton = item.querySelector('.group-toggle');
@@ -1159,22 +1150,6 @@
                 groupChannelSelections[key] = new Set();
             }
             return groupChannelSelections[key];
-        }
-
-        // Toggle group selection
-        function toggleGroupSelection(groupId, isChecked) {
-            const normalizedId = Number(groupId);
-            if (isChecked) {
-                if (!selectedGroups.includes(normalizedId)) {
-                    selectedGroups.push(normalizedId);
-                }
-                getGroupChannelSelections(normalizedId);
-            } else {
-                selectedGroups = selectedGroups.filter(id => id !== normalizedId);
-                delete groupChannelSelections[String(normalizedId)];
-            }
-            renderGroups();
-            updateSelectionState();
         }
 
         // Toggle group expansion to show nested channels.
@@ -1219,7 +1194,6 @@
             if (!container) return;
 
             const normalizedId = Number(groupId);
-            const isSelected = selectedGroups.includes(normalizedId);
             const channels = allChannels[normalizedId];
 
             if (!channels) {
@@ -1234,11 +1208,9 @@
             const selections = getGroupChannelSelections(normalizedId);
             const channelMarkup = channels.map(ch => {
                 const isSelectedChannel = selections.has(ch.id);
-                const isDisabled = !isSelected;
                 return `
-                    <div class="channel-item ${isDisabled ? 'disabled' : ''}" data-channel-id="${ch.id}" data-base-search-text="${ch.base_search_text || ch.name}">
-                        <input type="checkbox" ${isSelectedChannel ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} aria-label="Include channel ${ch.name}">
-                        <span class="channel-exclude-label">Include</span>
+                    <div class="channel-item" data-channel-id="${ch.id}" data-base-search-text="${ch.base_search_text || ch.name}">
+                        <input type="checkbox" ${isSelectedChannel ? 'checked' : ''} aria-label="Select channel ${ch.name}">
                         <span class="channel-number">${ch.channel_number}</span>
                         <span class="channel-name">${ch.name}</span>
                         <span class="channel-stream-count">· ${ch.stream_count} stream${ch.stream_count === 1 ? '' : 's'}</span>
@@ -1247,21 +1219,18 @@
             }).join('');
 
             container.innerHTML = `
-                <div class="alert alert-info">
-                    Channels can only be refined after their group is selected. If none are checked, the full group stays included.
-                </div>
                 <div class="channel-actions">
-                    <button type="button" class="text-btn channel-action-btn" ${isSelected ? '' : 'disabled'} data-action="select-all">Select all</button>
-                    <button type="button" class="text-btn channel-action-btn" ${isSelected ? '' : 'disabled'} data-action="clear-all">Clear all</button>
+                    <button type="button" class="text-btn channel-action-btn" data-action="select-all">Select all</button>
+                    <button type="button" class="text-btn channel-action-btn" data-action="clear-all">Clear all</button>
                 </div>
                 <div class="channel-list">${channelMarkup}</div>
+                ${selections.size === 0 ? '<div class="channel-empty">No channels selected in this group.</div>' : ''}
             `;
 
             container.querySelectorAll('.channel-action-btn').forEach(button => {
                 button.addEventListener('click', (event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    if (!isSelected) return;
                     const action = button.dataset.action;
                     if (action === 'select-all') {
                         toggleAllChannels(normalizedId, true);
@@ -1289,73 +1258,57 @@
             updateSelectionState();
         }
 
-        function hasChannelRefinements() {
-            return selectedGroups.some(groupId => getGroupChannelSelections(groupId).size > 0);
+        function getSelectedGroupIds() {
+            return Object.entries(groupChannelSelections)
+                .filter(([, selections]) => selections && selections.size > 0)
+                .map(([groupId]) => Number(groupId));
         }
 
-        function getSelectedChannelCount() {
-            return selectedGroups.reduce((sum, groupId) => {
-                const group = allGroups.find(g => g.id === groupId);
-                const selections = getGroupChannelSelections(groupId);
-                if (selections.size > 0) {
-                    return sum + selections.size;
-                }
-                return sum + (group?.channel_count || 0);
-            }, 0);
-        }
-
-        function computeSelectedChannelsFromLoadedData() {
-            if (!hasChannelRefinements()) {
-                return null;
-            }
-
-            const selected = [];
-            for (const groupId of selectedGroups) {
-                const channels = allChannels[groupId];
-                if (!channels) {
-                    return null;
-                }
-                const selections = getGroupChannelSelections(groupId);
-                if (selections.size === 0) {
-                    channels.forEach(ch => selected.push(ch.id));
-                    continue;
-                }
-                selections.forEach(id => selected.push(id));
-            }
-            return selected;
+        function getSelectedChannelIds() {
+            const selected = new Set();
+            Object.values(groupChannelSelections).forEach((selections) => {
+                if (!selections) return;
+                selections.forEach((id) => selected.add(id));
+            });
+            return Array.from(selected);
         }
 
         async function updateSelectionState() {
-            const computed = computeSelectedChannelsFromLoadedData();
-            if (computed !== null) {
-                selectedChannels = computed;
-            } else if (!hasChannelRefinements()) {
-                selectedChannels = null;
-            }
+            // Explicit selection model: only checked channels define the scope.
+            selectedChannels = getSelectedChannelIds();
 
             updateScopeSummary();
             updateRefreshUiState();
             updateRunControlsState();
 
-            if (selectedChannels && selectedChannels.length === 1) {
+            if (selectedChannels.length === 1) {
                 loadDerivedRefreshFilters(selectedChannels[0]);
             }
         }
 
         function updateScopeSummary() {
-            const groupNames = selectedGroups.map(id => {
-                const group = allGroups.find(g => g.id === id);
-                return group ? group.name : id;
-            }).join(', ');
-            document.getElementById('selected-groups-summary').textContent = groupNames || 'None';
+            const summary = document.getElementById('selected-channels-summary');
+            if (!summary) return;
 
-            if (!hasChannelRefinements()) {
-                document.getElementById('selected-channels-summary').textContent = defaultChannelScopeLabel;
+            if (!selectedChannels.length) {
+                summary.textContent = 'None yet';
                 return;
             }
 
-            const remaining = getSelectedChannelCount();
-            document.getElementById('selected-channels-summary').textContent = `${remaining} selected channel${remaining === 1 ? '' : 's'}`;
+            const names = selectedChannels.map(id => {
+                for (const groupId in allChannels) {
+                    const channel = allChannels[groupId].find(ch => ch.id === id);
+                    if (channel) return channel.name;
+                }
+                return `Channel ${id}`;
+            });
+
+            const maxShown = 3;
+            if (names.length > maxShown) {
+                summary.textContent = `${names.slice(0, maxShown).join(', ')} +${names.length - maxShown} more`;
+            } else {
+                summary.textContent = names.join(', ');
+            }
         }
 
         function updateRefreshUiState() {
@@ -1370,7 +1323,7 @@
                 }
             }
 
-            if (!selectedChannels || selectedChannels.length !== 1) {
+            if (selectedChannels.length !== 1) {
                 derivedRefreshChannelId = null;
                 derivedExcludePlusOne = false;
                 derivedStreamNameRegex = null;
@@ -1385,43 +1338,18 @@
             // Show/hide refresh filters based on selection
             const refreshFiltersDiv = document.getElementById('refreshFilters');
             if (refreshFiltersDiv) {
-                if (selectedChannels && selectedChannels.length === 1) {
-                    refreshFiltersDiv.style.display = 'block';
-                } else {
-                    refreshFiltersDiv.style.display = 'none';
-                }
+                refreshFiltersDiv.style.display = selectedChannels.length === 1 ? 'block' : 'none';
             }
         }
 
         async function getSelectedChannelsForPayload() {
-            if (!hasChannelRefinements()) {
-                return null;
-            }
-
-            // Selection rules (explicit):
-            // - Group checked → group included.
-            // - Group checked + no channels selected → all channels in that group included.
-            // - Group checked + some channels selected → only selected channels included.
-            // Channels start unticked; channel selection is always opt-in.
-            await ensureChannelsLoaded([...selectedGroups]);
-
-            const selected = [];
-            for (const groupId of selectedGroups) {
-                const selections = getGroupChannelSelections(groupId);
-                const channels = allChannels[groupId] || [];
-                if (selections.size === 0) {
-                    channels.forEach(ch => selected.push(ch.id));
-                    continue;
-                }
-                selections.forEach(id => selected.push(id));
-            }
-            return selected;
+            return getSelectedChannelIds();
         }
 
         function updateRunControlsState() {
             const btn = document.getElementById('optimize-streams-button');
             if (btn) {
-                btn.disabled = selectedGroups.length === 0;
+                btn.disabled = selectedChannels.length === 0;
             }
         }
 
@@ -1728,13 +1656,14 @@
                 updateRefreshUiState();
 
                 // Get group names
-                const groupNames = selectedGroups.map(id => {
+                const selectedGroupIds = getSelectedGroupIds();
+                const groupNames = selectedGroupIds.map(id => {
                     const group = allGroups.find(g => g.id === id);
                     return group ? group.name : `Group ${id}`;
                 }).join(', ');
                 
                 // Get channel names
-                let channelNames = defaultChannelScopeLabel;
+                let channelNames = 'No channels selected';
                 if (selectedChannelsForPayload && selectedChannelsForPayload.length > 0) {
                     const names = selectedChannelsForPayload.map(id => {
                         // Find channel in allChannels
@@ -1760,7 +1689,7 @@
                 
                 const payload = {
                     job_type: jobType,
-                    groups: selectedGroups,
+                    groups: selectedGroupIds,
                     channels: selectedChannelsForPayload,
                     group_names: groupNames,
                     channel_names: channelNames,
@@ -2361,7 +2290,7 @@
                 
                 // Build context line: Group > Channel
                 let context = job.group_names || 'Unknown';
-                if (job.channel_names && !['All channels', defaultChannelScopeLabel].includes(job.channel_names)) {
+                if (job.channel_names && job.channel_names !== 'No channels selected') {
                     context += ` > ${job.channel_names}`;
                 }
                 
