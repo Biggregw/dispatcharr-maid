@@ -1971,10 +1971,64 @@ def order_streams_for_channel(
     """Order streams using a continuous, deterministic score.
 
     All streams remain present; validation only reduces confidence via a penalty.
+    Slot 1 gets an explicit safety eligibility pass before applying the usual order.
     """
 
     if not records:
         return []
+
+    def _validation_tokens(record):
+        reason = str(record.get('validation_reason') or '')
+        return [token for token in reason.split(';') if token]
+
+    def _is_buffering(record):
+        # Buffering detection is conservative and based on timeout signals only;
+        # we intentionally assume buffering when evidence is ambiguous to protect
+        # slot-1 UX without adding new probes or runtime hooks.
+        status = str(record.get('status') or '').strip().lower()
+        if status == 'timeout':
+            return True
+        try:
+            if int(record.get('err_timeout', 0) or 0) > 0:
+                return True
+        except Exception:
+            pass
+        tokens = _validation_tokens(record)
+        if any(token.startswith('err_timeout') for token in tokens):
+            return True
+        validation_result = str(record.get('validation_result') or '').strip().lower()
+        if validation_result == 'fail' and not tokens and status in ('', 'ok'):
+            return True
+        return False
+
+    def _is_probe_failure(record):
+        try:
+            frames_decoded = float(record.get('avg_frames_decoded', record.get('frames_decoded', 0)))
+        except Exception:
+            frames_decoded = None
+        if frames_decoded == 0:
+            return True
+        validation_result = str(record.get('validation_result') or record.get('status') or '').strip().lower()
+        if validation_result == 'fail' and not _is_buffering(record):
+            return True
+        status = str(record.get('status') or '').strip().lower()
+        if status and status not in ('ok', 'timeout'):
+            return True
+        return any(
+            token in ('err_decode', 'err_discontinuity', 'no_frames_decoded')
+            or token.startswith('status:')
+            for token in _validation_tokens(record)
+        )
+
+    def _is_hd_or_better(record):
+        resolution = record.get('resolution')
+        parsed = _parse_resolution(resolution)
+        if parsed:
+            _, height = parsed
+            return height >= 720
+        # Fall back to coarse categories only when numeric parsing is impossible.
+        category = _resolution_category(resolution)
+        return category in ('hd', 'uhd')
 
     def _score(record):
         ordering = record.get('ordering_score')
@@ -1988,7 +2042,25 @@ def order_streams_for_channel(
         return (1, score_value + _stable_tiebreaker(tie_value))
 
     ordered = sorted(list(records), key=_score, reverse=True)
-    return [r.get('stream_id') for r in ordered]
+
+    # Slot-1 relaxation ladder (explicit UX contract):
+    # 1) HD+, no buffering, no probe failure
+    # 2) HD+, no probe failure
+    # 3) HD+ only
+    # 4) Any stream (last resort)
+    slot1_candidates = [r for r in ordered if _is_hd_or_better(r) and not _is_buffering(r) and not _is_probe_failure(r)]
+    if not slot1_candidates:
+        slot1_candidates = [r for r in ordered if _is_hd_or_better(r) and not _is_probe_failure(r)]
+    if not slot1_candidates:
+        slot1_candidates = [r for r in ordered if _is_hd_or_better(r)]
+    if not slot1_candidates:
+        slot1_candidates = ordered
+
+    slot1 = slot1_candidates[0].get('stream_id') if slot1_candidates else None
+    ordered_ids = [r.get('stream_id') for r in ordered]
+    if slot1 is None:
+        return ordered_ids
+    return [slot1] + [sid for sid in ordered_ids if sid != slot1]
 
 
 def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_changes=True):
