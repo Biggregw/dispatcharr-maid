@@ -112,100 +112,87 @@
         /* Group selection */
         .group-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 15px;
             margin: 20px 0;
         }
-        
+
         .group-item {
             border: 2px solid #e2e8f0;
             border-radius: 10px;
-            padding: 15px;
-            cursor: pointer;
+            padding: 14px;
             transition: all 0.3s;
+            background: #fff;
         }
-        
+
         .group-item:hover {
             border-color: #667eea;
             background: #f7fafc;
         }
-        
+
         .group-item.selected {
             border-color: #667eea;
             background: #eef2ff;
         }
-        
+
+        .group-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .group-select {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            flex: 1;
+        }
+
         .group-item input[type="checkbox"] {
             width: 20px;
             height: 20px;
-            margin-right: 10px;
+            margin-right: 2px;
             cursor: pointer;
         }
-        
+
         .group-name {
             font-weight: 600;
             font-size: 1.1em;
             margin-bottom: 5px;
         }
-        
+
         .group-count {
             color: #718096;
             font-size: 0.9em;
         }
-        
-        /* Channel selection */
-        .channel-search {
-            margin-bottom: 20px;
-        }
-        
-        .channel-search input {
-            width: 100%;
-            padding: 12px 20px;
-            border: 2px solid #e2e8f0;
-            border-radius: 10px;
-            font-size: 1em;
-        }
-        
-        .channel-search input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        .channel-group-section {
-            margin-bottom: 25px;
-            border: 2px solid #e2e8f0;
-            border-radius: 10px;
-            padding: 15px;
-        }
-        
-        .channel-group-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        
-        .channel-group-title {
-            font-weight: 600;
+
+        .group-toggle {
             font-size: 1.1em;
-            color: #2d3748;
+            padding: 4px 8px;
+            border-radius: 6px;
         }
-        
-        .channel-group-actions {
-            display: flex;
-            gap: 10px;
+
+        .group-channels {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #e2e8f0;
         }
-        
+
+        .group-channels.hidden {
+            display: none;
+        }
+
+        /* Channel selection */
         .channel-list {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
             gap: 10px;
-            max-height: 300px;
+            max-height: 260px;
             overflow-y: auto;
         }
-        
+
         .channel-item {
             display: flex;
             align-items: center;
@@ -213,25 +200,33 @@
             border-radius: 5px;
             transition: background 0.2s;
         }
-        
+
         .channel-item:hover {
             background: #f7fafc;
         }
-        
+
+        .channel-item.disabled {
+            opacity: 0.6;
+        }
+
         .channel-item input[type="checkbox"] {
             width: 18px;
             height: 18px;
             margin-right: 10px;
             cursor: pointer;
         }
-        
+
+        .channel-item input[type="checkbox"][disabled] {
+            cursor: not-allowed;
+        }
+
         .channel-number {
             font-weight: 600;
             color: #667eea;
             margin-right: 8px;
             min-width: 40px;
         }
-        
+
         .channel-name {
             color: #2d3748;
             font-size: 0.95em;
@@ -866,21 +861,17 @@
         <div class="steps">
             <div class="step active" id="step-indicator-1">
                 <div class="step-number">1</div>
-                <span>Select Groups</span>
+                <span>Select Scope</span>
             </div>
             <div class="step" id="step-indicator-2">
                 <div class="step-number">2</div>
-                <span>Select Channels</span>
-            </div>
-            <div class="step" id="step-indicator-3">
-                <div class="step-number">3</div>
                 <span>Run Jobs</span>
             </div>
         </div>
         
-        <!-- Step 1: Group Selection -->
+        <!-- Step 1: Scope Selection -->
         <div class="card" id="step-1">
-            <h2>📋 Step 1: Select Channel Groups</h2>
+            <h2>📋 Step 1: Select Groups & Optional Channels</h2>
 
             <div id="group-loading" class="alert alert-info">
                 <span class="spinner"></span> Loading channel groups...
@@ -888,63 +879,31 @@
             <div id="group-error" class="alert alert-error hidden"></div>
             <div id="group-container" class="hidden">
                 <div class="alert alert-info">
-                    Select at least one group to continue. If none are chosen, the Next step stays disabled.
+                    Select at least one group to continue. Expand a group to optionally exclude specific channels.
                 </div>
                 <div class="group-grid" id="group-grid"></div>
+                <div class="selection-summary">
+                    <div class="summary-row">
+                        <span class="summary-label">Selected Groups:</span>
+                        <span class="summary-value" id="selected-groups-summary"></span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Channel Scope:</span>
+                        <span class="summary-value" id="selected-channels-summary">All channels</span>
+                    </div>
+                </div>
                 <div class="nav-buttons">
                     <div></div>
                     <button class="btn btn-next" id="btn-next-1" onclick="goToStep2()" disabled>
-                        Next: Select Channels →
+                        Next: Run Jobs →
                     </button>
                 </div>
             </div>
         </div>
-        
-        <!-- Step 2: Channel Selection -->
+
+        <!-- Step 2: Actions & Jobs -->
         <div class="card hidden" id="step-2">
-            <h2>🎯 Step 2: Select Specific Channels (Optional)</h2>
-            <div class="alert alert-info">
-                <strong>Optional:</strong> Select specific channels to analyze. Leaving all channels unselected will analyze every channel in the selected groups.
-            </div>
-            
-            <div class="selection-summary">
-                <div class="summary-row">
-                    <span class="summary-label">Selected Groups:</span>
-                    <span class="summary-value" id="selected-groups-summary"></span>
-                </div>
-                <div class="summary-row">
-                    <span class="summary-label">Total Channels Available:</span>
-                    <span class="summary-value" id="total-channels-count">0</span>
-                </div>
-                <div class="summary-row">
-                    <span class="summary-label">Channels Selected:</span>
-                    <span class="summary-value" id="selected-channels-count">0 (All)</span>
-                </div>
-            </div>
-            
-            <div class="channel-search">
-                <input type="text" id="channel-search-input" placeholder="🔍 Search channels by name or number..." onkeyup="filterChannels()">
-            </div>
-            
-            <div id="channel-loading" class="alert alert-info">
-                <span class="spinner"></span> Loading channels...
-            </div>
-            <div id="channel-error" class="alert alert-error hidden"></div>
-            <div id="channel-container" class="hidden"></div>
-            
-            <div class="nav-buttons">
-                <button class="btn btn-back" onclick="goToStep1()">
-                    ← Back to Groups
-                </button>
-                <button class="btn btn-next" onclick="goToStep3()">
-                    Next: Run Jobs →
-                </button>
-            </div>
-        </div>
-        
-        <!-- Step 3: Actions & Jobs -->
-        <div class="card hidden" id="step-3">
-            <h2>⚡ Step 3: Run Jobs</h2>
+            <h2>⚡ Step 2: Run Jobs</h2>
             
             <div class="selection-summary">
                 <div class="summary-row">
@@ -994,8 +953,8 @@
             </div>
 
             <div class="nav-buttons">
-                <button class="btn btn-back" onclick="goToStep2()">
-                    ← Back to Channels
+                <button class="btn btn-back" onclick="goToStep1()">
+                    ← Back to Scope
                 </button>
                 <button class="btn btn-back" onclick="goToStep1()">
                     ← Start Over
@@ -1083,6 +1042,9 @@
         let selectedChannels = null; // null = all channels, [] = specific channels
         let allGroups = [];
         let allChannels = {};
+        const groupExpansionState = {};
+        const groupChannelExclusions = {};
+        const groupChannelLoading = new Set();
         let currentJobId = null;
         let jobCheckInterval = null;
         let refreshPreviewStreams = [];
@@ -1234,189 +1196,241 @@
         function renderGroups() {
             const grid = document.getElementById('group-grid');
             grid.innerHTML = '';
-            
+
             allGroups.forEach(group => {
                 const item = document.createElement('div');
+                const isSelected = selectedGroups.includes(group.id);
+                const isExpanded = Boolean(groupExpansionState[group.id]);
                 item.className = 'group-item';
-                item.onclick = () => toggleGroup(group.id);
-                
+
                 item.innerHTML = `
-                    <label style="display: flex; align-items: center; cursor: pointer;">
-                        <input type="checkbox" id="group-${group.id}" ${selectedGroups.includes(group.id) ? 'checked' : ''}>
-                        <div>
-                            <div class="group-name">${group.name}</div>
-                            <div class="group-count">${group.channel_count} channels</div>
-                        </div>
-                    </label>
+                    <div class="group-header">
+                        <label class="group-select">
+                            <input type="checkbox" id="group-${group.id}" ${isSelected ? 'checked' : ''}>
+                            <div>
+                                <div class="group-name">${group.name}</div>
+                                <div class="group-count">${group.channel_count} channels</div>
+                            </div>
+                        </label>
+                        <button type="button" class="text-btn group-toggle" aria-expanded="${isExpanded}" aria-controls="group-channels-${group.id}">
+                            ${isExpanded ? '▾' : '▸'}
+                        </button>
+                    </div>
+                    <div class="group-channels ${isExpanded ? '' : 'hidden'}" id="group-channels-${group.id}"></div>
                 `;
-                
-                if (selectedGroups.includes(group.id)) {
+
+                if (isSelected) {
                     item.classList.add('selected');
                 }
-                
+
+                const checkbox = item.querySelector(`#group-${group.id}`);
+                checkbox.addEventListener('change', (event) => {
+                    toggleGroupSelection(group.id, event.target.checked);
+                });
+
+                const toggleButton = item.querySelector('.group-toggle');
+                toggleButton.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    toggleGroupExpansion(group.id);
+                });
+
                 grid.appendChild(item);
+
+                if (isExpanded) {
+                    renderGroupChannels(group.id);
+                }
             });
-            
+
+            updateScopeSummary();
             updateStep1Button();
         }
-        
+
+        function getGroupExclusions(groupId) {
+            const key = String(groupId);
+            if (!groupChannelExclusions[key]) {
+                groupChannelExclusions[key] = new Set();
+            }
+            return groupChannelExclusions[key];
+        }
+
         // Toggle group selection
-        function toggleGroup(groupId) {
-            const index = selectedGroups.indexOf(groupId);
-            if (index > -1) {
-                selectedGroups.splice(index, 1);
+        function toggleGroupSelection(groupId, isChecked) {
+            const normalizedId = Number(groupId);
+            if (isChecked) {
+                if (!selectedGroups.includes(normalizedId)) {
+                    selectedGroups.push(normalizedId);
+                }
+                getGroupExclusions(normalizedId);
             } else {
-                selectedGroups.push(groupId);
+                selectedGroups = selectedGroups.filter(id => id !== normalizedId);
+                delete groupChannelExclusions[String(normalizedId)];
+            }
+            renderGroups();
+            updateSelectionState();
+        }
+
+        // Toggle group expansion to show nested channels.
+        function toggleGroupExpansion(groupId) {
+            const normalizedId = Number(groupId);
+            groupExpansionState[normalizedId] = !groupExpansionState[normalizedId];
+            if (groupExpansionState[normalizedId]) {
+                ensureChannelsLoaded([normalizedId]);
             }
             renderGroups();
         }
-        
-        // Update step 1 button
-        function updateStep1Button() {
-            const btn = document.getElementById('btn-next-1');
-            btn.disabled = selectedGroups.length === 0;
+
+        async function ensureChannelsLoaded(groupIds) {
+            const missing = groupIds.filter(id => !allChannels[id] && !groupChannelLoading.has(id));
+            if (!missing.length) return;
+
+            missing.forEach(id => groupChannelLoading.add(id));
+            try {
+                const response = await fetch(`/api/channels?groups=${missing.join(',')}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    allChannels = { ...allChannels, ...data.channels };
+                } else {
+                    showError('group-error', data.error || 'Failed to load channels.');
+                }
+            } catch (error) {
+                showError('group-error', 'Failed to load channels: ' + error.message);
+            } finally {
+                missing.forEach(id => groupChannelLoading.delete(id));
+                missing.forEach(id => {
+                    if (groupExpansionState[id]) {
+                        renderGroupChannels(id);
+                    }
+                });
+                updateSelectionState();
+            }
         }
-        
-        // Go to step 2
-        async function goToStep2() {
-            if (selectedGroups.length === 0) return;
-            
-            // Update step indicators
-            document.getElementById('step-indicator-1').classList.remove('active');
-            document.getElementById('step-indicator-1').classList.add('completed');
-            document.getElementById('step-indicator-2').classList.add('active');
-            document.getElementById('step-indicator-3').classList.remove('active', 'completed');
-            
-            // Switch cards
-            document.getElementById('step-1').classList.add('hidden');
-            document.getElementById('step-2').classList.remove('hidden');
-            document.getElementById('step-3').classList.add('hidden');
-            
-            // Update summary
+
+        function renderGroupChannels(groupId) {
+            const container = document.getElementById(`group-channels-${groupId}`);
+            if (!container) return;
+
+            const normalizedId = Number(groupId);
+            const isSelected = selectedGroups.includes(normalizedId);
+            const channels = allChannels[normalizedId];
+
+            if (!channels) {
+                container.innerHTML = `
+                    <div class="alert alert-info">
+                        ${groupChannelLoading.has(normalizedId) ? 'Loading channels...' : 'Expand to load channels.'}
+                    </div>
+                `;
+                return;
+            }
+
+            const exclusions = getGroupExclusions(normalizedId);
+            const channelMarkup = channels.map(ch => {
+                const isExcluded = exclusions.has(ch.id);
+                const isChecked = isSelected && !isExcluded;
+                const isDisabled = !isSelected;
+                return `
+                    <div class="channel-item ${isDisabled ? 'disabled' : ''}" data-channel-id="${ch.id}" data-base-search-text="${ch.base_search_text || ch.name}">
+                        <input type="checkbox" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''}>
+                        <span class="channel-number">${ch.channel_number}</span>
+                        <span class="channel-name">${ch.name}</span>
+                        <span class="channel-stream-count">· ${ch.stream_count} stream${ch.stream_count === 1 ? '' : 's'}</span>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = `
+                <div class="alert alert-info">
+                    Channels can only be deselected after their group is selected.
+                </div>
+                <div class="channel-list">${channelMarkup}</div>
+            `;
+
+            container.querySelectorAll('.channel-item input[type="checkbox"]').forEach(checkbox => {
+                const channelId = parseInt(checkbox.closest('.channel-item').dataset.channelId, 10);
+                checkbox.addEventListener('change', (event) => {
+                    toggleChannelSelection(normalizedId, channelId, event.target.checked);
+                });
+            });
+        }
+
+        function toggleChannelSelection(groupId, channelId, isChecked) {
+            const exclusions = getGroupExclusions(groupId);
+            if (isChecked) {
+                exclusions.delete(channelId);
+            } else {
+                exclusions.add(channelId);
+            }
+            updateSelectionState();
+        }
+
+        function hasChannelRefinements() {
+            return selectedGroups.some(groupId => getGroupExclusions(groupId).size > 0);
+        }
+
+        function getSelectedChannelCount() {
+            const total = selectedGroups.reduce((sum, groupId) => {
+                const group = allGroups.find(g => g.id === groupId);
+                return sum + (group?.channel_count || 0);
+            }, 0);
+            const excluded = selectedGroups.reduce((sum, groupId) => sum + getGroupExclusions(groupId).size, 0);
+            return Math.max(total - excluded, 0);
+        }
+
+        function computeSelectedChannelsFromLoadedData() {
+            if (!hasChannelRefinements()) {
+                return null;
+            }
+
+            const selected = [];
+            for (const groupId of selectedGroups) {
+                const channels = allChannels[groupId];
+                if (!channels) {
+                    return null;
+                }
+                const exclusions = getGroupExclusions(groupId);
+                channels.forEach(ch => {
+                    if (!exclusions.has(ch.id)) {
+                        selected.push(ch.id);
+                    }
+                });
+            }
+            return selected;
+        }
+
+        async function updateSelectionState() {
+            const computed = computeSelectedChannelsFromLoadedData();
+            if (computed !== null) {
+                selectedChannels = computed;
+            } else if (!hasChannelRefinements()) {
+                selectedChannels = null;
+            }
+
+            updateScopeSummary();
+            updateRefreshUiState();
+        }
+
+        function updateScopeSummary() {
             const groupNames = selectedGroups.map(id => {
                 const group = allGroups.find(g => g.id === id);
                 return group ? group.name : id;
             }).join(', ');
-            document.getElementById('selected-groups-summary').textContent = groupNames;
-            
-            // Load channels
-            await loadChannels();
-        }
+            document.getElementById('selected-groups-summary').textContent = groupNames || 'None';
 
-        // Load channels for selected groups
-        async function loadChannels(prefillSelectedChannels = selectedChannels) {
-            try {
-                document.getElementById('channel-loading').classList.remove('hidden');
-                document.getElementById('channel-container').classList.add('hidden');
-                
-                const response = await fetch(`/api/channels?groups=${selectedGroups.join(',')}`);
-                const data = await response.json();
-                
-                if (data.success) {
-                    allChannels = data.channels;
-                    renderChannels(prefillSelectedChannels);
-                    updateChannelCounts();
-
-                    document.getElementById('channel-loading').classList.add('hidden');
-                    document.getElementById('channel-container').classList.remove('hidden');
-                    updateChannelSelection();
-                } else {
-                    showError('channel-error', data.error);
-                }
-            } catch (error) {
-                showError('channel-error', 'Failed to load channels: ' + error.message);
-            }
-        }
-
-        // Render channels
-        function renderChannels(prefillSelectedChannels = null) {
-            const container = document.getElementById('channel-container');
-            container.innerHTML = '';
-
-            const selectedChannelSet = Array.isArray(prefillSelectedChannels)
-                ? new Set(prefillSelectedChannels.map(ch => Number(ch)))
-                : null;
-
-            // Render each group
-            for (const [groupId, channels] of Object.entries(allChannels)) {
-                const group = allGroups.find(g => g.id == groupId);
-                if (!group) continue;
-                
-                const section = document.createElement('div');
-                section.className = 'channel-group-section';
-                section.dataset.groupId = groupId;
-                
-                section.innerHTML = `
-                    <div class="channel-group-header">
-                        <div class="channel-group-title">${group.name}</div>
-                        <div class="channel-group-actions">
-                            <button class="text-btn" onclick="selectAllInGroup(${groupId})">Select All</button>
-                            <button class="text-btn" onclick="clearAllInGroup(${groupId})">Clear</button>
-                        </div>
-                    </div>
-                    <div class="channel-list" id="channel-list-${groupId}">
-                        ${channels.map(ch => `
-                            <div class="channel-item" data-channel-id="${ch.id}" data-channel-name="${ch.name.toLowerCase()}" data-channel-number="${ch.channel_number}" data-base-search-text="${ch.base_search_text || ch.name}">
-                                <input type="checkbox" id="channel-${ch.id}" onchange="updateChannelSelection()" ${selectedChannelSet?.has(Number(ch.id)) ? 'checked' : ''}>
-                                <span class="channel-number">${ch.channel_number}</span>
-                                <span class="channel-name">${ch.name}</span>
-                                <span class="channel-stream-count">· ${ch.stream_count} stream${ch.stream_count === 1 ? '' : 's'}</span>
-                            </div>
-                        `).join('')}
-                    </div>
-                `;
-                
-                container.appendChild(section);
-            }
-        }
-        
-        // Select all channels in a group
-        function selectAllInGroup(groupId) {
-            const checkboxes = document.querySelectorAll(`#channel-list-${groupId} input[type="checkbox"]`);
-            checkboxes.forEach(cb => cb.checked = true);
-            updateChannelSelection();
-        }
-        
-        // Clear all channels in a group
-        function clearAllInGroup(groupId) {
-            const checkboxes = document.querySelectorAll(`#channel-list-${groupId} input[type="checkbox"]`);
-            checkboxes.forEach(cb => cb.checked = false);
-            updateChannelSelection();
-        }
-        
-        // Filter channels by search
-        function filterChannels() {
-            const search = document.getElementById('channel-search-input').value.toLowerCase();
-            const items = document.querySelectorAll('.channel-item');
-            
-            items.forEach(item => {
-                const name = item.dataset.channelName;
-                const number = item.dataset.channelNumber;
-                
-                if (name.includes(search) || number.includes(search)) {
-                    item.style.display = 'flex';
-                } else {
-                    item.style.display = 'none';
-                }
-            });
-        }
-        
-        // Update channel selection
-        function updateChannelSelection() {
-            const checkedBoxes = document.querySelectorAll('.channel-item input[type="checkbox"]:checked');
-            const count = checkedBoxes.length;
-            
-            // Update UI
-            if (count === 0) {
-                selectedChannels = null; // All channels
-                document.getElementById('selected-channels-count').textContent = '0 (All)';
-            } else {
-                selectedChannels = Array.from(checkedBoxes).map(cb => {
-                    return parseInt(cb.closest('.channel-item').dataset.channelId);
-                });
-                document.getElementById('selected-channels-count').textContent = count;
+            if (!hasChannelRefinements()) {
+                document.getElementById('selected-channels-summary').textContent = 'All channels';
+                return;
             }
 
+            const total = selectedGroups.reduce((sum, groupId) => {
+                const group = allGroups.find(g => g.id === groupId);
+                return sum + (group?.channel_count || 0);
+            }, 0);
+            const remaining = getSelectedChannelCount();
+            document.getElementById('selected-channels-summary').textContent = `${remaining} of ${total} channels`;
+        }
+
+        function updateRefreshUiState() {
             const baseSearchInput = document.getElementById('baseSearchText');
             if (baseSearchInput) {
                 if (selectedChannels && selectedChannels.length === 1) {
@@ -1445,6 +1459,77 @@
                     refreshFiltersDiv.style.display = 'none';
                 }
             }
+        }
+
+        async function getSelectedChannelsForPayload() {
+            if (!hasChannelRefinements()) {
+                return null;
+            }
+
+            // Selection rules (explicit):
+            // - Group checked → all channels implicitly included.
+            // - Group unchecked → all channels excluded.
+            // - Group checked + some channels unchecked → only remaining channels included.
+            await ensureChannelsLoaded([...selectedGroups]);
+
+            const selected = [];
+            for (const groupId of selectedGroups) {
+                const exclusions = getGroupExclusions(groupId);
+                const channels = allChannels[groupId] || [];
+                channels.forEach(ch => {
+                    if (!exclusions.has(ch.id)) {
+                        selected.push(ch.id);
+                    }
+                });
+            }
+            return selected;
+        }
+
+        // Update step 1 button
+        function updateStep1Button() {
+            const btn = document.getElementById('btn-next-1');
+            btn.disabled = selectedGroups.length === 0;
+        }
+
+        // Go to step 2
+        async function goToStep2() {
+            if (selectedGroups.length === 0) return;
+
+            // Update step indicators
+            document.getElementById('step-indicator-1').classList.remove('active');
+            document.getElementById('step-indicator-1').classList.add('completed');
+            document.getElementById('step-indicator-2').classList.add('active');
+
+            // Switch cards
+            document.getElementById('step-1').classList.add('hidden');
+            document.getElementById('step-2').classList.remove('hidden');
+
+            updateFinalSummary();
+
+            if (hasChannelRefinements()) {
+                selectedChannels = await getSelectedChannelsForPayload();
+                updateRefreshUiState();
+            }
+
+            if (selectedChannels && selectedChannels.length === 1) {
+                loadDerivedRefreshFilters(selectedChannels[0]);
+            }
+        }
+
+        function updateFinalSummary() {
+            const groupNames = selectedGroups.map(id => {
+                const group = allGroups.find(g => g.id === id);
+                return group ? group.name : id;
+            }).join(', ');
+            document.getElementById('final-groups-summary').textContent = groupNames;
+
+            if (!hasChannelRefinements()) {
+                document.getElementById('final-channels-summary').textContent = 'All channels';
+                return;
+            }
+
+            const remaining = getSelectedChannelCount();
+            document.getElementById('final-channels-summary').textContent = `${remaining} specific channel${remaining === 1 ? '' : 's'}`;
         }
 
         let derivedRefreshChannelId = null;
@@ -1490,58 +1575,15 @@
                 derivedRefreshInFlight = false;
             }
         }
-
-        // Update channel counts
-        function updateChannelCounts() {
-            let total = 0;
-            for (const channels of Object.values(allChannels)) {
-                total += channels.length;
-            }
-            document.getElementById('total-channels-count').textContent = total;
-        }
-        
-        // Go to step 3
-        function goToStep3() {
-            // Update step indicators
-            document.getElementById('step-indicator-1').classList.remove('active');
-            document.getElementById('step-indicator-1').classList.add('completed');
-            document.getElementById('step-indicator-2').classList.remove('active');
-            document.getElementById('step-indicator-2').classList.add('completed');
-            document.getElementById('step-indicator-3').classList.add('active');
-
-            // Switch cards
-            document.getElementById('step-1').classList.add('hidden');
-            document.getElementById('step-2').classList.add('hidden');
-            document.getElementById('step-3').classList.remove('hidden');
-            
-            // Update summary
-            const groupNames = selectedGroups.map(id => {
-                const group = allGroups.find(g => g.id === id);
-                return group ? group.name : id;
-            }).join(', ');
-            document.getElementById('final-groups-summary').textContent = groupNames;
-            
-            if (selectedChannels && selectedChannels.length > 0) {
-                document.getElementById('final-channels-summary').textContent = `${selectedChannels.length} specific channels`;
-            } else {
-                document.getElementById('final-channels-summary').textContent = 'All channels';
-            }
-
-            if (selectedChannels && selectedChannels.length === 1) {
-                loadDerivedRefreshFilters(selectedChannels[0]);
-            }
-        }
         
         // Go back to step 1
         function goToStep1() {
             document.getElementById('step-indicator-1').classList.add('active');
             document.getElementById('step-indicator-1').classList.remove('completed');
             document.getElementById('step-indicator-2').classList.remove('active', 'completed');
-            document.getElementById('step-indicator-3').classList.remove('active', 'completed');
             
             document.getElementById('step-1').classList.remove('hidden');
             document.getElementById('step-2').classList.add('hidden');
-            document.getElementById('step-3').classList.add('hidden');
         }
 
         // Refresh preview helpers
@@ -1605,7 +1647,11 @@
         }
 
         async function showRefreshPreview() {
-            if (!selectedChannels || selectedChannels.length !== 1) {
+            const selectedChannelsForPreview = await getSelectedChannelsForPayload();
+            selectedChannels = selectedChannelsForPreview;
+            updateRefreshUiState();
+
+            if (!selectedChannelsForPreview || selectedChannelsForPreview.length !== 1) {
                 alert('Please select exactly 1 channel to refresh.');
                 return;
             }
@@ -1622,7 +1668,7 @@
                 const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
                 const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
                 const payload = {
-                    channel_id: selectedChannels[0],
+                    channel_id: selectedChannelsForPreview[0],
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
@@ -1790,6 +1836,9 @@
             const clickedBtn = getClickedButton(event);
             try {
                 syncRegexInputsFromAdvanced();
+                const selectedChannelsForPayload = await getSelectedChannelsForPayload();
+                selectedChannels = selectedChannelsForPayload;
+                updateRefreshUiState();
 
                 // Get group names
                 const groupNames = selectedGroups.map(id => {
@@ -1799,8 +1848,8 @@
                 
                 // Get channel names
                 let channelNames = 'All channels';
-                if (selectedChannels && selectedChannels.length > 0) {
-                    const names = selectedChannels.map(id => {
+                if (selectedChannelsForPayload && selectedChannelsForPayload.length > 0) {
+                    const names = selectedChannelsForPayload.map(id => {
                         // Find channel in allChannels
                         for (const groupId in allChannels) {
                             const channel = allChannels[groupId].find(ch => ch.id === id);
@@ -1809,8 +1858,8 @@
                         return `Channel ${id}`;
                     }).slice(0, 3);  // Show max 3 names
                     
-                    if (selectedChannels.length > 3) {
-                        channelNames = names.join(', ') + ` +${selectedChannels.length - 3} more`;
+                    if (selectedChannelsForPayload.length > 3) {
+                        channelNames = names.join(', ') + ` +${selectedChannelsForPayload.length - 3} more`;
                     } else {
                         channelNames = names.join(', ');
                     }
@@ -1827,7 +1876,7 @@
                 const payload = {
                     job_type: jobType,
                     groups: selectedGroups,
-                    channels: selectedChannels,
+                    channels: selectedChannelsForPayload,
                     group_names: groupNames,
                     channel_names: channelNames,
                     analysis_profile: document.getElementById('analysisProfile')?.value || 'deep',
