@@ -1004,7 +1004,13 @@ def _load_scored_lookup(config):
                 'bitrate_kbps': row.get('avg_bitrate_kbps'),
                 'validation_result': row.get('validation_result') or row.get('status'),
                 'validation_reason': row.get('validation_reason'),
-                'final_score': row.get('ordering_score') if row.get('ordering_score') not in (None, 'N/A') else row.get('score')
+                'final_score': row.get('final_score')
+                if row.get('final_score') not in (None, 'N/A')
+                else (
+                    row.get('ordering_score')
+                    if row.get('ordering_score') not in (None, 'N/A')
+                    else row.get('score')
+                ),
             }
         return lookup
     except Exception:
