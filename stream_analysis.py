@@ -161,9 +161,32 @@ class Config:
             with open(self.config_file, 'w') as f:
                 yaml.dump(default_config, f, default_flow_style=False)
             return default_config
-        
-        with open(self.config_file, 'r') as f:
-            return yaml.safe_load(f)
+
+        default_config = self._get_default_config()
+        try:
+            with open(self.config_file, 'r') as f:
+                loaded = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            logging.warning(
+                "Config file %s is invalid YAML; using defaults. Error: %s",
+                self.config_file,
+                exc,
+            )
+            return default_config
+
+        if loaded is None:
+            logging.warning(
+                "Config file %s is empty; using defaults.",
+                self.config_file,
+            )
+            return default_config
+        if not isinstance(loaded, dict):
+            logging.warning(
+                "Config file %s must be a YAML mapping; using defaults.",
+                self.config_file,
+            )
+            return default_config
+        return loaded
     
     def _get_default_config(self):
         """Get default configuration"""
