@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import shutil
 import sys
 import threading
@@ -71,13 +72,32 @@ logging.basicConfig(
     force=True,
 )
 
+def _load_or_create_secret_key():
+    env_secret = os.getenv("DISPATCHARR_SECRET_KEY") or os.getenv("FLASK_SECRET_KEY")
+    if env_secret:
+        return env_secret
+
+    secret_path = Path(".flask_secret_key")
+    try:
+        if secret_path.exists():
+            existing = secret_path.read_text(encoding="utf-8").strip()
+            if existing:
+                return existing
+        new_secret = secrets.token_urlsafe(64)
+        secret_path.write_text(new_secret, encoding="utf-8")
+        try:
+            os.chmod(secret_path, 0o600)
+        except OSError:
+            logging.warning("Unable to set permissions on %s", secret_path)
+        return new_secret
+    except OSError as exc:
+        logging.warning("Unable to persist Flask secret key: %s", exc)
+        return secrets.token_urlsafe(64)
+
+
 app = Flask(__name__)
 app.json = NaNSafeJSONProvider(app)
-app.secret_key = (
-    os.getenv("DISPATCHARR_SECRET_KEY")
-    or os.getenv("FLASK_SECRET_KEY")
-    or "dispatcharr-maid"
-)
+app.secret_key = _load_or_create_secret_key()
 
 CORS(app)
 
