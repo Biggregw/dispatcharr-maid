@@ -50,22 +50,54 @@ def _normalize_provider_payload(payload):
     return provider_map, provider_metadata
 
 
+def _normalize_api_endpoint(next_link: str) -> str:
+    if not next_link:
+        return ""
+    if next_link.startswith("/"):
+        return next_link
+    if "/api/" in next_link:
+        suffix = next_link.split("/api/", 1)[1]
+        return f"/api/{suffix}"
+    return next_link
+
+
 def _fetch_provider_payload_via_api(api, config, endpoint):
-    response = api.get_raw(endpoint)
-    _log_raw_response('m3u_accounts', response, config)
+    aggregated = []
+    next_endpoint = endpoint
+    page = 1
 
-    content_type = response.headers.get('Content-Type', '')
-    if 'application/json' not in content_type:
-        raise ValueError(
-            f"M3U accounts response is not JSON (Content-Type: {content_type})."
-        )
+    while next_endpoint:
+        response = api.get_raw(next_endpoint)
+        tag = "m3u_accounts" if page == 1 else f"m3u_accounts_page_{page}"
+        _log_raw_response(tag, response, config)
 
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise ValueError("Failed to parse M3U accounts JSON response.") from exc
+        content_type = response.headers.get('Content-Type', '')
+        if 'application/json' not in content_type:
+            raise ValueError(
+                f"M3U accounts response is not JSON (Content-Type: {content_type})."
+            )
 
-    return payload
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ValueError("Failed to parse M3U accounts JSON response.") from exc
+
+        if isinstance(payload, dict) and 'results' in payload:
+            results = payload.get('results') or []
+            if not isinstance(results, list):
+                raise ValueError("M3U accounts results payload is not a list.")
+            aggregated.extend(results)
+            next_link = payload.get('next')
+            next_endpoint = _normalize_api_endpoint(next_link) if next_link else None
+        elif isinstance(payload, list):
+            aggregated.extend(payload)
+            next_endpoint = None
+        else:
+            raise ValueError("M3U accounts response is not a list or paginated result.")
+
+        page += 1
+
+    return aggregated
 
 
 def _build_manage_py_query():
