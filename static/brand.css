@@ -230,6 +230,48 @@
   color: #718096;
 }
 
+.quality-insight-playback {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.quality-insight-playback-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #2c3e50;
+}
+
+.quality-insight-playback-summary,
+.quality-insight-playback-streams {
+  margin: 0 0 10px 16px;
+  padding: 0;
+}
+
+.quality-insight-playback-summary li,
+.quality-insight-playback-streams li {
+  margin-bottom: 4px;
+  font-size: 0.9em;
+  color: #3b4d61;
+}
+
+.quality-insight-playback-streams-title {
+  margin-top: 8px;
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.quality-insight-playback-correlation {
+  margin-top: 8px;
+  font-size: 0.85em;
+  color: #556b7b;
+}
+
+.quality-insight-playback-empty {
+  font-size: 0.9em;
+  color: #60748a;
+}
+
 .quality-insight-actions {
   margin-top: 12px;
   display: flex;

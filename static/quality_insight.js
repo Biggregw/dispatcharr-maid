@@ -32,6 +32,20 @@ document.addEventListener('DOMContentLoaded', () => {
     return `last ${hours} ${unit}`;
   };
 
+  const formatSeconds = (value) => {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return '—';
+    }
+    return `${Number(value).toFixed(0)}s`;
+  };
+
+  const formatRate = (value) => {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return '—';
+    }
+    return `${(Number(value) * 100).toFixed(1)}%`;
+  };
+
   const renderInsights = (items) => {
     if (!listEl) {
       return;
@@ -84,6 +98,84 @@ document.addEventListener('DOMContentLoaded', () => {
       note.className = 'quality-insight-note';
       note.textContent = `Observational only. Based on the ${windowLabel}.`;
       detail.appendChild(note);
+
+      if (item.playback_evidence) {
+        const evidence = item.playback_evidence;
+        const evidenceWrap = document.createElement('div');
+        evidenceWrap.className = 'quality-insight-playback';
+
+        const evidenceTitle = document.createElement('div');
+        evidenceTitle.className = 'quality-insight-playback-title';
+        evidenceTitle.textContent = 'Real playback evidence (access logs)';
+        evidenceWrap.appendChild(evidenceTitle);
+
+        const channelSummary = evidence.channel_summary;
+        if (channelSummary) {
+          const summaryList = document.createElement('ul');
+          summaryList.className = 'quality-insight-playback-summary';
+
+          const recentWindow = evidence.metadata?.recent_window_hours;
+          const recentLabel = recentWindow ? formatWindowLabel(recentWindow) : 'recent window';
+          const earlyThreshold = evidence.metadata?.early_abandonment_threshold_seconds;
+
+          const summaryItems = [
+            `Total sessions: ${channelSummary.total_sessions ?? 0}`,
+            `Recent sessions (${recentLabel}): ${channelSummary.recent_sessions ?? 0}`,
+            `Median session duration: ${formatSeconds(channelSummary.median_session_duration_seconds)}`,
+            `Average session duration: ${formatSeconds(channelSummary.average_session_duration_seconds)}`,
+            `Early abandonment: ${channelSummary.early_abandonment_count ?? 0} (${formatRate(channelSummary.early_abandonment_rate)})`,
+            `Recent early abandonment trend: ${channelSummary.recent_early_abandonment_trend || 'insufficient data'}`,
+          ];
+          summaryItems.forEach((text) => {
+            const li = document.createElement('li');
+            li.textContent = text;
+            summaryList.appendChild(li);
+          });
+
+          if (earlyThreshold) {
+            const li = document.createElement('li');
+            li.textContent = `Early abandonment threshold: < ${earlyThreshold}s`;
+            summaryList.appendChild(li);
+          }
+
+          evidenceWrap.appendChild(summaryList);
+        } else {
+          const emptyEvidence = document.createElement('div');
+          emptyEvidence.className = 'quality-insight-playback-empty';
+          emptyEvidence.textContent = 'No playback sessions observed in this window.';
+          evidenceWrap.appendChild(emptyEvidence);
+        }
+
+        if (Array.isArray(evidence.stream_summaries) && evidence.stream_summaries.length > 0) {
+          const streamTitle = document.createElement('div');
+          streamTitle.className = 'quality-insight-playback-streams-title';
+          streamTitle.textContent = 'Top streams by playback sessions';
+          evidenceWrap.appendChild(streamTitle);
+
+          const streamList = document.createElement('ul');
+          streamList.className = 'quality-insight-playback-streams';
+
+          evidence.stream_summaries.forEach((stream) => {
+            const li = document.createElement('li');
+            li.textContent = `Stream ${stream.stream_id}: ${stream.total_sessions} sessions, ` +
+              `${formatSeconds(stream.median_session_duration_seconds)} median, ` +
+              `${formatRate(stream.early_abandonment_rate)} early abandonment, ` +
+              `recent trend ${stream.recent_early_abandonment_trend || 'insufficient data'}`;
+            streamList.appendChild(li);
+          });
+
+          evidenceWrap.appendChild(streamList);
+        }
+
+        if (evidence.correlation_note) {
+          const correlation = document.createElement('div');
+          correlation.className = 'quality-insight-playback-correlation';
+          correlation.textContent = evidence.correlation_note;
+          evidenceWrap.appendChild(correlation);
+        }
+
+        detail.appendChild(evidenceWrap);
+      }
 
       if (item.channel_id) {
         const actions = document.createElement('div');
