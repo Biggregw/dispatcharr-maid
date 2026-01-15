@@ -199,6 +199,171 @@ def _parse_snapshot_interval_seconds(default_seconds=1800):
     return default_seconds
 
 
+def _aggregate_provider_stats(stats_list):
+    aggregated = {}
+    for stats in stats_list:
+        if not stats:
+            continue
+        for provider_id, provider_stats in stats.items():
+            agg = aggregated.setdefault(
+                provider_id,
+                {
+                    "total": 0,
+                    "successful": 0,
+                    "failed": 0,
+                    "_quality_total": 0.0,
+                },
+            )
+            total = int(provider_stats.get("total", 0) or 0)
+            successful = int(provider_stats.get("successful", 0) or 0)
+            failed = provider_stats.get("failed")
+            if failed is None:
+                failed = total - successful
+            failed = int(failed or 0)
+            avg_quality = float(provider_stats.get("avg_quality", 0) or 0)
+
+            agg["total"] += total
+            agg["successful"] += successful
+            agg["failed"] += failed
+            agg["_quality_total"] += avg_quality * successful
+
+    finalized = {}
+    for provider_id, agg in aggregated.items():
+        total = agg["total"]
+        successful = agg["successful"]
+        failed = agg["failed"]
+        if total and failed + successful != total:
+            failed = total - successful
+        success_rate = round((successful / total) * 100, 1) if total > 0 else 0.0
+        avg_quality = round(agg["_quality_total"] / successful, 1) if successful > 0 else 0.0
+        weighted_score = round(avg_quality * (success_rate / 100) ** 2, 1)
+        finalized[provider_id] = {
+            "total": total,
+            "successful": successful,
+            "failed": failed,
+            "success_rate": success_rate,
+            "avg_quality": avg_quality,
+            "weighted_score": weighted_score,
+        }
+
+    return finalized
+
+
+def _build_provider_ranking(provider_stats, provider_names, provider_metadata):
+    ranking = []
+    for provider_id, stats in provider_stats.items():
+        ranking.append(
+            {
+                "provider_id": provider_id,
+                "name": provider_names.get(provider_id, provider_id),
+                "metadata": provider_metadata.get(provider_id, {}),
+                "total": stats.get("total", 0),
+                "successful": stats.get("successful", 0),
+                "failed": stats.get("failed", 0),
+                "success_rate": stats.get("success_rate", 0),
+                "avg_quality": stats.get("avg_quality", 0),
+                "weighted_score": stats.get("weighted_score", 0),
+            }
+        )
+
+    ranking.sort(
+        key=lambda item: (
+            item.get("weighted_score", 0),
+            item.get("success_rate", 0),
+            item.get("avg_quality", 0),
+        ),
+        reverse=True,
+    )
+    return ranking
+
+
+def _stream_name_regex_presets_path():
+    return Path("data") / "stream_name_regex_presets.json"
+
+
+def _load_stream_name_regex_presets():
+    preset_path = _stream_name_regex_presets_path()
+    if not preset_path.exists():
+        return []
+    try:
+        with preset_path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.warning("Failed to read regex presets: %s", exc)
+        return []
+
+
+def _save_stream_name_regex_presets(presets):
+    preset_path = _stream_name_regex_presets_path()
+    preset_path.parent.mkdir(parents=True, exist_ok=True)
+    with preset_path.open("w", encoding="utf-8") as handle:
+        json.dump(presets, handle, indent=2, ensure_ascii=False)
+
+
+def _build_regex_preset_payload(data):
+    regex_value = data.get("regex")
+    if regex_value is None:
+        regex_value = data.get("stream_name_regex")
+
+    regex_mode = data.get("regex_mode") or data.get("stream_name_regex_mode")
+    groups = data.get("groups") or []
+    channels = data.get("channels") or []
+    base_search_text = data.get("base_search_text") or ""
+
+    identity_payload = {
+        "groups": sorted(groups) if isinstance(groups, list) else groups,
+        "channels": sorted(channels) if isinstance(channels, list) else channels,
+        "base_search_text": base_search_text,
+        "regex": regex_value or "",
+        "regex_mode": regex_mode or "",
+    }
+    identity = hashlib.sha256(
+        json.dumps(identity_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+    return {
+        "name": data.get("name") or "Auto Name",
+        "regex": regex_value,
+        "regex_mode": regex_mode,
+        "groups": groups,
+        "channels": channels,
+        "base_search_text": base_search_text,
+        "include_filter": data.get("include_filter"),
+        "exclude_filter": data.get("exclude_filter"),
+        "exclude_plus_one": data.get("exclude_plus_one", False),
+        "identity": identity,
+    }
+
+
+def _replace_or_insert_preset(presets, new_preset, preserve_existing_name=False):
+    for index, preset in enumerate(presets):
+        if preset.get("identity") == new_preset.get("identity"):
+            updated = {**preset, **new_preset}
+            if preserve_existing_name:
+                updated["name"] = preset.get("name", updated.get("name"))
+            presets[index] = updated
+            return True
+
+    presets.append(new_preset)
+    return False
+
+
+def _maybe_auto_save_job_request(data, preview_only=False):
+    if preview_only:
+        return False
+
+    regex_value = data.get("stream_name_regex") or data.get("regex")
+    if not regex_value:
+        return False
+
+    presets = _load_stream_name_regex_presets()
+    new_preset = _build_regex_preset_payload(data)
+    _replace_or_insert_preset(presets, new_preset, preserve_existing_name=True)
+    _save_stream_name_regex_presets(presets)
+    return True
+
+
 
 
 def _run_dispatcharr_snapshot_loop():
