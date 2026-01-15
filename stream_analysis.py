@@ -1684,7 +1684,7 @@ def _load_or_compute_reliability_snapshot(logs_dir: Path):
     return snapshot
 
 
-def _score_streams_proxy_first(df, include_provider_name, output_csv, update_stats, api, historical_penalties):
+def _score_streams_proxy_first(df, include_provider_name, output_csv, update_stats, api, historical_penalties, provider_capacity_biases):
     # Convert types
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
     df['frames_decoded'] = pd.to_numeric(df['frames_decoded'], errors='coerce')
@@ -1765,9 +1765,11 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
     # Continuous ordering score uses all available metadata and a soft validation penalty.
     summary['ordering_score'] = summary.apply(_continuous_ordering_score, axis=1)
     summary = _apply_historical_penalties(summary, historical_penalties)
+    summary = _apply_provider_capacity_bias(summary, provider_capacity_biases)
     summary['ordering_score'] = (
         summary['ordering_score']
         + summary['historical_penalty']
+        + summary['provider_capacity_bias']
         + summary['stream_id'].apply(_stable_tiebreaker)
     )
 
@@ -1787,7 +1789,9 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
         'avg_frames_dropped', 'dropped_frame_percentage', 'fps', 'resolution',
         'video_codec', 'audio_codec', 'interlaced_status', 'status', 'score',
         'validation_result', 'validation_reason',
-        'startup_score', 'stability_score', 'historical_penalty', 'ordering_score'
+        'startup_score', 'stability_score', 'historical_penalty',
+        'provider_capacity_bias', 'provider_capacity_factor', 'provider_max_streams',
+        'ordering_score'
     ]
     for col in final_columns:
         if col not in df_sorted.columns:
@@ -1822,7 +1826,7 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
                     logging.warning(f"Could not update stats for stream {stream_id}: {e}")
 
 
-def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, update_stats, api, historical_penalties):
+def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, update_stats, api, historical_penalties, provider_capacity_biases):
     logging.info("Using legacy scoring (resolution/bitrate driven)")
 
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
@@ -1860,9 +1864,11 @@ def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, up
     )
     summary['ordering_score'] = summary.apply(_continuous_ordering_score, axis=1)
     summary = _apply_historical_penalties(summary, historical_penalties)
+    summary = _apply_provider_capacity_bias(summary, provider_capacity_biases)
     summary['ordering_score'] = (
         summary['ordering_score']
         + summary['historical_penalty']
+        + summary['provider_capacity_bias']
         + summary['stream_id'].apply(_stable_tiebreaker)
     )
 
@@ -1880,7 +1886,9 @@ def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, up
     final_columns += [
         'avg_bitrate_kbps', 'avg_frames_decoded', 'avg_frames_dropped',
         'dropped_frame_percentage', 'fps', 'resolution', 'video_codec', 'audio_codec',
-        'interlaced_status', 'status', 'score', 'historical_penalty', 'ordering_score'
+        'interlaced_status', 'status', 'score', 'historical_penalty',
+        'provider_capacity_bias', 'provider_capacity_factor', 'provider_max_streams',
+        'ordering_score'
     ]
     for col in final_columns:
         if col not in df_sorted.columns:
@@ -1958,11 +1966,30 @@ def score_streams(api, config, input_csv=None,
     include_provider_name = 'm3u_account_name' in df.columns
     proxy_first = bool(scoring_cfg.get('proxy_first', scoring_cfg.get('proxy_startup_bias', False)))
     historical_penalties = _historical_stream_penalties()
+    provider_metadata = _load_provider_metadata(config)
+    provider_capacity_biases = _build_provider_capacity_biases(df, provider_metadata)
 
     if proxy_first:
-        _score_streams_proxy_first(df, include_provider_name, output_csv, update_stats, api, historical_penalties)
+        _score_streams_proxy_first(
+            df,
+            include_provider_name,
+            output_csv,
+            update_stats,
+            api,
+            historical_penalties,
+            provider_capacity_biases,
+        )
     else:
-        _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, update_stats, api, historical_penalties)
+        _score_streams_legacy(
+            df,
+            scoring_cfg,
+            include_provider_name,
+            output_csv,
+            update_stats,
+            api,
+            historical_penalties,
+            provider_capacity_biases,
+        )
 
 
 def _parse_resolution(resolution):
@@ -2017,6 +2044,84 @@ def _stable_tiebreaker(value):
     digest = hashlib.blake2b(str(value).encode('utf-8'), digest_size=8).hexdigest()
     max_int = float(2**64 - 1)
     return int(digest, 16) / max_int * 1e-6
+
+
+PROVIDER_CAPACITY_WEIGHT = 0.35
+
+
+def _load_provider_metadata(config):
+    provider_metadata_path = config.resolve_path('provider_metadata.json')
+    try:
+        with open(provider_metadata_path, 'r', encoding='utf-8') as handle:
+            payload = json.load(handle)
+        if isinstance(payload, dict):
+            return payload
+        logging.warning("provider_metadata.json must be a JSON object mapping provider_id to metadata.")
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        logging.warning("Could not load provider_metadata.json: %s", exc)
+    return {}
+
+
+def _build_provider_capacity_biases(df, provider_metadata):
+    """Build normalized capacity bias per provider using known max stream limits."""
+    if df is None or df.empty or not provider_metadata:
+        return {}
+    if 'm3u_account' not in df.columns:
+        return {}
+
+    capacity_by_provider = {}
+    for provider_id in df['m3u_account'].dropna().astype(str).unique():
+        meta = provider_metadata.get(provider_id)
+        if not isinstance(meta, dict):
+            continue
+        max_streams = meta.get('max_streams')
+        if isinstance(max_streams, (int, float)) and max_streams > 0:
+            capacity_by_provider[provider_id] = int(max_streams)
+
+    if not capacity_by_provider:
+        return {}
+
+    max_seen = max(capacity_by_provider.values())
+    if max_seen <= 0:
+        return {}
+
+    biases = {}
+    for provider_id, max_streams in capacity_by_provider.items():
+        capacity_factor = max_streams / max_seen
+        biases[provider_id] = {
+            'max_streams': max_streams,
+            'capacity_factor': capacity_factor,
+            # Small, capped tie-breaker so quality wins unless scores are already close.
+            'capacity_bias': capacity_factor * PROVIDER_CAPACITY_WEIGHT,
+        }
+    return biases
+
+
+def _apply_provider_capacity_bias(summary, provider_capacity_biases):
+    if not provider_capacity_biases or 'm3u_account' not in summary.columns:
+        summary['provider_capacity_bias'] = 0.0
+        summary['provider_capacity_factor'] = 0.0
+        summary['provider_max_streams'] = None
+        return summary
+
+    def _bias_for_provider(value):
+        payload = provider_capacity_biases.get(str(value), {})
+        return payload.get('capacity_bias', 0.0)
+
+    def _factor_for_provider(value):
+        payload = provider_capacity_biases.get(str(value), {})
+        return payload.get('capacity_factor', 0.0)
+
+    def _max_for_provider(value):
+        payload = provider_capacity_biases.get(str(value), {})
+        return payload.get('max_streams')
+
+    summary['provider_capacity_bias'] = summary['m3u_account'].apply(_bias_for_provider)
+    summary['provider_capacity_factor'] = summary['m3u_account'].apply(_factor_for_provider)
+    summary['provider_max_streams'] = summary['m3u_account'].apply(_max_for_provider)
+    return summary
 
 
 def _codec_quality_score(codec_value):
@@ -2647,6 +2752,9 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                     'bitrate_kbps': source_record.get('avg_bitrate_kbps'),
                     'validation_result': source_record.get('validation_result') or source_record.get('status'),
                     'validation_reason': source_record.get('validation_reason'),
+                    'provider_capacity_bias': source_record.get('provider_capacity_bias'),
+                    'provider_capacity_factor': source_record.get('provider_capacity_factor'),
+                    'provider_max_streams': source_record.get('provider_max_streams'),
                     'final_score': source_record.get('ordering_score') if source_record.get('ordering_score') not in (None, 'N/A') else source_record.get('score')
                 }
 
@@ -2699,6 +2807,9 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                         'service_provider': merged.get('service_provider'),
                         'resolution': merged.get('resolution'),
                         'bitrate_kbps': merged.get('bitrate_kbps'),
+                        'provider_capacity_bias': merged.get('provider_capacity_bias'),
+                        'provider_capacity_factor': merged.get('provider_capacity_factor'),
+                        'provider_max_streams': merged.get('provider_max_streams'),
                         'validation': validation_result,
                         'validation_reason': validation_reason,
                         'quality_tier': 'ordered',
