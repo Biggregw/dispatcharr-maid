@@ -899,6 +899,13 @@
                         </select>
                         <span class="helper-text">Choose how deep the analysis should probe. Deep matches today’s defaults.</span>
                     </div>
+                    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top: 12px;">
+                        <label style="display:flex; align-items:center; gap:8px; font-weight: 600; color: #1f2937;">
+                            <input type="checkbox" id="reliabilitySortToggle">
+                            Reliability-first ordering
+                        </label>
+                        <span class="helper-text">Prioritises streams with consistent historical playback over peak quality.</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1694,6 +1701,7 @@
                     group_names: groupNames,
                     channel_names: channelNames,
                     analysis_profile: document.getElementById('analysisProfile')?.value || 'deep',
+                    reliability_sort: document.getElementById('reliabilitySortToggle')?.checked || false,
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,

@@ -2761,6 +2761,7 @@ def api_start_job():
         stream_name_regex = data.get('stream_name_regex')
         stream_name_regex_override = data.get('stream_name_regex_override')
         clear_learned_rules = bool(data.get('clear_learned_rules', False))
+        reliability_sort = bool(data.get('reliability_sort', False))
 
         if not job_type:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
@@ -2813,6 +2814,8 @@ def api_start_job():
         api = DispatcharrAPI()
         api.login()
         config = Config(config_path, working_dir=workspace)
+        config.set('ordering', 'reliability_sort', reliability_sort)
+        config.save()
         
         # Start job in background thread
         job.thread = threading.Thread(

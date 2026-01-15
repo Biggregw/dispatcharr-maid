@@ -28,6 +28,8 @@ ordering:
   resilience_mode: false
   fallback_depth: 3
   similar_score_delta: 5
+  # Enable reliability-first ordering (uses cached historical outcomes; default is unchanged)
+  reliability_sort: false
 dispatcharr:
   m3u_accounts_endpoint: /api/channels/m3u-accounts/
   manage_py_path: ""  # Optional: path to Dispatcharr manage.py for direct DB access
