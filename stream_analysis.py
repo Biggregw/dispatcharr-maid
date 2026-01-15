@@ -13,7 +13,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1990,19 +1990,39 @@ def order_streams_for_channel(
     similar_score_delta=5,
     provider_fn=None,
     validation_dominant=True,
+    return_details=False,
 ):
     """Order streams using a continuous, deterministic score.
 
-    All streams remain present; validation only reduces confidence via a penalty.
+    All streams remain present; validation can optionally dominate ordering by
+    keeping validated streams ahead of failed/unknown ones.
     Slot 1 gets an explicit safety eligibility pass before applying the usual order.
     """
 
     if not records:
-        return []
+        return [] if not return_details else {
+            'ordered_ids': [],
+            'slot1_id': None,
+            'slot1_rule': None,
+            'slot1_reason': None,
+            'slot1_overrode': False,
+        }
 
     def _validation_tokens(record):
         reason = str(record.get('validation_reason') or '')
         return [token for token in reason.split(';') if token]
+
+    def _provider_key(record):
+        if provider_fn:
+            try:
+                provider_value = provider_fn(record)
+            except Exception:
+                provider_value = None
+        else:
+            provider_value = record.get('m3u_account')
+        if provider_value in (None, '', 'N/A'):
+            return None
+        return provider_value
 
     def _is_buffering(record):
         # Buffering detection is conservative and based on timeout signals only;
@@ -2043,6 +2063,10 @@ def order_streams_for_channel(
             for token in _validation_tokens(record)
         )
 
+    def _is_validation_pass(record):
+        value = str(record.get('validation_result') or record.get('status') or '').strip().lower()
+        return value in ('pass', 'ok')
+
     def _is_hd_or_better(record):
         resolution = record.get('resolution')
         parsed = _parse_resolution(resolution)
@@ -2053,37 +2077,125 @@ def order_streams_for_channel(
         category = _resolution_category(resolution)
         return category in ('hd', 'uhd')
 
-    def _score(record):
+    def _score_value(record):
         ordering = record.get('ordering_score')
         if ordering in (None, '', 'N/A'):
             ordering = record.get('score')
         score_value = _safe_float(ordering)
-        if score_value is None:
-            tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
-            return (0, _stable_tiebreaker(tie_value))
+        return score_value
+
+    def _score_key(record):
+        score_value = _score_value(record)
         tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
+        if score_value is None:
+            return (0, _stable_tiebreaker(tie_value))
         return (1, score_value + _stable_tiebreaker(tie_value))
 
-    ordered = sorted(list(records), key=_score, reverse=True)
+    def _ordered_with_resilience(items):
+        ordered = sorted(list(items), key=_score_key, reverse=True)
+        if not resilience_mode:
+            return ordered
+        try:
+            depth = max(int(fallback_depth), 0)
+        except (TypeError, ValueError):
+            depth = 0
+        try:
+            delta = max(float(similar_score_delta), 0.0)
+        except (TypeError, ValueError):
+            delta = 0.0
+        if depth <= 0 or len(ordered) <= 1:
+            return ordered
+
+        output = []
+        remaining = list(ordered)
+        recent_providers = deque(maxlen=depth)
+
+        while remaining:
+            top_score = _score_value(remaining[0])
+            if top_score is None:
+                output.extend(remaining)
+                break
+            eligible = [r for r in remaining if (_score_value(r) or 0.0) >= (top_score - delta)]
+            pick = None
+            for candidate in eligible:
+                provider = _provider_key(candidate)
+                if provider is None or provider not in recent_providers:
+                    pick = candidate
+                    break
+            if pick is None:
+                pick = remaining[0]
+            output.append(pick)
+            remaining.remove(pick)
+            provider = _provider_key(pick)
+            if provider is not None:
+                recent_providers.append(provider)
+
+        return output
+
+    if validation_dominant:
+        passing = []
+        non_passing = []
+        for record in records:
+            if _is_validation_pass(record):
+                passing.append(record)
+            else:
+                non_passing.append(record)
+        ordered = _ordered_with_resilience(passing) + _ordered_with_resilience(non_passing)
+    else:
+        ordered = _ordered_with_resilience(records)
 
     # Slot-1 relaxation ladder (explicit UX contract):
     # 1) HD+, no buffering, no probe failure
     # 2) HD+, no probe failure
     # 3) HD+ only
     # 4) Any stream (last resort)
+    slot1_rule = None
+    slot1_reason = None
     slot1_candidates = [r for r in ordered if _is_hd_or_better(r) and not _is_buffering(r) and not _is_probe_failure(r)]
     if not slot1_candidates:
+        slot1_rule = 'hd_no_probe_failure'
         slot1_candidates = [r for r in ordered if _is_hd_or_better(r) and not _is_probe_failure(r)]
     if not slot1_candidates:
+        slot1_rule = 'hd_only'
         slot1_candidates = [r for r in ordered if _is_hd_or_better(r)]
     if not slot1_candidates:
+        slot1_rule = 'any_stream'
         slot1_candidates = ordered
 
     slot1 = slot1_candidates[0].get('stream_id') if slot1_candidates else None
     ordered_ids = [r.get('stream_id') for r in ordered]
     if slot1 is None:
+        if return_details:
+            return {
+                'ordered_ids': ordered_ids,
+                'slot1_id': None,
+                'slot1_rule': None,
+                'slot1_reason': None,
+                'slot1_overrode': False,
+            }
         return ordered_ids
-    return [slot1] + [sid for sid in ordered_ids if sid != slot1]
+
+    if slot1_rule is None:
+        slot1_rule = 'hd_no_buffer_no_probe_failure'
+
+    slot1_reason_map = {
+        'hd_no_buffer_no_probe_failure': 'Met the slot-1 safety checks (HD+, no buffering, no probe failures).',
+        'hd_no_probe_failure': 'Met the slot-1 safety checks (HD+, no probe failures).',
+        'hd_only': 'Selected as the best available HD stream.',
+        'any_stream': 'No HD streams were available; selected the best remaining stream.',
+    }
+    slot1_reason = slot1_reason_map.get(slot1_rule)
+
+    final_order = [slot1] + [sid for sid in ordered_ids if sid != slot1]
+    if return_details:
+        return {
+            'ordered_ids': final_order,
+            'slot1_id': slot1,
+            'slot1_rule': slot1_rule,
+            'slot1_reason': slot1_reason,
+            'slot1_overrode': bool(ordered_ids) and ordered_ids[0] != slot1,
+        }
+    return final_order
 
 
 def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_changes=True):
@@ -2101,6 +2213,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
 
     filters = config.get('filters') or {}
     ordering_cfg = config.get('ordering') or {}
+    scoring_cfg = config.get('scoring') or {}
     resilience_mode = bool(ordering_cfg.get('resilience_mode', False))
     try:
         fallback_depth = int(ordering_cfg.get('fallback_depth', 3) or 3)
@@ -2110,6 +2223,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
         similar_score_delta = float(ordering_cfg.get('similar_score_delta', 5) or 5)
     except (ValueError, TypeError):
         similar_score_delta = 5.0
+    validation_dominant = bool(scoring_cfg.get('proxy_first', scoring_cfg.get('proxy_startup_bias', False)))
 
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])
@@ -2214,13 +2328,28 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                 }
             records_for_ordering.append(record)
 
-        ordered_stream_ids = order_streams_for_channel(
+        ordering_details = order_streams_for_channel(
             records_for_ordering,
             resilience_mode=resilience_mode,
             fallback_depth=fallback_depth,
             similar_score_delta=similar_score_delta,
             provider_fn=_provider,
+            validation_dominant=validation_dominant,
+            return_details=collect_summary,
         )
+        if collect_summary:
+            ordered_stream_ids = ordering_details.get('ordered_ids', [])
+            slot1_stream_id = ordering_details.get('slot1_id')
+            slot1_rule = ordering_details.get('slot1_rule')
+            slot1_reason = ordering_details.get('slot1_reason')
+            slot1_overrode = ordering_details.get('slot1_overrode')
+        else:
+            ordered_stream_ids = ordering_details
+            slot1_stream_id = None
+            slot1_rule = None
+            slot1_reason = None
+            slot1_overrode = False
+
         final_ids = [sid for sid in ordered_stream_ids if sid in current_ids_set]
 
         channel_entry = None
@@ -2253,7 +2382,11 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                 'channel_number': channel_meta.get('channel_number'),
                 'channel_name': channel_meta.get('name'),
                 'final_order': [],
-                'excluded_streams': []
+                'excluded_streams': [],
+                'slot1_stream_id': slot1_stream_id,
+                'slot1_rule': slot1_rule,
+                'slot1_reason': slot1_reason,
+                'slot1_overrode': slot1_overrode,
             }
 
             def _merge_entry(sid, source_record=None):
@@ -2299,6 +2432,10 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                     'order': idx,
                     'quality_tier': 'ordered',
                 })
+                if idx == 1 and sid == slot1_stream_id:
+                    merged['slot1_rule'] = slot1_rule
+                    merged['slot1_reason'] = slot1_reason
+                    merged['slot1_overrode'] = slot1_overrode
                 channel_entry['final_order'].append(merged)
 
             # Persist final stream metadata for history/UI rendering.
