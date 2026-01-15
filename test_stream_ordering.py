@@ -122,3 +122,57 @@ def test_provider_identity_does_not_exclude_streams():
     ordered = order_streams_for_channel(records)
 
     assert set(ordered) == {201, 202, 203}
+
+
+def test_validation_dominance_keeps_passed_streams_first():
+    records = [
+        {"stream_id": 401, "ordering_score": 50, "validation_result": "fail", "resolution": "1920x1080"},
+        {"stream_id": 402, "ordering_score": 10, "validation_result": "pass", "resolution": "1920x1080"},
+    ]
+
+    ordered = order_streams_for_channel(records, validation_dominant=True)
+
+    assert ordered[0] == 402
+
+
+def test_resilience_mode_diversifies_providers_when_scores_similar():
+    records = [
+        {"stream_id": 501, "ordering_score": 100, "m3u_account": "provider_a", "resolution": "1920x1080"},
+        {"stream_id": 502, "ordering_score": 99.5, "m3u_account": "provider_b", "resolution": "1920x1080"},
+        {"stream_id": 503, "ordering_score": 99, "m3u_account": "provider_a", "resolution": "1920x1080"},
+    ]
+
+    ordered = order_streams_for_channel(
+        records,
+        resilience_mode=True,
+        fallback_depth=1,
+        similar_score_delta=1,
+        validation_dominant=False,
+    )
+
+    assert ordered == [501, 502, 503]
+
+
+def test_slot1_reason_is_reported_when_overridden():
+    records = [
+        {
+            "stream_id": 601,
+            "ordering_score": 200,
+            "resolution": "1920x1080",
+            "status": "timeout",
+            "err_timeout": 1,
+        },
+        {
+            "stream_id": 602,
+            "ordering_score": 100,
+            "resolution": "1920x1080",
+            "status": "ok",
+            "frames_decoded": 100,
+        },
+    ]
+
+    details = order_streams_for_channel(records, validation_dominant=False, return_details=True)
+
+    assert details["ordered_ids"][0] == 602
+    assert details["slot1_reason"]
+    assert details["slot1_overrode"] is True

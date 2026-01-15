@@ -68,6 +68,12 @@ ordering:
 
 Analysis defaults (tune under `analysis`): duration 10s, timeout 30s, idet_frames 500, retries 1 with a 10s delay, and 8 workers.
 
+Ordering behavior (high-level)
+------------------------------
+- **Slot 1 safety**: the top stream is chosen from an HD+ candidate list that avoids buffering/probe failures when possible.
+- **Resilience mode**: when enabled, providers are diversified inside groups of similarly scored streams; `fallback_depth` controls how far back we avoid repeating the same provider, and `similar_score_delta` sets how close scores must be to qualify.
+- **Validation dominance**: when `scoring.proxy_first` is true, streams that passed validation stay ahead of failures.
+
 Scoring vs. ordering
 --------------------
 - **Scoring** probes each stream independently; scores are not tied to provider order.

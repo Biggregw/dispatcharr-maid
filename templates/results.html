@@ -709,17 +709,22 @@
                     if (!top) return '';
 
                     const topName = escapeHtml(top?.stream_name || `Stream ${top?.stream_id ?? ''}`);
+                    const slot1Reason = typeof top?.slot1_reason === 'string' ? top.slot1_reason : '';
                     const topReasons = [];
-                    if (top?.resolution) topReasons.push(`stable ${escapeHtml(String(top.resolution))} resolution`);
-                    const validationSummary = formatValidationSummary(top?.validation_result, top?.validation_reason);
-                    if (validationSummary) topReasons.push(escapeHtml(validationSummary));
-                    if (top?.bitrate_kbps) topReasons.push(`strong bitrate (${fmtBitrate(top.bitrate_kbps)})`);
-                    if (top?.final_score !== null && top?.final_score !== undefined) {
-                        topReasons.push(`highest overall quality score (${formatScore(top.final_score)})`);
+                    if (!slot1Reason) {
+                        if (top?.resolution) topReasons.push(`stable ${escapeHtml(String(top.resolution))} resolution`);
+                        const validationSummary = formatValidationSummary(top?.validation_result, top?.validation_reason);
+                        if (validationSummary) topReasons.push(escapeHtml(validationSummary));
+                        if (top?.bitrate_kbps) topReasons.push(`strong bitrate (${fmtBitrate(top.bitrate_kbps)})`);
+                        if (top?.final_score !== null && top?.final_score !== undefined) {
+                            topReasons.push(`highest overall quality score (${formatScore(top.final_score)})`);
+                        }
                     }
-                    const topReasonText = topReasons.length
-                        ? topReasons.join(', ')
-                        : 'the strongest overall performance across the checks';
+                    const topReasonText = slot1Reason
+                        ? escapeHtml(slot1Reason)
+                        : topReasons.length
+                            ? topReasons.join(', ')
+                            : 'the strongest overall performance across the checks';
 
                     const topLine = `Chosen as the top stream: <strong>${topName}</strong> because it delivered ${topReasonText}.`;
 
