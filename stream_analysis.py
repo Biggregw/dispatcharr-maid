@@ -17,6 +17,7 @@ from collections import defaultdict, deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from statistics import median
 from urllib.parse import urlparse
 
 import hashlib
@@ -25,6 +26,7 @@ import pandas as pd
 import yaml
 
 from api_utils import DispatcharrAPI
+from playback_sessions import EARLY_ABANDONMENT_SECONDS
 from provider_data import refresh_provider_data
 
 
@@ -1473,6 +1475,169 @@ def _apply_historical_penalties(summary, penalties):
     return summary
 
 
+PLAYBACK_HISTORY_WINDOW_HOURS = 168
+PLAYBACK_RECENT_WINDOW_HOURS = 24
+HISTORY_ADJUSTMENT_CAP_RATIO = 0.25
+HISTORY_EARLY_ABANDON_WEIGHT = 0.12
+HISTORY_DURATION_WEIGHT = 0.08
+HISTORY_TREND_WEIGHT = 0.05
+
+
+def _summarize_playback_history(window_hours=PLAYBACK_HISTORY_WINDOW_HOURS):
+    playback_path = Path("logs") / "playback_sessions.ndjson"
+    if not playback_path.exists():
+        return {}
+
+    sessions = []
+    for record in _read_ndjson(playback_path):
+        stream_id = record.get("stream_id")
+        if stream_id is None:
+            continue
+        try:
+            stream_id = int(stream_id)
+        except (TypeError, ValueError):
+            continue
+        start_ts = _parse_history_timestamp(record.get("session_start"))
+        end_ts = _parse_history_timestamp(record.get("session_end"))
+        if not start_ts or not end_ts:
+            continue
+        duration_seconds = record.get("duration_seconds")
+        if duration_seconds is None:
+            duration_seconds = max(0, int((end_ts - start_ts).total_seconds()))
+        try:
+            duration_seconds = int(duration_seconds)
+        except (TypeError, ValueError):
+            continue
+        sessions.append(
+            {
+                "stream_id": stream_id,
+                "session_start": start_ts,
+                "session_end": end_ts,
+                "duration_seconds": duration_seconds,
+                "early_abandonment": bool(record.get("early_abandonment")),
+            }
+        )
+
+    if not sessions:
+        return {}
+
+    latest_ts = max(session["session_end"] for session in sessions)
+    window_cutoff = latest_ts - timedelta(hours=window_hours)
+    recent_hours = min(PLAYBACK_RECENT_WINDOW_HOURS, window_hours)
+    recent_cutoff = latest_ts - timedelta(hours=recent_hours)
+    prior_cutoff = recent_cutoff - timedelta(hours=recent_hours)
+
+    buckets = defaultdict(lambda: {"window": [], "recent": [], "prior": []})
+    for session in sessions:
+        if session["session_start"] < window_cutoff:
+            continue
+        bucket = buckets[str(session["stream_id"])]
+        bucket["window"].append(session)
+        if session["session_start"] >= recent_cutoff:
+            bucket["recent"].append(session)
+        elif session["session_start"] >= prior_cutoff:
+            bucket["prior"].append(session)
+
+    def _bucket_stats(items):
+        if not items:
+            return {
+                "total_sessions": 0,
+                "median_session_duration_seconds": None,
+                "early_abandonment_rate": None,
+            }
+        durations = [item["duration_seconds"] for item in items]
+        total = len(items)
+        early_count = sum(1 for item in items if item["early_abandonment"])
+        return {
+            "total_sessions": total,
+            "median_session_duration_seconds": median(durations) if durations else None,
+            "early_abandonment_rate": early_count / total if total else None,
+        }
+
+    summary = {}
+    for stream_id, bucket in buckets.items():
+        window_stats = _bucket_stats(bucket["window"])
+        recent_stats = _bucket_stats(bucket["recent"])
+        prior_stats = _bucket_stats(bucket["prior"])
+        summary[stream_id] = {
+            **window_stats,
+            "recent_early_abandonment_rate": recent_stats["early_abandonment_rate"],
+            "prior_early_abandonment_rate": prior_stats["early_abandonment_rate"],
+        }
+    return summary
+
+
+def _clamp(value, lower, upper):
+    return max(lower, min(upper, value))
+
+
+def _compute_history_adjustment(record, playback_summary):
+    if not playback_summary:
+        return 0.0
+    stream_id = record.get("stream_id")
+    if stream_id is None:
+        return 0.0
+    summary = playback_summary.get(str(stream_id))
+    if not summary:
+        return 0.0
+    base_score = _safe_float(record.get("base_score"))
+    if base_score is None or base_score <= 0:
+        return 0.0
+
+    early_rate = summary.get("early_abandonment_rate")
+    median_duration = summary.get("median_session_duration_seconds")
+    recent_rate = summary.get("recent_early_abandonment_rate")
+    prior_rate = summary.get("prior_early_abandonment_rate")
+
+    early_factor = 0.0
+    if early_rate is not None:
+        early_factor = _clamp(1 - (2 * float(early_rate)), -1.0, 1.0)
+
+    duration_factor = 0.0
+    if median_duration is not None:
+        target_span = max(1.0, float(EARLY_ABANDONMENT_SECONDS) * 4.0)
+        duration_factor = _clamp(
+            (float(median_duration) - float(EARLY_ABANDONMENT_SECONDS)) / target_span,
+            -1.0,
+            1.0,
+        )
+
+    trend_factor = 0.0
+    if recent_rate is not None and prior_rate is not None:
+        trend_delta = float(prior_rate) - float(recent_rate)
+        trend_factor = _clamp(trend_delta / 0.5, -1.0, 1.0)
+
+    adjustment_ratio = (
+        early_factor * HISTORY_EARLY_ABANDON_WEIGHT
+        + duration_factor * HISTORY_DURATION_WEIGHT
+        + trend_factor * HISTORY_TREND_WEIGHT
+    )
+    adjustment_ratio = _clamp(
+        adjustment_ratio,
+        -HISTORY_ADJUSTMENT_CAP_RATIO,
+        HISTORY_ADJUSTMENT_CAP_RATIO,
+    )
+    adjustment = base_score * adjustment_ratio
+
+    validation_value = str(
+        record.get("validation_result") or record.get("status") or ""
+    ).strip().lower()
+    if validation_value == "fail" and adjustment > 0:
+        adjustment = 0.0
+
+    return adjustment
+
+
+def _apply_playback_history_adjustments(summary, playback_summary):
+    if not playback_summary:
+        summary['history_adjustment'] = 0.0
+        return summary
+    summary['history_adjustment'] = summary.apply(
+        lambda row: _compute_history_adjustment(row, playback_summary), axis=1
+    )
+    return summary
+
+
 RELIABILITY_WINDOW_HOURS = 168  # 7 days: long enough to capture stability trends.
 RELIABILITY_RECENT_HOURS = 24  # Recent window to ensure fresh failures dominate.
 RELIABILITY_SNAPSHOT_PATH = Path("logs") / "reliability_snapshot.json"
@@ -1684,7 +1849,16 @@ def _load_or_compute_reliability_snapshot(logs_dir: Path):
     return snapshot
 
 
-def _score_streams_proxy_first(df, include_provider_name, output_csv, update_stats, api, historical_penalties, provider_capacity_biases):
+def _score_streams_proxy_first(
+    df,
+    include_provider_name,
+    output_csv,
+    update_stats,
+    api,
+    historical_penalties,
+    provider_capacity_biases,
+    playback_summary,
+):
     # Convert types
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
     df['frames_decoded'] = pd.to_numeric(df['frames_decoded'], errors='coerce')
@@ -1763,19 +1937,36 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
 
     summary['score'] = summary['startup_score'] + summary['stability_score']
     # Continuous ordering score uses all available metadata and a soft validation penalty.
-    summary['ordering_score'] = summary.apply(_continuous_ordering_score, axis=1)
+    summary['base_score'] = summary.apply(_continuous_ordering_score, axis=1)
+    summary = _apply_playback_history_adjustments(summary, playback_summary)
     summary = _apply_historical_penalties(summary, historical_penalties)
     summary = _apply_provider_capacity_bias(summary, provider_capacity_biases)
-    summary['ordering_score'] = (
-        summary['ordering_score']
+    summary['provider_capacity_bias'] = summary.apply(
+        lambda row: min(
+            float(row.get('provider_capacity_bias') or 0.0),
+            float(row.get('base_score') or 0.0) * 0.05,
+        ),
+        axis=1,
+    )
+    summary['final_score'] = (
+        summary['base_score']
+        + summary['history_adjustment']
         + summary['historical_penalty']
         + summary['provider_capacity_bias']
-        + summary['stream_id'].apply(_stable_tiebreaker)
     )
+    summary['ordering_score'] = summary['final_score']
 
+    summary['provider_sort_key'] = summary.apply(
+        lambda row: str(
+            row.get('m3u_account_name')
+            or row.get('m3u_account')
+            or ''
+        ).lower(),
+        axis=1,
+    )
     df_sorted = summary.sort_values(
-        by=['channel_number', 'ordering_score'],
-        ascending=[True, False]
+        by=['channel_number', 'final_score', 'base_score', 'provider_sort_key', 'stream_id'],
+        ascending=[True, False, False, True, True],
     )
 
     final_columns = [
@@ -1789,7 +1980,8 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
         'avg_frames_dropped', 'dropped_frame_percentage', 'fps', 'resolution',
         'video_codec', 'audio_codec', 'interlaced_status', 'status', 'score',
         'validation_result', 'validation_reason',
-        'startup_score', 'stability_score', 'historical_penalty',
+        'startup_score', 'stability_score', 'base_score', 'history_adjustment',
+        'historical_penalty', 'final_score',
         'provider_capacity_bias', 'provider_capacity_factor', 'provider_max_streams',
         'ordering_score'
     ]
@@ -1826,7 +2018,17 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
                     logging.warning(f"Could not update stats for stream {stream_id}: {e}")
 
 
-def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, update_stats, api, historical_penalties, provider_capacity_biases):
+def _score_streams_legacy(
+    df,
+    scoring_cfg,
+    include_provider_name,
+    output_csv,
+    update_stats,
+    api,
+    historical_penalties,
+    provider_capacity_biases,
+    playback_summary,
+):
     logging.info("Using legacy scoring (resolution/bitrate driven)")
 
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
@@ -1862,19 +2064,36 @@ def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, up
     summary['score'] = summary.apply(
         lambda row: _calculate_legacy_score(row, scoring_cfg), axis=1
     )
-    summary['ordering_score'] = summary.apply(_continuous_ordering_score, axis=1)
+    summary['base_score'] = summary.apply(_continuous_ordering_score, axis=1)
+    summary = _apply_playback_history_adjustments(summary, playback_summary)
     summary = _apply_historical_penalties(summary, historical_penalties)
     summary = _apply_provider_capacity_bias(summary, provider_capacity_biases)
-    summary['ordering_score'] = (
-        summary['ordering_score']
+    summary['provider_capacity_bias'] = summary.apply(
+        lambda row: min(
+            float(row.get('provider_capacity_bias') or 0.0),
+            float(row.get('base_score') or 0.0) * 0.05,
+        ),
+        axis=1,
+    )
+    summary['final_score'] = (
+        summary['base_score']
+        + summary['history_adjustment']
         + summary['historical_penalty']
         + summary['provider_capacity_bias']
-        + summary['stream_id'].apply(_stable_tiebreaker)
     )
+    summary['ordering_score'] = summary['final_score']
 
+    summary['provider_sort_key'] = summary.apply(
+        lambda row: str(
+            row.get('m3u_account_name')
+            or row.get('m3u_account')
+            or ''
+        ).lower(),
+        axis=1,
+    )
     df_sorted = summary.sort_values(
-        by=['channel_number', 'ordering_score'],
-        ascending=[True, False]
+        by=['channel_number', 'final_score', 'base_score', 'provider_sort_key', 'stream_id'],
+        ascending=[True, False, False, True, True],
     )
 
     final_columns = [
@@ -1886,7 +2105,8 @@ def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, up
     final_columns += [
         'avg_bitrate_kbps', 'avg_frames_decoded', 'avg_frames_dropped',
         'dropped_frame_percentage', 'fps', 'resolution', 'video_codec', 'audio_codec',
-        'interlaced_status', 'status', 'score', 'historical_penalty',
+        'interlaced_status', 'status', 'score', 'base_score', 'history_adjustment',
+        'historical_penalty', 'final_score',
         'provider_capacity_bias', 'provider_capacity_factor', 'provider_max_streams',
         'ordering_score'
     ]
@@ -1968,6 +2188,7 @@ def score_streams(api, config, input_csv=None,
     historical_penalties = _historical_stream_penalties()
     provider_metadata = _load_provider_metadata(config)
     provider_capacity_biases = _build_provider_capacity_biases(df, provider_metadata)
+    playback_summary = _summarize_playback_history()
 
     if proxy_first:
         _score_streams_proxy_first(
@@ -1978,6 +2199,7 @@ def score_streams(api, config, input_csv=None,
             api,
             historical_penalties,
             provider_capacity_biases,
+            playback_summary,
         )
     else:
         _score_streams_legacy(
@@ -1989,6 +2211,7 @@ def score_streams(api, config, input_csv=None,
             api,
             historical_penalties,
             provider_capacity_biases,
+            playback_summary,
         )
 
 
@@ -2397,11 +2620,12 @@ def order_streams_for_channel(
         return category in ('hd', 'uhd')
 
     def _score_value(record):
-        ordering = record.get('ordering_score')
+        ordering = record.get('final_score')
+        if ordering in (None, '', 'N/A'):
+            ordering = record.get('ordering_score')
         if ordering in (None, '', 'N/A'):
             ordering = record.get('score')
-        score_value = _safe_float(ordering)
-        return score_value
+        return _safe_float(ordering)
 
     def _score_key(record):
         if reliability_sort:
@@ -2416,16 +2640,32 @@ def order_streams_for_channel(
                 or record.get('ffmpeg_output_bitrate')
             ) or 0.0
             tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
-            return (reliability, score_value, bitrate_value, _stable_tiebreaker(tie_value))
+            return (
+                0,
+                -reliability,
+                -score_value,
+                -bitrate_value,
+                _stable_tiebreaker(tie_value),
+            )
 
         score_value = _score_value(record)
-        tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
+        base_value = _safe_float(record.get('base_score'))
+        if base_value is None:
+            base_value = _safe_float(record.get('ordering_score')) or _safe_float(record.get('score')) or 0.0
+        provider_value = _provider_key(record)
+        provider_key = str(provider_value or '').lower()
+        stream_id = record.get('stream_id')
+        try:
+            stream_key = int(stream_id)
+        except Exception:
+            stream_key = str(stream_id or '')
+
         if score_value is None:
-            return (0, _stable_tiebreaker(tie_value))
-        return (1, score_value + _stable_tiebreaker(tie_value))
+            return (1, 0.0, 0.0, provider_key, stream_key)
+        return (0, -score_value, -base_value, provider_key, stream_key)
 
     def _ordered_with_resilience(items):
-        ordered = sorted(list(items), key=_score_key, reverse=True)
+        ordered = sorted(list(items), key=_score_key)
         if not resilience_mode:
             return ordered
         try:
@@ -2468,7 +2708,7 @@ def order_streams_for_channel(
     if reliability_sort:
         # Validation dominance is intentionally bypassed when reliability-first ordering is enabled,
         # because the ranking already reflects historical outcomes rather than single-run validation.
-        ordered = sorted(list(records), key=_score_key, reverse=True)
+        ordered = sorted(list(records), key=_score_key)
     elif validation_dominant:
         passing = []
         non_passing = []
@@ -2755,7 +2995,15 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                     'provider_capacity_bias': source_record.get('provider_capacity_bias'),
                     'provider_capacity_factor': source_record.get('provider_capacity_factor'),
                     'provider_max_streams': source_record.get('provider_max_streams'),
-                    'final_score': source_record.get('ordering_score') if source_record.get('ordering_score') not in (None, 'N/A') else source_record.get('score')
+                    'final_score': (
+                        source_record.get('final_score')
+                        if source_record.get('final_score') not in (None, 'N/A')
+                        else (
+                            source_record.get('ordering_score')
+                            if source_record.get('ordering_score') not in (None, 'N/A')
+                            else source_record.get('score')
+                        )
+                    )
                 }
 
                 if entry.get('provider_id') is None and isinstance(fallback, dict):
