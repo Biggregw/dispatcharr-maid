@@ -2627,6 +2627,18 @@ def order_streams_for_channel(
             ordering = record.get('score')
         return _safe_float(ordering)
 
+    for record in records:
+        ordering_score = _safe_float(record.get('ordering_score'))
+        score = _safe_float(record.get('score'))
+        final_score = _safe_float(record.get('final_score'))
+        record['ordering_score'] = ordering_score
+        record['score'] = score
+        if final_score is None:
+            final_score = ordering_score
+        if final_score is None:
+            final_score = score
+        record['final_score'] = final_score
+
     def _score_key(record):
         if reliability_sort:
             stream_id = record.get('stream_id')
