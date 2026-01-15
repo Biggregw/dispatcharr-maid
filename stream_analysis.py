@@ -2733,6 +2733,21 @@ def order_streams_for_channel(
     else:
         ordered = _ordered_with_resilience(records)
 
+    strict_score_ordering = not (resilience_mode or reliability_sort or validation_dominant)
+    if strict_score_ordering:
+        # Enforce the invariant: when all ordering toggles are off, do not reshuffle
+        # the score-sorted list (slot-1 safety overrides would violate strict ranking).
+        ordered_ids = [r.get('stream_id') for r in ordered]
+        if return_details:
+            return {
+                'ordered_ids': ordered_ids,
+                'slot1_id': ordered_ids[0] if ordered_ids else None,
+                'slot1_rule': None,
+                'slot1_reason': None,
+                'slot1_overrode': False,
+            }
+        return ordered_ids
+
     # Slot-1 relaxation ladder (explicit UX contract):
     # 1) HD+, no buffering, no probe failure
     # 2) HD+, no probe failure
