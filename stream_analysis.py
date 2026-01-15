@@ -1473,6 +1473,217 @@ def _apply_historical_penalties(summary, penalties):
     return summary
 
 
+RELIABILITY_WINDOW_HOURS = 168  # 7 days: long enough to capture stability trends.
+RELIABILITY_RECENT_HOURS = 24  # Recent window to ensure fresh failures dominate.
+RELIABILITY_SNAPSHOT_PATH = Path("logs") / "reliability_snapshot.json"
+# Weighting constants are deterministic and documented to keep scoring auditable.
+# Base band separation keeps recent-failure streams strictly below no-recent-failure streams
+# while avoiding an oversized "cliff" in the score itself.
+RELIABILITY_NO_RECENT_FAILURE_BONUS = 1.0
+RELIABILITY_ADJUSTMENT_CAP = 0.4  # Adjustment stays below the base-band gap.
+RELIABILITY_SUCCESS_WEIGHT = 0.01  # Each observed top-stream snapshot increases reliability.
+RELIABILITY_RECENT_SUCCESS_WEIGHT = 0.03  # Recent successes matter more than older ones.
+RELIABILITY_FAILURE_WEIGHT = 0.05  # Each observed switch-away reduces reliability.
+RELIABILITY_RECENT_FAILURE_WEIGHT = 0.12  # Recent failures carry extra penalty.
+RELIABILITY_INSTABILITY_FAILURE_UNITS = 2  # Instability indicators count as multiple failures.
+
+
+def _reliability_input_signature(logs_dir: Path):
+    """Capture inputs for reliability snapshots (append-only logs only)."""
+    # Keep this list aligned with every file read in _compute_reliability_snapshot.
+    # If new outcome logs are introduced, they must be added here to avoid stale snapshots.
+    inputs = {}
+    for name in ("quality_checks.ndjson", "quality_check_suggestions.ndjson"):
+        path = logs_dir / name
+        if path.exists():
+            stat = path.stat()
+            inputs[name] = {
+                "mtime": stat.st_mtime,
+                "size": stat.st_size,
+            }
+        else:
+            inputs[name] = None
+    return inputs
+
+
+def _load_reliability_snapshot(logs_dir: Path):
+    """Read cached reliability snapshot when inputs match."""
+    snapshot_path = RELIABILITY_SNAPSHOT_PATH
+    if not snapshot_path.exists():
+        return None
+    try:
+        with snapshot_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception as exc:
+        logging.warning("Failed to read reliability snapshot: %s", exc)
+        return None
+
+    expected_inputs = _reliability_input_signature(logs_dir)
+    if payload.get("inputs") != expected_inputs:
+        return None
+    if payload.get("window_hours") != RELIABILITY_WINDOW_HOURS:
+        return None
+    if payload.get("recent_hours") != RELIABILITY_RECENT_HOURS:
+        return None
+    return payload
+
+
+def _write_reliability_snapshot(logs_dir: Path, payload: dict):
+    """Persist reliability snapshot to an explicit cache file."""
+    snapshot_path = RELIABILITY_SNAPSHOT_PATH
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    with snapshot_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+
+
+def _compute_reliability_snapshot(logs_dir: Path):
+    """Derive reliability metrics from historical logs and cache the results."""
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=RELIABILITY_WINDOW_HOURS)
+    recent_cutoff = now - timedelta(hours=RELIABILITY_RECENT_HOURS)
+    quality_checks_path = logs_dir / "quality_checks.ndjson"
+    suggestions_path = logs_dir / "quality_check_suggestions.ndjson"
+    # Reliability currently derives only from quality checks and suggestions logs.
+    # No explicit stream selection outcome log is available in this repository.
+
+    top_streams_by_channel = defaultdict(list)
+    for record in _read_ndjson(quality_checks_path):
+        timestamp = _parse_history_timestamp(record.get("timestamp"))
+        if not timestamp or timestamp < cutoff:
+            continue
+        try:
+            order_index = int(record.get("order_index") or 0)
+        except (TypeError, ValueError):
+            order_index = 0
+        if order_index != 0:
+            continue
+        channel_id = record.get("channel_id")
+        stream_id = record.get("stream_id") or record.get("id")
+        if channel_id is None or stream_id is None:
+            continue
+        top_streams_by_channel[str(channel_id)].append(
+            (timestamp, str(stream_id))
+        )
+
+    for timeline in top_streams_by_channel.values():
+        timeline.sort(key=lambda item: item[0])
+
+    success_counts = defaultdict(int)
+    recent_success_counts = defaultdict(int)
+    failure_counts = defaultdict(int)
+    recent_failure_counts = defaultdict(int)
+
+    for timeline in top_streams_by_channel.values():
+        last_stream = None
+        for timestamp, stream_id in timeline:
+            success_counts[stream_id] += 1
+            if timestamp >= recent_cutoff:
+                recent_success_counts[stream_id] += 1
+            if last_stream and stream_id != last_stream:
+                failure_counts[last_stream] += 1
+                if timestamp >= recent_cutoff:
+                    recent_failure_counts[last_stream] += 1
+            last_stream = stream_id
+
+    instability_counts = defaultdict(int)
+    recent_instability_counts = defaultdict(int)
+    for record in _read_ndjson(suggestions_path):
+        timestamp = _parse_history_timestamp(
+            record.get("timestamp")
+            or record.get("observed_at")
+            or record.get("created_at")
+        )
+        if not timestamp or timestamp < cutoff:
+            continue
+        channel_id = record.get("channel_id") or record.get("id")
+        if channel_id is None:
+            continue
+        reason = str(
+            record.get("reason")
+            or record.get("suggestion_reason")
+            or record.get("message")
+            or ""
+        ).lower()
+        if not reason:
+            continue
+        # Map explicit instability reasons to deterministic failure units.
+        if "repeated_switching" in reason:
+            failure_units = RELIABILITY_INSTABILITY_FAILURE_UNITS
+        elif "unstable" in reason or "switch" in reason:
+            failure_units = 1
+        else:
+            continue
+
+        timeline = top_streams_by_channel.get(str(channel_id), [])
+        if not timeline:
+            continue
+        last_stream = None
+        for entry_time, stream_id in timeline:
+            if entry_time <= timestamp:
+                last_stream = stream_id
+            else:
+                break
+        if not last_stream:
+            continue
+        instability_counts[last_stream] += failure_units
+        if timestamp >= recent_cutoff:
+            recent_instability_counts[last_stream] += failure_units
+
+    streams = {}
+    all_stream_ids = set(success_counts) | set(failure_counts) | set(instability_counts)
+    for stream_id in all_stream_ids:
+        total_successes = success_counts.get(stream_id, 0)
+        recent_successes = recent_success_counts.get(stream_id, 0)
+        total_failures = (
+            failure_counts.get(stream_id, 0)
+            + instability_counts.get(stream_id, 0)
+        )
+        recent_failures = (
+            recent_failure_counts.get(stream_id, 0)
+            + recent_instability_counts.get(stream_id, 0)
+        )
+
+        # Recent failures gate overall reliability so they never outrank streams without them.
+        # The base-band separation is small (not a giant cliff) but remains larger than any
+        # adjustment so recovery happens once failures age out of the recent window.
+        base_score = RELIABILITY_NO_RECENT_FAILURE_BONUS if recent_failures == 0 else 0.0
+        adjustment = (
+            (recent_successes * RELIABILITY_RECENT_SUCCESS_WEIGHT)
+            + (total_successes * RELIABILITY_SUCCESS_WEIGHT)
+            - (recent_failures * RELIABILITY_RECENT_FAILURE_WEIGHT)
+            - (total_failures * RELIABILITY_FAILURE_WEIGHT)
+        )
+        adjustment = max(-RELIABILITY_ADJUSTMENT_CAP, min(RELIABILITY_ADJUSTMENT_CAP, adjustment))
+        reliability_score = base_score + adjustment
+
+        streams[stream_id] = {
+            "reliability_score": reliability_score,
+            "recent_failures": recent_failures,
+            "recent_successes": recent_successes,
+            "total_failures": total_failures,
+            "total_successes": total_successes,
+            "instability_events": instability_counts.get(stream_id, 0),
+        }
+
+    return {
+        "computed_at": now.isoformat().replace("+00:00", "Z"),
+        "window_hours": RELIABILITY_WINDOW_HOURS,
+        "recent_hours": RELIABILITY_RECENT_HOURS,
+        "inputs": _reliability_input_signature(logs_dir),
+        "streams": streams,
+    }
+
+
+def _load_or_compute_reliability_snapshot(logs_dir: Path):
+    """Return cached reliability snapshot, recomputing only when inputs change."""
+    cached = _load_reliability_snapshot(logs_dir)
+    if cached is not None:
+        return cached
+    snapshot = _compute_reliability_snapshot(logs_dir)
+    _write_reliability_snapshot(logs_dir, snapshot)
+    return snapshot
+
+
 def _score_streams_proxy_first(df, include_provider_name, output_csv, update_stats, api, historical_penalties):
     # Convert types
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
@@ -1990,6 +2201,8 @@ def order_streams_for_channel(
     similar_score_delta=5,
     provider_fn=None,
     validation_dominant=True,
+    reliability_scores=None,
+    reliability_sort=False,
     return_details=False,
 ):
     """Order streams using a continuous, deterministic score.
@@ -1997,6 +2210,7 @@ def order_streams_for_channel(
     All streams remain present; validation can optionally dominate ordering by
     keeping validated streams ahead of failed/unknown ones.
     Slot 1 gets an explicit safety eligibility pass before applying the usual order.
+    When reliability_sort is enabled, ordering is strictly reliability -> quality -> bitrate.
     """
 
     if not records:
@@ -2085,6 +2299,20 @@ def order_streams_for_channel(
         return score_value
 
     def _score_key(record):
+        if reliability_sort:
+            stream_id = record.get('stream_id')
+            reliability = 0.0
+            if reliability_scores and stream_id is not None:
+                reliability = reliability_scores.get(str(stream_id), 0.0)
+            score_value = _score_value(record) or 0.0
+            bitrate_value = _safe_float(
+                record.get('avg_bitrate_kbps')
+                or record.get('bitrate_kbps')
+                or record.get('ffmpeg_output_bitrate')
+            ) or 0.0
+            tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
+            return (reliability, score_value, bitrate_value, _stable_tiebreaker(tie_value))
+
         score_value = _score_value(record)
         tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
         if score_value is None:
@@ -2132,7 +2360,11 @@ def order_streams_for_channel(
 
         return output
 
-    if validation_dominant:
+    if reliability_sort:
+        # Validation dominance is intentionally bypassed when reliability-first ordering is enabled,
+        # because the ranking already reflects historical outcomes rather than single-run validation.
+        ordered = sorted(list(records), key=_score_key, reverse=True)
+    elif validation_dominant:
         passing = []
         non_passing = []
         for record in records:
@@ -2215,6 +2447,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
     ordering_cfg = config.get('ordering') or {}
     scoring_cfg = config.get('scoring') or {}
     resilience_mode = bool(ordering_cfg.get('resilience_mode', False))
+    reliability_sort = bool(ordering_cfg.get('reliability_sort', False))
     try:
         fallback_depth = int(ordering_cfg.get('fallback_depth', 3) or 3)
     except (ValueError, TypeError):
@@ -2224,6 +2457,13 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
     except (ValueError, TypeError):
         similar_score_delta = 5.0
     validation_dominant = bool(scoring_cfg.get('proxy_first', scoring_cfg.get('proxy_startup_bias', False)))
+    reliability_scores = None
+    if reliability_sort:
+        snapshot = _load_or_compute_reliability_snapshot(Path("logs"))
+        reliability_scores = {
+            stream_id: payload.get("reliability_score", 0.0)
+            for stream_id, payload in (snapshot.get("streams") or {}).items()
+        }
 
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])
@@ -2335,6 +2575,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
             similar_score_delta=similar_score_delta,
             provider_fn=_provider,
             validation_dominant=validation_dominant,
+            reliability_scores=reliability_scores,
+            reliability_sort=reliability_sort,
             return_details=collect_summary,
         )
         if collect_summary:
