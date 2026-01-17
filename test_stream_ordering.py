@@ -113,6 +113,55 @@ def test_probe_signals_do_not_dominate_ordering():
     assert _continuous_ordering_score(high_quality) > _continuous_ordering_score(lower_quality)
 
 
+def test_zero_decoded_frames_reduce_score_and_block_fps_bonus():
+    base = {
+        "stream_id": 320,
+        "score": 140,
+        "resolution": "1920x1080",
+        "fps": 30,
+        "avg_bitrate_kbps": 6000,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+        "validation_result": "pass",
+    }
+    zero_frames = {**base, "avg_frames_decoded": 0}
+    many_frames = {**base, "avg_frames_decoded": 120}
+
+    assert _continuous_ordering_score(zero_frames) < _continuous_ordering_score(many_frames)
+
+
+def test_slot1_uses_zero_decoded_frames_as_probe_failure():
+    records = [
+        {
+            "stream_id": 701,
+            "ordering_score": 100,
+            "resolution": "1920x1080",
+            "status": "ok",
+            "avg_frames_decoded": 0,
+            "frames_decoded": 1000,
+            "fps": 30,
+            "avg_bitrate_kbps": 6000,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+        },
+        {
+            "stream_id": 702,
+            "ordering_score": 100,
+            "resolution": "1920x1080",
+            "status": "ok",
+            "frames_decoded": 500,
+            "fps": 30,
+            "avg_bitrate_kbps": 6000,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+        },
+    ]
+
+    details = order_streams_for_channel(records, return_details=True)
+
+    assert details["slot1_id"] == 702
+
+
 def test_provider_identity_does_not_exclude_streams():
     records = [
         {"stream_id": 201, "m3u_account": "provider_a", "score": 12},
@@ -166,7 +215,7 @@ def test_slot1_reason_is_reported_when_overridden():
         },
         {
             "stream_id": 602,
-            "ordering_score": 100,
+            "ordering_score": 50,
             "resolution": "1920x1080",
             "status": "ok",
             "frames_decoded": 100,

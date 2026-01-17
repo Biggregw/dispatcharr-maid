@@ -2421,6 +2421,13 @@ def _firestick_bitrate_penalty(codec_value, avg_bitrate_kbps):
     return 1.0
 
 
+def _decoded_frames_from_record(record):
+    avg_frames = record.get('avg_frames_decoded')
+    if avg_frames is None:
+        return record.get('frames_decoded')
+    return avg_frames
+
+
 def _decoded_frames_multiplier(decoded_frames):
     if decoded_frames is None:
         return 1.0
@@ -2490,7 +2497,7 @@ def _continuous_ordering_score(record):
     declared_bitrate_present = declared_bitrate_kbps if declared_bitrate_kbps and declared_bitrate_kbps > 0 else None
     r_frame_rate_present = r_frame_rate if r_frame_rate and r_frame_rate > 0 else None
 
-    decoded_frames = _safe_float(record.get('avg_frames_decoded') or record.get('frames_decoded'))
+    decoded_frames = _safe_float(_decoded_frames_from_record(record))
     decoded_frames_multiplier = _decoded_frames_multiplier(decoded_frames)
 
     # Metadata completeness and gentle probe-structure penalties should be very weak.
@@ -2658,7 +2665,7 @@ def order_streams_for_channel(
 
     def _is_probe_failure(record):
         try:
-            frames_decoded = float(record.get('avg_frames_decoded', record.get('frames_decoded', 0)))
+            frames_decoded = float(_decoded_frames_from_record(record))
         except Exception:
             frames_decoded = None
         if frames_decoded == 0:
@@ -2687,7 +2694,7 @@ def order_streams_for_channel(
         return False
 
     def _decoded_frames_value(record):
-        frames = _safe_float(record.get('avg_frames_decoded') or record.get('frames_decoded'))
+        frames = _safe_float(_decoded_frames_from_record(record))
         return frames if frames is not None else 0.0
 
     def _is_hd_or_better(record):
@@ -2714,7 +2721,7 @@ def order_streams_for_channel(
             timeout_count = int(record.get('err_timeout', 0) or 0)
         except Exception:
             timeout_count = 0
-        frames_decoded = _safe_float(record.get('avg_frames_decoded') or record.get('frames_decoded'))
+        frames_decoded = _safe_float(_decoded_frames_from_record(record))
 
         if status == 'timeout' or timeout_count > 0:
             return 0.3
