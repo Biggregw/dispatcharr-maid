@@ -1859,7 +1859,8 @@ def run_job_worker(job, api, config):
                     api,
                     config,
                     progress_callback=fetch_progress,
-                    stream_provider_map_override=stream_provider_map_override
+                    stream_provider_map_override=stream_provider_map_override,
+                    streams_override=all_streams,
                 )
 
                 if job.cancel_requested:
