@@ -2104,11 +2104,16 @@
                 ? job.stream_checklist_processed
                 : processed;
             const completedPreview = Math.max(0, Math.min(checklist.length, completedTotal));
+            const lastCompletedIndex = completedPreview > 0 ? completedPreview - 1 : -1;
+            const remainingCount = Math.max(0, total - completedTotal);
+            const visibleStreams = checklist
+                .map((stream, idx) => ({ stream, idx }))
+                .filter(({ idx }) => idx >= completedPreview || idx === lastCompletedIndex);
             const metaText = total > checklist.length
-                ? `Showing ${checklist.length} of ${total} streams`
-                : `${total} stream${total === 1 ? '' : 's'} to check`;
-            const itemsHtml = checklist.map((stream, idx) => {
-                const done = idx < completedPreview;
+                ? `Showing ${visibleStreams.length} of ${total} streams`
+                : `${remainingCount} remaining`;
+            const itemsHtml = visibleStreams.map(({ stream, idx }) => {
+                const done = idx === lastCompletedIndex;
                 const name = escapeHtml(stream?.name || `Stream ${stream?.id ?? ''}`);
                 return `
                     <li class="stream-checklist__item">
