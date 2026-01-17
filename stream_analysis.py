@@ -2622,9 +2622,9 @@ def order_streams_for_channel(
 ):
     """Order streams using a continuous, deterministic score.
 
-    All streams remain present; validation confidence softly adjusts the
-    continuous ordering score rather than imposing pass/fail buckets.
-    Slot 1 gets an explicit safety eligibility pass before applying the usual order.
+    All streams remain present; deterministic tiering enforces health boundaries
+    before ordering within each tier using the continuous score.
+    Slot 1 is chosen only from the top safety tiers.
 
     Deprecated ordering toggles (resilience_mode, fallback_depth, similar_score_delta,
     reliability_sort) are accepted for compatibility but ignored.
@@ -2639,10 +2639,6 @@ def order_streams_for_channel(
             'slot1_overrode': False,
         }
 
-    def _validation_tokens(record):
-        reason = str(record.get('validation_reason') or '')
-        return [token for token in reason.split(';') if token]
-
     def _is_buffering(record):
         # Buffering detection is conservative and based on timeout signals only;
         # we intentionally assume buffering when evidence is ambiguous to protect
@@ -2655,32 +2651,7 @@ def order_streams_for_channel(
                 return True
         except Exception:
             pass
-        tokens = _validation_tokens(record)
-        if any(token.startswith('err_timeout') for token in tokens):
-            return True
-        validation_result = str(record.get('validation_result') or '').strip().lower()
-        if validation_result == 'fail' and not tokens and status in ('', 'ok'):
-            return True
         return False
-
-    def _is_probe_failure(record):
-        try:
-            frames_decoded = float(_decoded_frames_from_record(record))
-        except Exception:
-            frames_decoded = None
-        if frames_decoded == 0:
-            return True
-        validation_result = str(record.get('validation_result') or record.get('status') or '').strip().lower()
-        if validation_result == 'fail' and not _is_buffering(record):
-            return True
-        status = str(record.get('status') or '').strip().lower()
-        if status and status not in ('ok', 'timeout'):
-            return True
-        return any(
-            token in ('err_decode', 'err_discontinuity', 'no_frames_decoded')
-            or token.startswith('status:')
-            for token in _validation_tokens(record)
-        )
 
     def _near_ceiling_bitrate(record):
         avg_bitrate = _safe_float(record.get('avg_bitrate_kbps'))
@@ -2715,45 +2686,6 @@ def order_streams_for_channel(
             ordering = record.get('score')
         return _safe_float(ordering)
 
-    def _validation_confidence_multiplier(record):
-        status = str(record.get('status') or '').strip().lower()
-        try:
-            timeout_count = int(record.get('err_timeout', 0) or 0)
-        except Exception:
-            timeout_count = 0
-        frames_decoded = _safe_float(_decoded_frames_from_record(record))
-
-        if status == 'timeout' or timeout_count > 0:
-            return 0.3
-        if frames_decoded == 0 or _is_probe_failure(record):
-            return 0.3
-
-        validation_result = str(record.get('validation_result') or record.get('status') or '').strip().lower()
-        validation_reason = str(record.get('validation_reason') or '').strip().lower()
-
-        soft_flags = False
-        if frames_decoded is not None and 0 < frames_decoded < 30:
-            soft_flags = True
-        if 'partial' in validation_reason:
-            soft_flags = True
-        if validation_result in ('', 'fail'):
-            soft_flags = True
-        if validation_result not in ('', 'pass', 'ok', 'fail'):
-            soft_flags = True
-
-        probe_completed = validation_result in ('pass', 'ok') or status in ('ok', '')
-        parsed = _parse_resolution(record.get('resolution'))
-        core_incomplete = (
-            not parsed
-            or str(record.get('video_codec') or '').strip().upper() in ('', 'N/A')
-            or _safe_float(record.get('fps')) is None
-            or _safe_float(record.get('avg_bitrate_kbps')) is None
-        )
-        if probe_completed and core_incomplete:
-            soft_flags = True
-
-        return 0.7 if soft_flags else 1.0
-
     for record in records:
         ordering_score = _safe_float(record.get('ordering_score'))
         score = _safe_float(record.get('score'))
@@ -2767,101 +2699,103 @@ def order_streams_for_channel(
         # final_score is recomputed on each analysis run; reuse the current run's value for ordering.
         record['final_score'] = final_score
 
+    def _status_value(record):
+        return str(record.get('status') or '').strip().lower()
+
+    def _has_decode_errors(record):
+        for key in ('err_decode', 'err_discontinuity'):
+            value = record.get(key)
+            try:
+                if int(value):
+                    return True
+            except Exception:
+                if value:
+                    return True
+        return False
+
+    def _timeout_count(record):
+        try:
+            return int(record.get('err_timeout', 0) or 0)
+        except Exception:
+            return 0
+
+    def _missing_core_probe_metadata(record):
+        fps = _safe_float(record.get('fps'))
+        bitrate = _safe_float(record.get('avg_bitrate_kbps'))
+        codec = str(record.get('video_codec') or '').strip().upper()
+        return fps is None or bitrate is None or codec in ('', 'N/A')
+
+    def _is_status_failure_non_timeout(record):
+        status = _status_value(record)
+        return bool(status) and status not in ('ok', 'timeout')
+
+    def _basic_validation_pass(record):
+        return (
+            _status_value(record) in ('', 'ok')
+            and _timeout_count(record) == 0
+            and not _has_decode_errors(record)
+            and not _is_buffering(record)
+            and _decoded_frames_value(record) > 0
+        )
+
+    def _tier_for_record(record):
+        decoded_frames = _decoded_frames_value(record)
+        if decoded_frames == 0 or _has_decode_errors(record) or _is_status_failure_non_timeout(record):
+            return 5
+        if _status_value(record) == 'timeout' or _timeout_count(record) > 0 or _is_buffering(record):
+            return 4
+        if _basic_validation_pass(record):
+            if decoded_frames > 30 and _is_hd_or_better(record):
+                return 1
+            if decoded_frames > 30 and not _is_hd_or_better(record):
+                return 2
+            weak_confidence = (
+                0 < decoded_frames <= 30
+                or _missing_core_probe_metadata(record)
+                or _status_value(record) == ''
+            )
+            if weak_confidence:
+                return 3
+        return 3
+
     def _score_key(record):
         score_value = _score_value(record)
-        base_value = _safe_float(record.get('base_score'))
-        if base_value is None:
-            base_value = _safe_float(record.get('ordering_score')) or _safe_float(record.get('score')) or 0.0
-
         if score_value is None:
-            return (1, 0.0, 0.0)
-        effective_score = score_value * _validation_confidence_multiplier(record)
-        return (0, -effective_score, -score_value, -base_value)
+            return (1, 0.0)
+        return (0, -score_value)
 
-    def _slot1_rank(record):
-        score_value = _score_value(record)
-        if score_value is None:
-            score_value = 0.0
-        frames = _decoded_frames_value(record)
-        return (-frames, -score_value)
+    tiered_records = {tier: [] for tier in range(1, 6)}
+    for record in records:
+        tiered_records[_tier_for_record(record)].append(record)
 
-    ordered = sorted(records, key=_score_key)
+    ordered = []
+    for tier in range(1, 6):
+        ordered.extend(sorted(tiered_records[tier], key=_score_key))
 
-    strict_score_ordering = False
-    if strict_score_ordering:
-        # Enforce the invariant: when all ordering toggles are off, do not reshuffle
-        # the score-sorted list (slot-1 safety overrides would violate strict ranking).
-        ordered_ids = [r.get('stream_id') for r in ordered]
-        if return_details:
-            return {
-                'ordered_ids': ordered_ids,
-                'slot1_id': ordered_ids[0] if ordered_ids else None,
-                'slot1_rule': None,
-                'slot1_reason': None,
-                'slot1_overrode': False,
-            }
-        return ordered_ids
+    tier1_sorted = sorted(tiered_records[1], key=_score_key)
+    tier2_sorted = sorted(tiered_records[2], key=_score_key)
 
-    # Slot-1 relaxation ladder (explicit UX contract):
-    # 1) HD+, no buffering, no probe failure
-    # 2) HD+, no probe failure
-    # 3) HD+ only
-    # 4) Any stream (last resort)
     slot1_rule = None
     slot1_reason = None
-    slot1_candidates = [
-        r
-        for r in ordered
-        if _is_hd_or_better(r)
-        and not _is_buffering(r)
-        and not _is_probe_failure(r)
-        and not _near_ceiling_bitrate(r)
-    ]
-    if not slot1_candidates:
-        slot1_candidates = [r for r in ordered if _is_hd_or_better(r) and not _is_buffering(r) and not _is_probe_failure(r)]
-    if not slot1_candidates:
-        slot1_rule = 'hd_no_probe_failure'
-        slot1_candidates = [r for r in ordered if _is_hd_or_better(r) and not _is_probe_failure(r)]
-    if not slot1_candidates:
-        slot1_rule = 'hd_only'
-        slot1_candidates = [r for r in ordered if _is_hd_or_better(r)]
-    if not slot1_candidates:
-        slot1_rule = 'any_stream'
-        slot1_candidates = ordered
+    slot1 = None
+    if tier1_sorted:
+        slot1 = tier1_sorted[0].get('stream_id')
+        slot1_rule = 'tier1_safe'
+        slot1_reason = 'Selected from Tier 1 (Safe Live Now).'
+    elif tier2_sorted:
+        slot1 = tier2_sorted[0].get('stream_id')
+        slot1_rule = 'tier2_sd_fallback'
+        slot1_reason = 'Selected from Tier 2 (Safe SD Fallback).'
 
-    slot1_candidates = sorted(slot1_candidates, key=_slot1_rank)
-    slot1 = slot1_candidates[0].get('stream_id') if slot1_candidates else None
     ordered_ids = [r.get('stream_id') for r in ordered]
-    if slot1 is None:
-        if return_details:
-            return {
-                'ordered_ids': ordered_ids,
-                'slot1_id': None,
-                'slot1_rule': None,
-                'slot1_reason': None,
-                'slot1_overrode': False,
-            }
-        return ordered_ids
-
-    if slot1_rule is None:
-        slot1_rule = 'hd_no_buffer_no_probe_failure'
-
-    slot1_reason_map = {
-        'hd_no_buffer_no_probe_failure': 'Met the slot-1 safety checks (HD+, no buffering, no probe failures).',
-        'hd_no_probe_failure': 'Met the slot-1 safety checks (HD+, no probe failures).',
-        'hd_only': 'Selected as the best available HD stream.',
-        'any_stream': 'No HD streams were available; selected the best remaining stream.',
-    }
-    slot1_reason = slot1_reason_map.get(slot1_rule)
-
-    final_order = [slot1] + [sid for sid in ordered_ids if sid != slot1]
+    final_order = ordered_ids if slot1 is None else [slot1] + [sid for sid in ordered_ids if sid != slot1]
     if return_details:
         return {
             'ordered_ids': final_order,
             'slot1_id': slot1,
             'slot1_rule': slot1_rule,
             'slot1_reason': slot1_reason,
-            'slot1_overrode': bool(ordered_ids) and ordered_ids[0] != slot1,
+            'slot1_overrode': slot1 is not None and bool(ordered_ids) and ordered_ids[0] != slot1,
         }
     return final_order
 

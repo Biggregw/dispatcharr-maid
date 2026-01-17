@@ -174,15 +174,32 @@ def test_provider_identity_does_not_exclude_streams():
     assert set(ordered) == {201, 202, 203}
 
 
-def test_validation_weighting_can_override_small_quality_gaps():
+def test_failed_streams_are_always_demoted():
     records = [
-        {"stream_id": 401, "ordering_score": 45, "validation_result": "fail", "resolution": "1920x1080"},
-        {"stream_id": 402, "ordering_score": 40, "validation_result": "pass", "resolution": "1920x1080"},
+        {
+            "stream_id": 401,
+            "ordering_score": 900,
+            "resolution": "1920x1080",
+            "status": "ok",
+            "err_decode": 1,
+            "avg_frames_decoded": 120,
+        },
+        {
+            "stream_id": 402,
+            "ordering_score": 10,
+            "resolution": "1920x1080",
+            "status": "ok",
+            "avg_frames_decoded": 120,
+            "err_decode": 0,
+            "err_discontinuity": 0,
+            "err_timeout": 0,
+        },
     ]
 
     ordered = order_streams_for_channel(records)
 
     assert ordered[0] == 402
+    assert ordered[-1] == 401
 
 
 def test_reliability_and_resilience_flags_have_no_effect():
@@ -226,4 +243,61 @@ def test_slot1_reason_is_reported_when_overridden():
 
     assert details["ordered_ids"][0] == 602
     assert details["slot1_reason"]
-    assert details["slot1_overrode"] is True
+    assert details["slot1_overrode"] is False
+
+
+def test_slot1_falls_back_to_tier2_only():
+    records = [
+        {
+            "stream_id": 801,
+            "ordering_score": 50,
+            "resolution": "640x480",
+            "status": "ok",
+            "avg_frames_decoded": 100,
+            "err_decode": 0,
+            "err_discontinuity": 0,
+            "err_timeout": 0,
+        },
+        {
+            "stream_id": 802,
+            "ordering_score": 100,
+            "resolution": "1920x1080",
+            "status": "ok",
+            "avg_frames_decoded": 10,
+            "err_decode": 0,
+            "err_discontinuity": 0,
+            "err_timeout": 0,
+        },
+    ]
+
+    details = order_streams_for_channel(records, return_details=True)
+
+    assert details["slot1_id"] == 801
+    assert details["slot1_rule"] == "tier2_sd_fallback"
+
+
+def test_slot1_is_none_when_only_lower_tiers_exist():
+    records = [
+        {
+            "stream_id": 901,
+            "ordering_score": 80,
+            "resolution": "1920x1080",
+            "status": "ok",
+            "avg_frames_decoded": 10,
+            "err_decode": 0,
+            "err_discontinuity": 0,
+            "err_timeout": 0,
+        },
+        {
+            "stream_id": 902,
+            "ordering_score": 900,
+            "resolution": "1920x1080",
+            "status": "timeout",
+            "err_timeout": 1,
+            "avg_frames_decoded": 50,
+        },
+    ]
+
+    details = order_streams_for_channel(records, return_details=True)
+
+    assert details["slot1_id"] is None
