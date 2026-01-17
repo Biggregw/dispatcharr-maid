@@ -246,58 +246,72 @@ def test_slot1_reason_is_reported_when_overridden():
     assert details["slot1_overrode"] is False
 
 
-def test_slot1_falls_back_to_tier2_only():
+def test_failed_streams_are_ranked_after_passed_streams():
     records = [
         {
             "stream_id": 801,
-            "ordering_score": 50,
-            "resolution": "640x480",
-            "status": "ok",
-            "avg_frames_decoded": 100,
-            "err_decode": 0,
-            "err_discontinuity": 0,
-            "err_timeout": 0,
+            "ordering_score": 250,
+            "validation_result": "fail",
+            "resolution": "1920x1080",
         },
         {
             "stream_id": 802,
             "ordering_score": 100,
+            "validation_result": "pass",
             "resolution": "1920x1080",
-            "status": "ok",
-            "avg_frames_decoded": 10,
-            "err_decode": 0,
-            "err_discontinuity": 0,
-            "err_timeout": 0,
         },
     ]
 
-    details = order_streams_for_channel(records, return_details=True)
+    ordered = order_streams_for_channel(records)
 
-    assert details["slot1_id"] == 801
-    assert details["slot1_rule"] == "tier2_sd_fallback"
+    assert ordered == [802, 801]
 
 
-def test_slot1_is_none_when_only_lower_tiers_exist():
+def test_failed_streams_remain_in_ordering():
     records = [
         {
-            "stream_id": 901,
-            "ordering_score": 80,
+            "stream_id": 811,
+            "ordering_score": 180,
+            "validation_result": "pass",
             "resolution": "1920x1080",
-            "status": "ok",
-            "avg_frames_decoded": 10,
-            "err_decode": 0,
-            "err_discontinuity": 0,
-            "err_timeout": 0,
         },
         {
-            "stream_id": 902,
-            "ordering_score": 900,
-            "resolution": "1920x1080",
+            "stream_id": 812,
+            "ordering_score": 300,
             "status": "timeout",
-            "err_timeout": 1,
-            "avg_frames_decoded": 50,
+            "resolution": "1920x1080",
+        },
+    ]
+
+    ordered = order_streams_for_channel(records)
+
+    assert ordered == [811, 812]
+
+
+def test_slot1_never_selects_failed_when_valid_exists():
+    records = [
+        {
+            "stream_id": 821,
+            "ordering_score": 400,
+            "status": "timeout",
+            "resolution": "1920x1080",
+            "fps": 30,
+            "avg_bitrate_kbps": 6000,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+        },
+        {
+            "stream_id": 822,
+            "ordering_score": 120,
+            "status": "ok",
+            "resolution": "1920x1080",
+            "fps": 30,
+            "avg_bitrate_kbps": 6000,
+            "video_codec": "h264",
+            "audio_codec": "aac",
         },
     ]
 
     details = order_streams_for_channel(records, return_details=True)
 
-    assert details["slot1_id"] is None
+    assert details["slot1_id"] == 822

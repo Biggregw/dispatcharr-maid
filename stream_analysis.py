@@ -2653,6 +2653,38 @@ def order_streams_for_channel(
             pass
         return False
 
+    def _is_probe_failure(record):
+        try:
+            frames_decoded = float(_decoded_frames_from_record(record))
+        except Exception:
+            frames_decoded = None
+        if frames_decoded == 0:
+            return True
+        validation_result = str(record.get('validation_result') or record.get('status') or '').strip().lower()
+        if validation_result == 'fail' and not _is_buffering(record):
+            return True
+        status = str(record.get('status') or '').strip().lower()
+        if status and status not in ('ok', 'timeout'):
+            return True
+        return any(
+            token in ('err_decode', 'err_discontinuity', 'no_frames_decoded')
+            or token.startswith('status:')
+            for token in _validation_tokens(record)
+        )
+
+    def _is_validation_failed(record):
+        validation_result = str(record.get('validation_result') or '').strip().lower()
+        if validation_result == 'fail':
+            return True
+        if _is_probe_failure(record):
+            return True
+        status = str(record.get('status') or '').strip().lower()
+        if status in ('timeout', 'error') or status.startswith('error') or status.startswith('err'):
+            return True
+        if 'avg_frames_decoded' in record and _safe_float(record.get('avg_frames_decoded')) == 0:
+            return True
+        return False
+
     def _near_ceiling_bitrate(record):
         avg_bitrate = _safe_float(record.get('avg_bitrate_kbps'))
         if avg_bitrate is None or avg_bitrate <= 0:
@@ -2761,8 +2793,28 @@ def order_streams_for_channel(
     def _score_key(record):
         score_value = _score_value(record)
         if score_value is None:
-            return (1, 0.0)
-        return (0, -score_value)
+            score_value = 0.0
+        frames = _decoded_frames_value(record)
+        return (-frames, -score_value)
+
+    tier1_records = [record for record in records if not _is_validation_failed(record)]
+    tier2_records = [record for record in records if _is_validation_failed(record)]
+    ordered = sorted(tier1_records, key=_score_key) + sorted(tier2_records, key=_score_key)
+
+    strict_score_ordering = False
+    if strict_score_ordering:
+        # Enforce the invariant: when all ordering toggles are off, do not reshuffle
+        # the score-sorted list (slot-1 safety overrides would violate strict ranking).
+        ordered_ids = [r.get('stream_id') for r in ordered]
+        if return_details:
+            return {
+                'ordered_ids': ordered_ids,
+                'slot1_id': ordered_ids[0] if ordered_ids else None,
+                'slot1_rule': None,
+                'slot1_reason': None,
+                'slot1_overrode': False,
+            }
+        return ordered_ids
 
     tiered_records = {tier: [] for tier in range(1, 6)}
     for record in records:
