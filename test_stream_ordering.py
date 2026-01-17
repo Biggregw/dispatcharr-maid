@@ -125,10 +125,10 @@ def test_provider_identity_does_not_exclude_streams():
     assert set(ordered) == {201, 202, 203}
 
 
-def test_validation_passes_always_rank_before_failures():
+def test_validation_weighting_can_override_small_quality_gaps():
     records = [
-        {"stream_id": 401, "ordering_score": 50, "validation_result": "fail", "resolution": "1920x1080"},
-        {"stream_id": 402, "ordering_score": 10, "validation_result": "pass", "resolution": "1920x1080"},
+        {"stream_id": 401, "ordering_score": 45, "validation_result": "fail", "resolution": "1920x1080"},
+        {"stream_id": 402, "ordering_score": 40, "validation_result": "pass", "resolution": "1920x1080"},
     ]
 
     ordered = order_streams_for_channel(records)
