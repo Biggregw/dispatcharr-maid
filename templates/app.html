@@ -73,6 +73,69 @@
             background: #f8fafc;
             margin-top: 16px;
         }
+
+        .stream-checklist {
+            margin-top: 14px;
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 12px 14px;
+        }
+
+        .stream-checklist__header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 8px;
+        }
+
+        .stream-checklist__meta {
+            font-size: 0.85em;
+            color: #6b7280;
+            font-weight: 600;
+        }
+
+        .stream-checklist__list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: grid;
+            gap: 8px;
+        }
+
+        .stream-checklist__item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            background: #f8fafc;
+            border: 1px solid #edf2f7;
+        }
+
+        .stream-checklist__name {
+            font-weight: 600;
+            color: #1f2937;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .stream-checklist__status {
+            font-weight: 700;
+            font-size: 0.9em;
+            color: #9ca3af;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .stream-checklist__status--done {
+            color: #16a34a;
+        }
         
         /* Group selection */
         .group-grid {
@@ -2024,6 +2087,46 @@
                 if (pollEl) pollEl.textContent = pollCountdown;
             }, 1000);
         }
+
+        function renderStreamChecklist(job, processed) {
+            const checklist = Array.isArray(job.stream_checklist) ? job.stream_checklist : [];
+            const total = Number.isFinite(job.stream_checklist_total) && job.stream_checklist_total > 0
+                ? job.stream_checklist_total
+                : checklist.length;
+            if (!checklist.length || total === 0) {
+                return '';
+            }
+            const completedTotal = Number.isFinite(job.stream_checklist_processed)
+                ? job.stream_checklist_processed
+                : processed;
+            const completedPreview = Math.max(0, Math.min(checklist.length, completedTotal));
+            const metaText = total > checklist.length
+                ? `Showing ${checklist.length} of ${total} streams`
+                : `${total} stream${total === 1 ? '' : 's'} to check`;
+            const itemsHtml = checklist.map((stream, idx) => {
+                const done = idx < completedPreview;
+                const name = escapeHtml(stream?.name || `Stream ${stream?.id ?? ''}`);
+                return `
+                    <li class="stream-checklist__item">
+                        <span class="stream-checklist__name">${name}</span>
+                        <span class="stream-checklist__status ${done ? 'stream-checklist__status--done' : ''}">
+                            ${done ? '✅ Checked' : '⏳ Pending'}
+                        </span>
+                    </li>
+                `;
+            }).join('');
+            return `
+                <div class="stream-checklist">
+                    <div class="stream-checklist__header">
+                        <span>Stream checks</span>
+                        <span class="stream-checklist__meta">${metaText}</span>
+                    </div>
+                    <ul class="stream-checklist__list">
+                        ${itemsHtml}
+                    </ul>
+                </div>
+            `;
+        }
         
         // Render current job
         function renderCurrentJob(job) {
@@ -2172,6 +2275,8 @@
                     </div>
                 `;
             }
+
+            html += renderStreamChecklist(job, processed);
             
             if (job.status === 'running') {
                 html += `

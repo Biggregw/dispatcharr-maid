@@ -1404,6 +1404,9 @@ class Job:
         self.thread = None
         self.result_summary = None
         self.workspace = workspace
+        self.stream_checklist = []
+        self.stream_checklist_total = 0
+        self.stream_checklist_processed = 0
     
     def to_dict(self):
         """Convert to dictionary for JSON serialization"""
@@ -1438,7 +1441,10 @@ class Job:
             'completed_at': self.completed_at,
             'error': self.error,
             'result_summary': self.result_summary,
-            'workspace': self.workspace
+            'workspace': self.workspace,
+            'stream_checklist': self.stream_checklist,
+            'stream_checklist_total': self.stream_checklist_total,
+            'stream_checklist_processed': self.stream_checklist_processed
         }
 
 
@@ -1557,6 +1563,35 @@ def progress_callback(job, progress_data):
     total = progress_data.get('total', 0)
     failed = progress_data.get('failed', 0)
     _job_update_stage_progress(job, processed=processed, total=total, failed=failed)
+    if job and getattr(job, 'stage_key', None) == 'analyze':
+        job.stream_checklist_processed = int(processed or 0)
+
+
+def _job_set_stream_checklist(job, streams, limit=12):
+    if not job or not isinstance(streams, list):
+        return
+    seen_ids = set()
+    checklist = []
+    for stream in streams:
+        if not isinstance(stream, dict):
+            continue
+        stream_id = stream.get('stream_id')
+        if stream_id is None:
+            continue
+        normalized_id = str(stream_id)
+        if normalized_id in seen_ids:
+            continue
+        seen_ids.add(normalized_id)
+        name = stream.get('stream_name') or stream.get('name') or f"Stream {stream_id}"
+        checklist.append({
+            'id': normalized_id,
+            'name': str(name)
+        })
+        if len(checklist) >= limit:
+            break
+    job.stream_checklist = checklist
+    job.stream_checklist_total = len(streams)
+    job.stream_checklist_processed = 0
 
 
 def _job_get_stage_defs(job_type):
@@ -1885,7 +1920,8 @@ def run_job_worker(job, api, config):
                     analyzed_count = analyze_streams(
                         config,
                         progress_callback=progress_wrapper,
-                        force_full_analysis=True
+                        force_full_analysis=True,
+                        streams_callback=lambda streams: _job_set_stream_checklist(job, streams)
                     ) or 0
                 finally:
                     config.set('filters', 'stream_last_measured_days', original_days)
@@ -1988,7 +2024,8 @@ def run_job_worker(job, api, config):
                 analyzed_count = analyze_streams(
                     config,
                     progress_callback=progress_wrapper,
-                    force_full_analysis=True
+                    force_full_analysis=True,
+                    streams_callback=lambda streams: _job_set_stream_checklist(job, streams)
                 ) or 0
             finally:
                 config.set('filters', 'stream_last_measured_days', original_days)
@@ -2074,7 +2111,8 @@ def run_job_worker(job, api, config):
                 analyzed_count = analyze_streams(
                     config,
                     progress_callback=progress_wrapper,
-                    force_full_analysis=(job.job_type == 'full_cleanup')
+                    force_full_analysis=(job.job_type == 'full_cleanup'),
+                    streams_callback=lambda streams: _job_set_stream_checklist(job, streams)
                 ) or 0
             finally:
                 # Restore original setting
@@ -2132,7 +2170,11 @@ def run_job_worker(job, api, config):
                 progress_callback(job, progress_data)
                 return not job.cancel_requested
             
-            analyze_streams(config, progress_callback=progress_wrapper)
+            analyze_streams(
+                config,
+                progress_callback=progress_wrapper,
+                streams_callback=lambda streams: _job_set_stream_checklist(job, streams)
+            )
         
         elif job.job_type == 'score':
             job.current_step = 'Scoring streams...'
