@@ -3023,7 +3023,11 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
     df['stream_id'] = df['stream_id'].astype(int)
     df['channel_id'] = df['channel_id'].astype(int)
 
-    grouped = df.groupby("channel_id")
+    grouped = {channel_id: group for channel_id, group in df.groupby("channel_id")}
+    channel_order_df = df[['channel_id', 'channel_number']].dropna(subset=['channel_id']).drop_duplicates()
+    channel_order_df['channel_number'] = pd.to_numeric(channel_order_df['channel_number'], errors='coerce')
+    channel_order_df = channel_order_df.sort_values(['channel_number', 'channel_id'], na_position='last')
+    channel_order = channel_order_df['channel_id'].tolist()
 
     summary = {'channels': []} if collect_summary else None
     any_final_streams = False if collect_summary else None
@@ -3045,7 +3049,10 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
         except Exception:
             return value
 
-    for channel_id, group in grouped:
+    for channel_id in channel_order:
+        group = grouped.get(channel_id)
+        if group is None:
+            continue
         group_records = group.to_dict('records')
         record_lookup = {}
         for record in group_records:
