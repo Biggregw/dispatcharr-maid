@@ -2535,10 +2535,9 @@ def order_streams_for_channel(
 ):
     """Order streams using a continuous, deterministic score.
 
-    All streams remain present; validation can optionally dominate ordering by
+    All streams remain present; validation always dominates ordering by
     keeping validated streams ahead of failed/unknown ones.
     Slot 1 gets an explicit safety eligibility pass before applying the usual order.
-    When reliability_sort is enabled, ordering is strictly reliability -> quality -> bitrate.
     """
 
     if not records:
@@ -2640,41 +2639,14 @@ def order_streams_for_channel(
         record['final_score'] = final_score
 
     def _score_key(record):
-        if reliability_sort:
-            stream_id = record.get('stream_id')
-            reliability = 0.0
-            if reliability_scores and stream_id is not None:
-                reliability = reliability_scores.get(str(stream_id), 0.0)
-            score_value = _score_value(record) or 0.0
-            bitrate_value = _safe_float(
-                record.get('avg_bitrate_kbps')
-                or record.get('bitrate_kbps')
-                or record.get('ffmpeg_output_bitrate')
-            ) or 0.0
-            tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
-            return (
-                0,
-                -reliability,
-                -score_value,
-                -bitrate_value,
-                _stable_tiebreaker(tie_value),
-            )
-
         score_value = _score_value(record)
         base_value = _safe_float(record.get('base_score'))
         if base_value is None:
             base_value = _safe_float(record.get('ordering_score')) or _safe_float(record.get('score')) or 0.0
-        provider_value = _provider_key(record)
-        provider_key = str(provider_value or '').lower()
-        stream_id = record.get('stream_id')
-        try:
-            stream_key = int(stream_id)
-        except Exception:
-            stream_key = str(stream_id or '')
 
         if score_value is None:
-            return (1, 0.0, 0.0, provider_key, stream_key)
-        return (0, -score_value, -base_value, provider_key, stream_key)
+            return (1, 0.0, 0.0)
+        return (0, -score_value, -base_value)
 
     def _ordered_with_resilience(items):
         ordered = sorted(list(items), key=_score_key)
@@ -2717,23 +2689,18 @@ def order_streams_for_channel(
 
         return output
 
-    if reliability_sort:
-        # Validation dominance is intentionally bypassed when reliability-first ordering is enabled,
-        # because the ranking already reflects historical outcomes rather than single-run validation.
-        ordered = sorted(list(records), key=_score_key)
-    elif validation_dominant:
-        passing = []
-        non_passing = []
-        for record in records:
-            if _is_validation_pass(record):
-                passing.append(record)
-            else:
-                non_passing.append(record)
-        ordered = _ordered_with_resilience(passing) + _ordered_with_resilience(non_passing)
-    else:
-        ordered = _ordered_with_resilience(records)
+    validation_dominant = True
+    resilience_mode = False
+    passing = []
+    non_passing = []
+    for record in records:
+        if _is_validation_pass(record):
+            passing.append(record)
+        else:
+            non_passing.append(record)
+    ordered = _ordered_with_resilience(passing) + _ordered_with_resilience(non_passing)
 
-    strict_score_ordering = not (resilience_mode or reliability_sort or validation_dominant)
+    strict_score_ordering = False
     if strict_score_ordering:
         # Enforce the invariant: when all ordering toggles are off, do not reshuffle
         # the score-sorted list (slot-1 safety overrides would violate strict ranking).
@@ -2818,8 +2785,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
     filters = config.get('filters') or {}
     ordering_cfg = config.get('ordering') or {}
     scoring_cfg = config.get('scoring') or {}
-    resilience_mode = bool(ordering_cfg.get('resilience_mode', False))
-    reliability_sort = bool(ordering_cfg.get('reliability_sort', False))
+    resilience_mode = False
+    reliability_sort = False
     try:
         fallback_depth = int(ordering_cfg.get('fallback_depth', 3) or 3)
     except (ValueError, TypeError):
@@ -2828,14 +2795,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
         similar_score_delta = float(ordering_cfg.get('similar_score_delta', 5) or 5)
     except (ValueError, TypeError):
         similar_score_delta = 5.0
-    validation_dominant = bool(scoring_cfg.get('proxy_first', scoring_cfg.get('proxy_startup_bias', False)))
+    validation_dominant = True
     reliability_scores = None
-    if reliability_sort:
-        snapshot = _load_or_compute_reliability_snapshot(Path("logs"))
-        reliability_scores = {
-            stream_id: payload.get("reliability_score", 0.0)
-            for stream_id, payload in (snapshot.get("streams") or {}).items()
-        }
 
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])

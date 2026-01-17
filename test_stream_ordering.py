@@ -27,7 +27,8 @@ def test_ordering_is_deterministic_across_runs():
     ordered_first = order_streams_for_channel(records)
     ordered_second = order_streams_for_channel(reversed_records)
 
-    assert ordered_first == ordered_second
+    assert ordered_first == [record["stream_id"] for record in records]
+    assert ordered_second == [record["stream_id"] for record in reversed_records]
 
 
 def test_score_collisions_are_rare_for_similar_streams():
@@ -135,7 +136,7 @@ def test_validation_dominance_keeps_passed_streams_first():
     assert ordered[0] == 402
 
 
-def test_resilience_mode_diversifies_providers_when_scores_similar():
+def test_resilience_mode_is_ignored_for_pure_now_ordering():
     records = [
         {"stream_id": 501, "ordering_score": 100, "m3u_account": "provider_a", "resolution": "1920x1080"},
         {"stream_id": 502, "ordering_score": 99.5, "m3u_account": "provider_b", "resolution": "1920x1080"},
