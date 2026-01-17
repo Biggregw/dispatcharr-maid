@@ -2223,6 +2223,13 @@ def _parse_resolution(resolution):
         return None
 
 
+def _is_hd_or_better_resolution(parsed_resolution):
+    if not parsed_resolution:
+        return False
+    _, height = parsed_resolution
+    return height >= 720
+
+
 def _normalize_numeric(value):
     if value in (None, '', 'N/A'):
         return 0.0
@@ -2349,12 +2356,12 @@ def _apply_provider_capacity_bias(summary, provider_capacity_biases):
 
 def _codec_quality_score(codec_value):
     codec = str(codec_value or '').lower()
-    if 'av1' in codec:
-        return 1.0
-    if 'hevc' in codec or '265' in codec:
-        return 0.9
     if 'h264' in codec or 'avc' in codec:
-        return 0.8
+        return 0.95
+    if 'hevc' in codec or '265' in codec:
+        return 0.95
+    if 'av1' in codec:
+        return 0.85
     if 'mpeg2' in codec or 'mpeg-2' in codec:
         return 0.6
     return 0.7
@@ -2382,6 +2389,59 @@ def _validation_penalty(validation_value):
     if value == 'fail':
         return 0.75
     return 0.85
+
+
+def _codec_confidence_multiplier(codec_value):
+    codec = str(codec_value or '').lower()
+    if not codec or codec in ('n/a', 'unknown'):
+        return 0.95
+    if 'h264' in codec or 'avc' in codec:
+        return 1.03
+    if 'hevc' in codec or '265' in codec:
+        return 1.03
+    return 0.98
+
+
+def _firestick_bitrate_penalty(codec_value, avg_bitrate_kbps):
+    if avg_bitrate_kbps is None or avg_bitrate_kbps <= 0:
+        return 1.0
+    codec = str(codec_value or '').lower()
+    if 'h264' in codec or 'avc' in codec:
+        if avg_bitrate_kbps >= 25000:
+            return 0.94
+        if avg_bitrate_kbps >= 19000:
+            return 0.97
+        return 1.0
+    if 'hevc' in codec or '265' in codec:
+        if avg_bitrate_kbps >= 35000:
+            return 0.94
+        if avg_bitrate_kbps >= 30000:
+            return 0.97
+        return 1.0
+    return 1.0
+
+
+def _decoded_frames_multiplier(decoded_frames):
+    if decoded_frames is None:
+        return 1.0
+    if decoded_frames == 0:
+        return 0.7
+    if decoded_frames < 30:
+        return 0.9
+    if decoded_frames > 200:
+        return 1.02
+    return 1.0
+
+
+def _bitrate_safe_for_fps(codec_value, avg_bitrate_kbps):
+    if avg_bitrate_kbps is None or avg_bitrate_kbps <= 0:
+        return False
+    codec = str(codec_value or '').lower()
+    if 'h264' in codec or 'avc' in codec:
+        return avg_bitrate_kbps <= 19000
+    if 'hevc' in codec or '265' in codec:
+        return avg_bitrate_kbps <= 30000
+    return False
 
 
 def _continuous_ordering_score(record):
@@ -2414,6 +2474,8 @@ def _continuous_ordering_score(record):
     interlaced_status = str(record.get('interlaced_status') or '').lower()
     interlace_penalty = 0.95 if 'interlaced' in interlaced_status else 1.0
     validation_penalty = _validation_penalty(record.get('validation_result') or record.get('status'))
+    codec_confidence = _codec_confidence_multiplier(record.get('video_codec'))
+    firestick_bitrate_penalty = _firestick_bitrate_penalty(record.get('video_codec'), avg_bitrate_kbps)
 
     # Probe-derived fields used for weak confidence tweaks (never dominant):
     # format_name, r_frame_rate, declared_bitrate_kbps, video_profile, video_level,
@@ -2428,6 +2490,9 @@ def _continuous_ordering_score(record):
     declared_bitrate_present = declared_bitrate_kbps if declared_bitrate_kbps and declared_bitrate_kbps > 0 else None
     r_frame_rate_present = r_frame_rate if r_frame_rate and r_frame_rate > 0 else None
 
+    decoded_frames = _safe_float(record.get('avg_frames_decoded') or record.get('frames_decoded'))
+    decoded_frames_multiplier = _decoded_frames_multiplier(decoded_frames)
+
     # Metadata completeness and gentle probe-structure penalties should be very weak.
     metadata_penalty = 1.0
     core_fps = _safe_float(record.get('fps'))
@@ -2438,14 +2503,15 @@ def _continuous_ordering_score(record):
         or core_fps is None
         or core_bitrate is None
     )
-    if core_incomplete:
-        # Treat missing core metadata as unknown quality; apply a mild, capped penalty.
-        metadata_penalty *= 0.96
-    if total_pixels == 0:
+    confidence_weak = validation_penalty < 0.95 or (decoded_frames is not None and decoded_frames < 30)
+    if core_incomplete and confidence_weak:
+        # Treat missing core metadata as unknown quality; apply a mild, capped penalty only if confidence is weak.
+        metadata_penalty *= 0.97
+    if total_pixels == 0 and confidence_weak:
         metadata_penalty *= 0.98
-    if str(record.get('video_codec') or '').upper() in ('', 'N/A'):
+    if str(record.get('video_codec') or '').upper() in ('', 'N/A') and confidence_weak:
         metadata_penalty *= 0.99
-    if str(record.get('audio_codec') or '').upper() in ('', 'N/A'):
+    if str(record.get('audio_codec') or '').upper() in ('', 'N/A') and confidence_weak:
         metadata_penalty *= 0.995
 
     completeness_checks = [
@@ -2499,7 +2565,6 @@ def _continuous_ordering_score(record):
         except (TypeError, ValueError):
             pass
 
-    decoded_frames = _safe_float(record.get('avg_frames_decoded') or record.get('frames_decoded'))
     dropped_frames = _safe_float(record.get('avg_frames_dropped') or record.get('frames_dropped'))
     if decoded_frames and dropped_frames is not None and decoded_frames > 0 and dropped_frames >= 0:
         # Use drop ratio only when measured data exists; keep penalties tiny.
@@ -2508,6 +2573,15 @@ def _continuous_ordering_score(record):
             structure_penalty *= 0.99
         elif drop_ratio > 0.05:
             structure_penalty *= 0.995
+
+    fps_bonus = 1.0
+    if (
+        _is_hd_or_better_resolution(parsed)
+        and _bitrate_safe_for_fps(record.get('video_codec'), avg_bitrate_kbps)
+        and validation_penalty >= 0.95
+        and (decoded_frames is None or decoded_frames >= 30)
+    ):
+        fps_bonus = 1.0 + min(fps, 60.0) / 60.0 * 0.02
 
     score = (
         base_component * 1.55
@@ -2518,7 +2592,16 @@ def _continuous_ordering_score(record):
         + codec_score * 0.32
         + audio_score * 0.12
     )
-    score *= interlace_penalty * validation_penalty * metadata_penalty * structure_penalty
+    score *= (
+        interlace_penalty
+        * validation_penalty
+        * metadata_penalty
+        * structure_penalty
+        * codec_confidence
+        * firestick_bitrate_penalty
+        * decoded_frames_multiplier
+        * fps_bonus
+    )
     return score
 
 
@@ -2591,6 +2674,21 @@ def order_streams_for_channel(
             or token.startswith('status:')
             for token in _validation_tokens(record)
         )
+
+    def _near_ceiling_bitrate(record):
+        avg_bitrate = _safe_float(record.get('avg_bitrate_kbps'))
+        if avg_bitrate is None or avg_bitrate <= 0:
+            return False
+        codec = str(record.get('video_codec') or '').lower()
+        if 'h264' in codec or 'avc' in codec:
+            return avg_bitrate >= 25000
+        if 'hevc' in codec or '265' in codec:
+            return avg_bitrate >= 35000
+        return False
+
+    def _decoded_frames_value(record):
+        frames = _safe_float(record.get('avg_frames_decoded') or record.get('frames_decoded'))
+        return frames if frames is not None else 0.0
 
     def _is_hd_or_better(record):
         resolution = record.get('resolution')
@@ -2673,6 +2771,13 @@ def order_streams_for_channel(
         effective_score = score_value * _validation_confidence_multiplier(record)
         return (0, -effective_score, -score_value, -base_value)
 
+    def _slot1_rank(record):
+        score_value = _score_value(record)
+        if score_value is None:
+            score_value = 0.0
+        frames = _decoded_frames_value(record)
+        return (-frames, -score_value)
+
     ordered = sorted(records, key=_score_key)
 
     strict_score_ordering = False
@@ -2697,7 +2802,16 @@ def order_streams_for_channel(
     # 4) Any stream (last resort)
     slot1_rule = None
     slot1_reason = None
-    slot1_candidates = [r for r in ordered if _is_hd_or_better(r) and not _is_buffering(r) and not _is_probe_failure(r)]
+    slot1_candidates = [
+        r
+        for r in ordered
+        if _is_hd_or_better(r)
+        and not _is_buffering(r)
+        and not _is_probe_failure(r)
+        and not _near_ceiling_bitrate(r)
+    ]
+    if not slot1_candidates:
+        slot1_candidates = [r for r in ordered if _is_hd_or_better(r) and not _is_buffering(r) and not _is_probe_failure(r)]
     if not slot1_candidates:
         slot1_rule = 'hd_no_probe_failure'
         slot1_candidates = [r for r in ordered if _is_hd_or_better(r) and not _is_probe_failure(r)]
@@ -2708,6 +2822,7 @@ def order_streams_for_channel(
         slot1_rule = 'any_stream'
         slot1_candidates = ordered
 
+    slot1_candidates = sorted(slot1_candidates, key=_slot1_rank)
     slot1 = slot1_candidates[0].get('stream_id') if slot1_candidates else None
     ordered_ids = [r.get('stream_id') for r in ordered]
     if slot1 is None:
@@ -2770,7 +2885,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
         similar_score_delta = float(ordering_cfg.get('similar_score_delta', 5) or 5)
     except (ValueError, TypeError):
         similar_score_delta = 5.0
-    logging.info("Pure Now ordering with weighted validation confidence active")
+    logging.info("Pure Now ordering with Firestick-optimised weighting active")
 
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])
