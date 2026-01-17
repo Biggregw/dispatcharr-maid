@@ -13,7 +13,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2527,9 +2527,6 @@ def order_streams_for_channel(
     resilience_mode=False,
     fallback_depth=3,
     similar_score_delta=5,
-    provider_fn=None,
-    validation_dominant=True,
-    reliability_scores=None,
     reliability_sort=False,
     return_details=False,
 ):
@@ -2538,6 +2535,9 @@ def order_streams_for_channel(
     All streams remain present; validation always dominates ordering by
     keeping validated streams ahead of failed/unknown ones.
     Slot 1 gets an explicit safety eligibility pass before applying the usual order.
+
+    Deprecated ordering toggles (resilience_mode, fallback_depth, similar_score_delta,
+    reliability_sort) are accepted for compatibility but ignored.
     """
 
     if not records:
@@ -2552,18 +2552,6 @@ def order_streams_for_channel(
     def _validation_tokens(record):
         reason = str(record.get('validation_reason') or '')
         return [token for token in reason.split(';') if token]
-
-    def _provider_key(record):
-        if provider_fn:
-            try:
-                provider_value = provider_fn(record)
-            except Exception:
-                provider_value = None
-        else:
-            provider_value = record.get('m3u_account')
-        if provider_value in (None, '', 'N/A'):
-            return None
-        return provider_value
 
     def _is_buffering(record):
         # Buffering detection is conservative and based on timeout signals only;
@@ -2636,6 +2624,7 @@ def order_streams_for_channel(
             final_score = ordering_score
         if final_score is None:
             final_score = score
+        # final_score is recomputed on each analysis run; reuse the current run's value for ordering.
         record['final_score'] = final_score
 
     def _score_key(record):
@@ -2648,49 +2637,6 @@ def order_streams_for_channel(
             return (1, 0.0, 0.0)
         return (0, -score_value, -base_value)
 
-    def _ordered_with_resilience(items):
-        ordered = sorted(list(items), key=_score_key)
-        if not resilience_mode:
-            return ordered
-        try:
-            depth = max(int(fallback_depth), 0)
-        except (TypeError, ValueError):
-            depth = 0
-        try:
-            delta = max(float(similar_score_delta), 0.0)
-        except (TypeError, ValueError):
-            delta = 0.0
-        if depth <= 0 or len(ordered) <= 1:
-            return ordered
-
-        output = []
-        remaining = list(ordered)
-        recent_providers = deque(maxlen=depth)
-
-        while remaining:
-            top_score = _score_value(remaining[0])
-            if top_score is None:
-                output.extend(remaining)
-                break
-            eligible = [r for r in remaining if (_score_value(r) or 0.0) >= (top_score - delta)]
-            pick = None
-            for candidate in eligible:
-                provider = _provider_key(candidate)
-                if provider is None or provider not in recent_providers:
-                    pick = candidate
-                    break
-            if pick is None:
-                pick = remaining[0]
-            output.append(pick)
-            remaining.remove(pick)
-            provider = _provider_key(pick)
-            if provider is not None:
-                recent_providers.append(provider)
-
-        return output
-
-    validation_dominant = True
-    resilience_mode = False
     passing = []
     non_passing = []
     for record in records:
@@ -2698,7 +2644,7 @@ def order_streams_for_channel(
             passing.append(record)
         else:
             non_passing.append(record)
-    ordered = _ordered_with_resilience(passing) + _ordered_with_resilience(non_passing)
+    ordered = sorted(passing, key=_score_key) + sorted(non_passing, key=_score_key)
 
     strict_score_ordering = False
     if strict_score_ordering:
@@ -2785,8 +2731,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
     filters = config.get('filters') or {}
     ordering_cfg = config.get('ordering') or {}
     scoring_cfg = config.get('scoring') or {}
-    resilience_mode = False
-    reliability_sort = False
+    _ignored_resilience_mode = ordering_cfg.get('resilience_mode')
+    _ignored_reliability_sort = ordering_cfg.get('reliability_sort')
     try:
         fallback_depth = int(ordering_cfg.get('fallback_depth', 3) or 3)
     except (ValueError, TypeError):
@@ -2795,8 +2741,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
         similar_score_delta = float(ordering_cfg.get('similar_score_delta', 5) or 5)
     except (ValueError, TypeError):
         similar_score_delta = 5.0
-    validation_dominant = True
-    reliability_scores = None
+    logging.info("Pure Now ordering active (validation-dominant, no reliability, no resilience)")
 
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])
@@ -2848,9 +2793,6 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
         except Exception:
             return value
 
-    def _provider(row):
-        return row.get('m3u_account_name') or row.get('m3u_account') or 'unknown_provider'
-
     for channel_id, group in grouped:
         group_records = group.to_dict('records')
         record_lookup = {}
@@ -2901,15 +2843,13 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                 }
             records_for_ordering.append(record)
 
+        # Pure Now ordering is validation-dominant and ignores reliability/resilience toggles.
         ordering_details = order_streams_for_channel(
             records_for_ordering,
-            resilience_mode=resilience_mode,
+            resilience_mode=_ignored_resilience_mode,
             fallback_depth=fallback_depth,
             similar_score_delta=similar_score_delta,
-            provider_fn=_provider,
-            validation_dominant=validation_dominant,
-            reliability_scores=reliability_scores,
-            reliability_sort=reliability_sort,
+            reliability_sort=_ignored_reliability_sort,
             return_details=collect_summary,
         )
         if collect_summary:
