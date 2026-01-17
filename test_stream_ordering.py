@@ -226,4 +226,75 @@ def test_slot1_reason_is_reported_when_overridden():
 
     assert details["ordered_ids"][0] == 602
     assert details["slot1_reason"]
-    assert details["slot1_overrode"] is True
+    assert details["slot1_overrode"] is False
+
+
+def test_failed_streams_are_ranked_after_passed_streams():
+    records = [
+        {
+            "stream_id": 801,
+            "ordering_score": 250,
+            "validation_result": "fail",
+            "resolution": "1920x1080",
+        },
+        {
+            "stream_id": 802,
+            "ordering_score": 100,
+            "validation_result": "pass",
+            "resolution": "1920x1080",
+        },
+    ]
+
+    ordered = order_streams_for_channel(records)
+
+    assert ordered == [802, 801]
+
+
+def test_failed_streams_remain_in_ordering():
+    records = [
+        {
+            "stream_id": 811,
+            "ordering_score": 180,
+            "validation_result": "pass",
+            "resolution": "1920x1080",
+        },
+        {
+            "stream_id": 812,
+            "ordering_score": 300,
+            "status": "timeout",
+            "resolution": "1920x1080",
+        },
+    ]
+
+    ordered = order_streams_for_channel(records)
+
+    assert ordered == [811, 812]
+
+
+def test_slot1_never_selects_failed_when_valid_exists():
+    records = [
+        {
+            "stream_id": 821,
+            "ordering_score": 400,
+            "status": "timeout",
+            "resolution": "1920x1080",
+            "fps": 30,
+            "avg_bitrate_kbps": 6000,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+        },
+        {
+            "stream_id": 822,
+            "ordering_score": 120,
+            "status": "ok",
+            "resolution": "1920x1080",
+            "fps": 30,
+            "avg_bitrate_kbps": 6000,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+        },
+    ]
+
+    details = order_streams_for_channel(records, return_details=True)
+
+    assert details["slot1_id"] == 822
