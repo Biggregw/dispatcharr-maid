@@ -656,7 +656,15 @@ def _fetch_stream_provider_map(api, config):
 
     return stream_provider_map
 
-def fetch_streams(api, config, output_file=None, progress_callback=None, stream_provider_map_override=None, channels_override=None):
+def fetch_streams(
+    api,
+    config,
+    output_file=None,
+    progress_callback=None,
+    stream_provider_map_override=None,
+    channels_override=None,
+    streams_override=None,
+):
     """Fetch streams for channels based on filters.
 
     Optionally accepts:
@@ -776,6 +784,17 @@ def fetch_streams(api, config, output_file=None, progress_callback=None, stream_
         for ch in final_channels:
             writer.writerow([ch.get(h, "") for h in headers])
     
+    streams_by_channel = None
+    if streams_override is not None:
+        streams_by_channel = defaultdict(list)
+        for stream in streams_override:
+            if not isinstance(stream, dict):
+                continue
+            channel_id = stream.get("channel_id")
+            if channel_id is None:
+                continue
+            streams_by_channel[channel_id].append(stream)
+
     # Fetch and save streams
     with open(output_file, mode="w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
@@ -784,52 +803,24 @@ def fetch_streams(api, config, output_file=None, progress_callback=None, stream_
             "stream_id", "stream_name", "stream_url", "m3u_account"
         ])
 
-        # Fetch per-channel streams concurrently; write results sequentially.
-        dispatcharr_cfg = config.get('dispatcharr') or {}
-        fetch_workers = int(dispatcharr_cfg.get('fetch_workers', 6) or 6)
-        fetch_workers = max(1, min(32, fetch_workers))
-
         total_channels = len(final_channels)
         processed_channels = 0
         failed_channels = 0
 
-        def _fetch_one(channel):
-            channel_id = channel.get("id")
-            channel_number = channel.get("channel_number")
-            channel_name = channel.get("name", "")
-            logging.info(f"Fetching streams for channel {channel_number} - {channel_name}")
-            return channel, api.fetch_channel_streams(channel_id)
-
-        with ThreadPoolExecutor(max_workers=fetch_workers) as executor:
-            future_to_channel = {executor.submit(_fetch_one, ch): ch for ch in final_channels}
-            for future in as_completed(future_to_channel):
-                channel = future_to_channel[future]
+        if streams_by_channel is not None:
+            logging.info("Using pre-fetched stream cache for channel streams")
+            for channel in final_channels:
                 channel_id = channel.get("id")
                 channel_number = channel.get("channel_number")
                 channel_group_id = channel.get("channel_group_id")
-                channel_name = channel.get("name", "")
-                try:
-                    _channel, streams = future.result()
-                except Exception as exc:
-                    failed_channels += 1
-                    logging.warning(
-                        "Failed fetching streams for channel %s - %s: %s",
-                        channel_number,
-                        channel_name,
-                        exc,
-                    )
-                    streams = None
-
+                streams = streams_by_channel.get(channel_id, [])
                 processed_channels += 1
                 if progress_callback:
-                    try:
-                        progress_callback({
-                            'processed': processed_channels,
-                            'total': total_channels,
-                            'failed': failed_channels,
-                        })
-                    except Exception:
-                        logging.debug("progress_callback failed during fetch_streams", exc_info=True)
+                    progress_callback({
+                        'processed': processed_channels,
+                        'total': total_channels,
+                        'failed': failed_channels,
+                    })
 
                 if not streams:
                     logging.warning(f"  No streams for channel {channel_number}")
@@ -861,6 +852,80 @@ def fetch_streams(api, config, output_file=None, progress_callback=None, stream_
                     ])
 
                 logging.info(f"  Saved {len(streams)} streams")
+        else:
+            # Fetch per-channel streams concurrently; write results sequentially.
+            dispatcharr_cfg = config.get('dispatcharr') or {}
+            fetch_workers = int(dispatcharr_cfg.get('fetch_workers', 6) or 6)
+            fetch_workers = max(1, min(32, fetch_workers))
+
+            def _fetch_one(channel):
+                channel_id = channel.get("id")
+                channel_number = channel.get("channel_number")
+                channel_name = channel.get("name", "")
+                logging.info(f"Fetching streams for channel {channel_number} - {channel_name}")
+                return channel, api.fetch_channel_streams(channel_id)
+
+            with ThreadPoolExecutor(max_workers=fetch_workers) as executor:
+                future_to_channel = {executor.submit(_fetch_one, ch): ch for ch in final_channels}
+                for future in as_completed(future_to_channel):
+                    channel = future_to_channel[future]
+                    channel_id = channel.get("id")
+                    channel_number = channel.get("channel_number")
+                    channel_group_id = channel.get("channel_group_id")
+                    channel_name = channel.get("name", "")
+                    try:
+                        _channel, streams = future.result()
+                    except Exception as exc:
+                        failed_channels += 1
+                        logging.warning(
+                            "Failed fetching streams for channel %s - %s: %s",
+                            channel_number,
+                            channel_name,
+                            exc,
+                        )
+                        streams = None
+
+                    processed_channels += 1
+                    if progress_callback:
+                        try:
+                            progress_callback({
+                                'processed': processed_channels,
+                                'total': total_channels,
+                                'failed': failed_channels,
+                            })
+                        except Exception:
+                            logging.debug("progress_callback failed during fetch_streams", exc_info=True)
+
+                    if not streams:
+                        logging.warning(f"  No streams for channel {channel_number}")
+                        continue
+
+                    for stream in streams:
+                        stream_id = stream.get("id", "")
+                        stream_lookup_id = None
+                        try:
+                            stream_lookup_id = int(stream_id)
+                        except (TypeError, ValueError):
+                            stream_lookup_id = None
+                        m3u_account = stream.get("m3u_account")
+                        if m3u_account in ("", None):
+                            m3u_account = stream_provider_map.get(stream_lookup_id)
+                        if m3u_account in ("", None):
+                            raise ValueError(
+                                f"Stream {stream_id} is missing m3u_account from Dispatcharr; "
+                                "cannot proceed without provider IDs."
+                            )
+                        writer.writerow([
+                            channel_number,
+                            channel_id,
+                            channel_group_id,
+                            stream_id,
+                            stream.get("name", ""),
+                            stream.get("url", ""),
+                            m3u_account
+                        ])
+
+                    logging.info(f"  Saved {len(streams)} streams")
     
     logging.info(f"Done! Streams saved to {output_file}")
 

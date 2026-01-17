@@ -129,13 +129,10 @@
                             <th>#</th>
                             <th>Stream</th>
                             <th>Provider</th>
-                            <th>Service Name</th>
-                            <th>Service Provider</th>
                             <th>Resolution</th>
                             <th>Codec</th>
                             <th>Bitrate</th>
                             <th>Validation</th>
-                            <th>Final Score</th>
                         </tr>
                     </thead>
                     <tbody id="final-order-tbody"></tbody>
@@ -479,31 +476,24 @@
             finalBody.innerHTML = sortedFinal.map((row) => {
                 try {
                     const providerCell = providerLabelHtml(row?.provider_id) || escapeHtml(row?.provider_name || '');
-                    const serviceName = row?.service_name ? escapeHtml(String(row.service_name)) : '';
-                    const serviceProvider = row?.service_provider ? escapeHtml(String(row.service_provider)) : '';
                     const validation = row?.validation_result ? escapeHtml(String(row.validation_result)) : '—';
-                    const score = row?.final_score;
-                    const scoreText = score === null || score === undefined ? '—' : escapeHtml(Number(score).toFixed ? Number(score).toFixed(1) : String(score));
                     return `
                         <tr>
                             <td>${channelLabelFrom(row)}</td>
                             <td class="mono">${escapeHtml(row?.order ?? '')}</td>
                             <td>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)}</td>
                             <td>${providerCell}</td>
-                            <td>${serviceName}</td>
-                            <td>${serviceProvider}</td>
                             <td>${escapeHtml(row?.resolution || '—')}</td>
                             <td>${escapeHtml(row?.video_codec || '—')}</td>
                             <td>${fmtBitrate(row?.bitrate_kbps)}</td>
                             <td>${validation}</td>
-                            <td>${scoreText}</td>
                         </tr>
                     `;
                 } catch (err) {
                     console.warn('Failed to render final order row:', err, row);
                     return `
                         <tr>
-                            <td colspan="11" class="muted">Unable to render a final-order row for this stream.</td>
+                            <td colspan="8" class="muted">Unable to render a final-order row for this stream.</td>
                         </tr>
                     `;
                 }
