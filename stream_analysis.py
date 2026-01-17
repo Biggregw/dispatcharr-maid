@@ -2682,6 +2682,19 @@ def order_streams_for_channel(
             for token in _validation_tokens(record)
         )
 
+    def _is_validation_failed(record):
+        validation_result = str(record.get('validation_result') or '').strip().lower()
+        if validation_result == 'fail':
+            return True
+        if _is_probe_failure(record):
+            return True
+        status = str(record.get('status') or '').strip().lower()
+        if status in ('timeout', 'error') or status.startswith('error') or status.startswith('err'):
+            return True
+        if 'avg_frames_decoded' in record and _safe_float(record.get('avg_frames_decoded')) == 0:
+            return True
+        return False
+
     def _near_ceiling_bitrate(record):
         avg_bitrate = _safe_float(record.get('avg_bitrate_kbps'))
         if avg_bitrate is None or avg_bitrate <= 0:
@@ -2785,7 +2798,9 @@ def order_streams_for_channel(
         frames = _decoded_frames_value(record)
         return (-frames, -score_value)
 
-    ordered = sorted(records, key=_score_key)
+    tier1_records = [record for record in records if not _is_validation_failed(record)]
+    tier2_records = [record for record in records if _is_validation_failed(record)]
+    ordered = sorted(tier1_records, key=_score_key) + sorted(tier2_records, key=_score_key)
 
     strict_score_ordering = False
     if strict_score_ordering:
