@@ -933,7 +933,8 @@ def fetch_streams(
 def analyze_streams(config, input_csv=None,
                    output_csv=None,
                    fails_csv=None, progress_callback=None,
-                   force_full_analysis=False):
+                   force_full_analysis=False,
+                   streams_callback=None):
     """Analyze streams with progress tracking and checkpointing"""
 
     if not _check_ffmpeg_installed():
@@ -1019,6 +1020,11 @@ def analyze_streams(config, input_csv=None,
         return analyzed_count
     
     streams_to_analyze = df.to_dict('records')
+    if streams_callback:
+        try:
+            streams_callback(streams_to_analyze)
+        except Exception:
+            logging.debug("streams_callback failed during analysis setup", exc_info=True)
     
     # Initialize progress tracker
     progress_tracker = ProgressTracker(
