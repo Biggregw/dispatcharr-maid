@@ -2186,7 +2186,6 @@
                         <div class="metric-pill">⏱️ Elapsed <span id="job-elapsed">${formatDuration(elapsedSeconds)}</span></div>
                         <div class="metric-pill">⚡ Pace <span id="job-rate">${formatRate(ratePerSecond)}</span></div>
                         <div class="metric-pill">⏳ ETA <span id="job-eta-countdown">${etaSeconds === null ? 'Estimating…' : formatDuration(etaSeconds)}</span></div>
-                        <div class="metric-pill metric-pill--quiet">🔄 Next update in <span id="job-poll-countdown">${pollIntervalSeconds}</span>s</div>
                     </div>
                 `;
             }
