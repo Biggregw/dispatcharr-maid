@@ -2428,6 +2428,41 @@ def _decoded_frames_from_record(record):
     return avg_frames
 
 
+def _decoded_frames_value(record):
+    return _safe_float(_decoded_frames_from_record(record))
+
+
+def _validation_tokens(record):
+    reason = record.get('validation_reason')
+    tokens = []
+    if isinstance(reason, str):
+        for token in re.split(r'[;,]', reason):
+            token = token.strip()
+            if token:
+                tokens.append(token)
+    elif isinstance(reason, (list, tuple, set)):
+        for token in reason:
+            token = str(token).strip()
+            if token:
+                tokens.append(token)
+
+    for err_key in ('err_decode', 'err_discontinuity'):
+        value = record.get(err_key)
+        try:
+            has_error = bool(int(value))
+        except Exception:
+            has_error = bool(value)
+        if has_error and err_key not in tokens:
+            tokens.append(err_key)
+
+    if 'avg_frames_decoded' in record:
+        frames = _safe_float(record.get('avg_frames_decoded'))
+        if frames == 0 and 'no_frames_decoded' not in tokens:
+            tokens.append('no_frames_decoded')
+
+    return tokens
+
+
 def _decoded_frames_multiplier(decoded_frames):
     if decoded_frames is None:
         return 1.0
@@ -2696,10 +2731,6 @@ def order_streams_for_channel(
             return avg_bitrate >= 35000
         return False
 
-    def _decoded_frames_value(record):
-        frames = _safe_float(_decoded_frames_from_record(record))
-        return frames if frames is not None else 0.0
-
     def _is_hd_or_better(record):
         resolution = record.get('resolution')
         parsed = _parse_resolution(resolution)
@@ -2762,27 +2793,33 @@ def order_streams_for_channel(
         return bool(status) and status not in ('ok', 'timeout')
 
     def _basic_validation_pass(record):
+        decoded_frames = _decoded_frames_value(record)
+        decoded_frames_ok = decoded_frames is None or decoded_frames > 0
         return (
             _status_value(record) in ('', 'ok')
             and _timeout_count(record) == 0
             and not _has_decode_errors(record)
             and not _is_buffering(record)
-            and _decoded_frames_value(record) > 0
+            and decoded_frames_ok
         )
 
     def _tier_for_record(record):
+        validation_result = str(record.get('validation_result') or '').strip().lower()
+        if validation_result == 'fail':
+            return 5
         decoded_frames = _decoded_frames_value(record)
         if decoded_frames == 0 or _has_decode_errors(record) or _is_status_failure_non_timeout(record):
             return 5
         if _status_value(record) == 'timeout' or _timeout_count(record) > 0 or _is_buffering(record):
             return 4
         if _basic_validation_pass(record):
-            if decoded_frames > 30 and _is_hd_or_better(record):
+            if decoded_frames is not None and decoded_frames > 30 and _is_hd_or_better(record):
                 return 1
-            if decoded_frames > 30 and not _is_hd_or_better(record):
+            if decoded_frames is not None and decoded_frames > 30 and not _is_hd_or_better(record):
                 return 2
             weak_confidence = (
-                0 < decoded_frames <= 30
+                decoded_frames is None
+                or 0 < decoded_frames <= 30
                 or _missing_core_probe_metadata(record)
                 or _status_value(record) == ''
             )
@@ -2795,6 +2832,8 @@ def order_streams_for_channel(
         if score_value is None:
             score_value = 0.0
         frames = _decoded_frames_value(record)
+        if frames is None:
+            frames = 0.0
         return (-frames, -score_value)
 
     tier1_records = [record for record in records if not _is_validation_failed(record)]
@@ -2826,6 +2865,7 @@ def order_streams_for_channel(
 
     tier1_sorted = sorted(tiered_records[1], key=_score_key)
     tier2_sorted = sorted(tiered_records[2], key=_score_key)
+    tier3_sorted = sorted(tiered_records[3], key=_score_key)
 
     slot1_rule = None
     slot1_reason = None
@@ -2838,6 +2878,10 @@ def order_streams_for_channel(
         slot1 = tier2_sorted[0].get('stream_id')
         slot1_rule = 'tier2_sd_fallback'
         slot1_reason = 'Selected from Tier 2 (Safe SD Fallback).'
+    elif tier3_sorted:
+        slot1 = tier3_sorted[0].get('stream_id')
+        slot1_rule = 'tier3_weak_signal'
+        slot1_reason = 'Selected from Tier 3 (Weak Signal).'
 
     ordered_ids = [r.get('stream_id') for r in ordered]
     final_order = ordered_ids if slot1 is None else [slot1] + [sid for sid in ordered_ids if sid != slot1]
