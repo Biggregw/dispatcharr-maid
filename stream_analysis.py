@@ -2532,8 +2532,8 @@ def order_streams_for_channel(
 ):
     """Order streams using a continuous, deterministic score.
 
-    All streams remain present; validation always dominates ordering by
-    keeping validated streams ahead of failed/unknown ones.
+    All streams remain present; validation confidence softly adjusts the
+    continuous ordering score rather than imposing pass/fail buckets.
     Slot 1 gets an explicit safety eligibility pass before applying the usual order.
 
     Deprecated ordering toggles (resilience_mode, fallback_depth, similar_score_delta,
@@ -2592,10 +2592,6 @@ def order_streams_for_channel(
             for token in _validation_tokens(record)
         )
 
-    def _is_validation_pass(record):
-        value = str(record.get('validation_result') or record.get('status') or '').strip().lower()
-        return value in ('pass', 'ok')
-
     def _is_hd_or_better(record):
         resolution = record.get('resolution')
         parsed = _parse_resolution(resolution)
@@ -2613,6 +2609,45 @@ def order_streams_for_channel(
         if ordering in (None, '', 'N/A'):
             ordering = record.get('score')
         return _safe_float(ordering)
+
+    def _validation_confidence_multiplier(record):
+        status = str(record.get('status') or '').strip().lower()
+        try:
+            timeout_count = int(record.get('err_timeout', 0) or 0)
+        except Exception:
+            timeout_count = 0
+        frames_decoded = _safe_float(record.get('avg_frames_decoded') or record.get('frames_decoded'))
+
+        if status == 'timeout' or timeout_count > 0:
+            return 0.3
+        if frames_decoded == 0 or _is_probe_failure(record):
+            return 0.3
+
+        validation_result = str(record.get('validation_result') or record.get('status') or '').strip().lower()
+        validation_reason = str(record.get('validation_reason') or '').strip().lower()
+
+        soft_flags = False
+        if frames_decoded is not None and 0 < frames_decoded < 30:
+            soft_flags = True
+        if 'partial' in validation_reason:
+            soft_flags = True
+        if validation_result in ('', 'fail'):
+            soft_flags = True
+        if validation_result not in ('', 'pass', 'ok', 'fail'):
+            soft_flags = True
+
+        probe_completed = validation_result in ('pass', 'ok') or status in ('ok', '')
+        parsed = _parse_resolution(record.get('resolution'))
+        core_incomplete = (
+            not parsed
+            or str(record.get('video_codec') or '').strip().upper() in ('', 'N/A')
+            or _safe_float(record.get('fps')) is None
+            or _safe_float(record.get('avg_bitrate_kbps')) is None
+        )
+        if probe_completed and core_incomplete:
+            soft_flags = True
+
+        return 0.7 if soft_flags else 1.0
 
     for record in records:
         ordering_score = _safe_float(record.get('ordering_score'))
@@ -2635,16 +2670,10 @@ def order_streams_for_channel(
 
         if score_value is None:
             return (1, 0.0, 0.0)
-        return (0, -score_value, -base_value)
+        effective_score = score_value * _validation_confidence_multiplier(record)
+        return (0, -effective_score, -score_value, -base_value)
 
-    passing = []
-    non_passing = []
-    for record in records:
-        if _is_validation_pass(record):
-            passing.append(record)
-        else:
-            non_passing.append(record)
-    ordered = sorted(passing, key=_score_key) + sorted(non_passing, key=_score_key)
+    ordered = sorted(records, key=_score_key)
 
     strict_score_ordering = False
     if strict_score_ordering:
@@ -2741,7 +2770,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
         similar_score_delta = float(ordering_cfg.get('similar_score_delta', 5) or 5)
     except (ValueError, TypeError):
         similar_score_delta = 5.0
-    logging.info("Pure Now ordering active (validation-dominant, no reliability, no resilience)")
+    logging.info("Pure Now ordering with weighted validation confidence active")
 
     # Apply filters
     group_ids_list = filters.get('channel_group_ids', [])
