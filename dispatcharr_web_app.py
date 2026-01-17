@@ -1567,7 +1567,7 @@ def progress_callback(job, progress_data):
         job.stream_checklist_processed = int(processed or 0)
 
 
-def _job_set_stream_checklist(job, streams, limit=12):
+def _job_set_stream_checklist(job, streams, limit=100):
     if not job or not isinstance(streams, list):
         return
     seen_ids = set()
