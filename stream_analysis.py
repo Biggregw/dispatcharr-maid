@@ -971,11 +971,61 @@ def fetch_streams(
     logging.info(f"Done! Streams saved to {output_file}")
 
 
+def _apply_channel_reorder(api, channel_id, channel_label, ordered_ids):
+    if not api:
+        logging.warning(
+            "Apply reorder requested for channel %s (%s) but no Dispatcharr API client available",
+            channel_label,
+            channel_id,
+        )
+        return False
+    if channel_id in (None, '', 'N/A'):
+        logging.warning(
+            "Apply reorder requested for channel %s (%s) but no channel ID was available",
+            channel_label,
+            channel_id,
+        )
+        return False
+    if not ordered_ids:
+        logging.warning(
+            "Apply reorder requested for channel %s (%s) but no ordered stream IDs were computed",
+            channel_label,
+            channel_id,
+        )
+        return False
+
+    logging.info(
+        "Applying reorder to Dispatcharr for channel %s (%s) with %d streams",
+        channel_label,
+        channel_id,
+        len(ordered_ids),
+    )
+    try:
+        api.update_channel_streams(channel_id, ordered_ids)
+    except Exception as exc:
+        logging.error(
+            "Failed to apply reorder to Dispatcharr for channel %s (%s): %s",
+            channel_label,
+            channel_id,
+            exc,
+        )
+        return False
+
+    logging.info(
+        "Successfully applied reorder to Dispatcharr for channel %s (%s)",
+        channel_label,
+        channel_id,
+    )
+    return True
+
+
 def analyze_streams(config, input_csv=None,
                    output_csv=None,
                    fails_csv=None, progress_callback=None,
                    force_full_analysis=False,
-                   streams_callback=None):
+                   streams_callback=None,
+                   api=None,
+                   apply_reorder=False):
     """Analyze streams with progress tracking and checkpointing"""
 
     if not _check_ffmpeg_installed():
@@ -1218,6 +1268,8 @@ def analyze_streams(config, input_csv=None,
                     logging.info("Channel %s analysis complete", channel_label)
                     logging.info("Channel %s sorted", channel_label)
                     progress_tracker.mark_channel_sorted(channel_label)
+                    if apply_reorder:
+                        _apply_channel_reorder(api, channel_id, channel_label, [])
                     if progress_callback:
                         try:
                             progress_callback(progress_tracker.get_progress())
@@ -1348,6 +1400,8 @@ def analyze_streams(config, input_csv=None,
                 logging.info("Channel %s analysis complete", channel_label)
                 logging.info("Channel %s sorted", channel_label)
                 progress_tracker.mark_channel_sorted(channel_label)
+                if apply_reorder:
+                    _apply_channel_reorder(api, channel_id, channel_label, ordered_ids)
                 if progress_callback:
                     try:
                         progress_callback(progress_tracker.get_progress())

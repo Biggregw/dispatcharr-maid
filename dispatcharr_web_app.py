@@ -1921,7 +1921,9 @@ def run_job_worker(job, api, config):
                         config,
                         progress_callback=progress_wrapper,
                         force_full_analysis=True,
-                        streams_callback=lambda streams: _job_set_stream_checklist(job, streams)
+                        streams_callback=lambda streams: _job_set_stream_checklist(job, streams),
+                        api=api,
+                        apply_reorder=True
                     ) or 0
                 finally:
                     config.set('filters', 'stream_last_measured_days', original_days)
@@ -2112,7 +2114,9 @@ def run_job_worker(job, api, config):
                     config,
                     progress_callback=progress_wrapper,
                     force_full_analysis=(job.job_type == 'full_cleanup'),
-                    streams_callback=lambda streams: _job_set_stream_checklist(job, streams)
+                    streams_callback=lambda streams: _job_set_stream_checklist(job, streams),
+                    api=api,
+                    apply_reorder=True
                 ) or 0
             finally:
                 # Restore original setting
