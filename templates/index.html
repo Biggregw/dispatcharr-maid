@@ -85,6 +85,11 @@
             overflow: hidden;
             position: relative;
         }
+
+        .progress-container--thin {
+            height: 10px;
+            margin: 6px 0 10px;
+        }
         
         .progress-bar {
             background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
@@ -393,6 +398,28 @@
             const percent = isNumericComplete ? 100 : Math.min(100, progress.percent || 0);
             const phase = getPhaseIndicator(progress.current_step);
             const showIndeterminate = !isNumericComplete && total !== '?' && processed === 0;
+            const totalChannels = typeof progress.total_channels === 'number' ? progress.total_channels : 0;
+            const currentChannelIndex = typeof progress.current_channel_index === 'number'
+                ? progress.current_channel_index
+                : 0;
+            const currentChannelLabel = progress.current_channel_label
+                || progress.current_channel_id
+                || 'Unknown';
+            const streamsCompletedInChannel = typeof progress.streams_completed_in_channel === 'number'
+                ? progress.streams_completed_in_channel
+                : null;
+            const streamsTotalInChannel = typeof progress.streams_total_in_channel === 'number'
+                ? progress.streams_total_in_channel
+                : null;
+            const showChannelBlock = totalChannels > 0;
+            const showChannelBar = showChannelBlock
+                && typeof streamsCompletedInChannel === 'number'
+                && typeof streamsTotalInChannel === 'number'
+                && streamsTotalInChannel > 0;
+            const channelPercent = showChannelBar
+                ? Math.min(100, Math.max(0, (streamsCompletedInChannel / streamsTotalInChannel) * 100))
+                : 0;
+            const lastSortedLabel = progress.last_sorted_channel_label;
             
             container.innerHTML = `
                 <div style="margin-bottom: 10px;">
@@ -409,6 +436,19 @@
                           </div>`
                     }
                 </div>
+                ${showChannelBlock ? `
+                    <div class="channel-progress">
+                        ${showChannelBar ? `
+                            <div class="progress-container progress-container--thin">
+                                <div class="progress-bar ${isNumericComplete ? 'muted' : ''}" style="width: ${channelPercent}%"></div>
+                            </div>
+                        ` : ''}
+                        <div style="color: #4a5568; font-size: 0.9em; display: flex; flex-wrap: wrap; gap: 10px;">
+                            <span>Channel: ${currentChannelIndex}/${totalChannels} (${currentChannelLabel})${streamsCompletedInChannel !== null && streamsTotalInChannel !== null ? ` ${streamsCompletedInChannel}/${streamsTotalInChannel}` : ''}</span>
+                            ${lastSortedLabel ? `<span>Last sorted: ${lastSortedLabel}</span>` : ''}
+                        </div>
+                    </div>
+                ` : ''}
                 ${isNumericComplete && phase ? `
                     <div class="phase-indicator phase-indicator--active" aria-live="polite">
                         <span class="phase-indicator__icon">${phase.icon}</span>
