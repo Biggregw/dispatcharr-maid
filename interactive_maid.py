@@ -195,7 +195,7 @@ def run_full_pipeline(api, config, selected_ids):
         print("STEP 2: ANALYZING STREAMS")
         print("="*70)
         print("This may take a while. Progress will be shown below.\n")
-        analyze_streams(config)
+        analyze_streams(config, api=api, apply_reorder=True)
         
         # Score
         print("\n" + "="*70)

@@ -128,7 +128,8 @@ class DispatcharrAPI:
             return response.json()
             
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 401:
+            response = e.response
+            if response is not None and response.status_code == 401:
                 # Token expired, refresh and retry
                 if self._refresh_token():
                     response = requests.patch(
@@ -139,7 +140,17 @@ class DispatcharrAPI:
                     )
                     response.raise_for_status()
                     return response.json()
-            raise Exception(f"PATCH {url} failed: {e}")
+            status = response.status_code if response is not None else "unknown"
+            snippet = ""
+            if response is not None:
+                try:
+                    snippet = (response.text or "").strip()
+                except Exception:
+                    snippet = ""
+            if snippet:
+                snippet = snippet.replace("\n", " ")[:200]
+                raise Exception(f"PATCH {url} failed ({status}): {snippet}")
+            raise Exception(f"PATCH {url} failed ({status}): {e}")
         
         except requests.exceptions.RequestException as e:
             raise Exception(f"PATCH {url} failed: {e}")
