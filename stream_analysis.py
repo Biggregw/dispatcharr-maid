@@ -50,6 +50,8 @@ class ProgressTracker:
         self.total_channels = total_channels
         self.current_channel_index = 0
         self.current_channel_id = None
+        self.current_channel_label = None
+        self.last_sorted_channel_label = None
         self.streams_completed_in_channel = 0
         self.streams_total_in_channel = 0
     
@@ -114,13 +116,26 @@ class ProgressTracker:
         except (TypeError, ValueError):
             return str(stream_id)
     
-    def set_channel_context(self, channel_index, channel_id, streams_total, streams_completed=0):
+    def set_channel_context(
+        self,
+        channel_index,
+        channel_id,
+        streams_total,
+        streams_completed=0,
+        channel_label=None,
+    ):
         """Set channel-scoped progress details."""
         with self.lock:
             self.current_channel_index = channel_index
             self.current_channel_id = channel_id
+            self.current_channel_label = channel_label
             self.streams_total_in_channel = streams_total
             self.streams_completed_in_channel = streams_completed
+
+    def mark_channel_sorted(self, channel_label):
+        """Record the most recently sorted channel label."""
+        with self.lock:
+            self.last_sorted_channel_label = channel_label
 
     def get_progress(self):
         """Get current progress statistics"""
@@ -140,6 +155,8 @@ class ProgressTracker:
                 'total_channels': self.total_channels,
                 'current_channel_index': self.current_channel_index,
                 'current_channel_id': self.current_channel_id,
+                'current_channel_label': self.current_channel_label,
+                'last_sorted_channel_label': self.last_sorted_channel_label,
                 'streams_completed_in_channel': self.streams_completed_in_channel,
                 'streams_total_in_channel': self.streams_total_in_channel,
             }
@@ -1076,6 +1093,13 @@ def analyze_streams(config, input_csv=None,
             missing = True
         return (1 if missing else 0, numeric, str(channel_id))
 
+    def _channel_label(channel_number, channel_id):
+        if channel_number not in (None, ''):
+            return str(channel_number)
+        if channel_id not in (None, ''):
+            return str(channel_id)
+        return "Unknown"
+
     channel_order = sorted(channel_lookup.keys(), key=_channel_sort_key)
     total_channels = len(channel_order) + (1 if missing_channel_rows else 0)
     
@@ -1165,7 +1189,7 @@ def analyze_streams(config, input_csv=None,
                 channel_id = batch['channel_id']
                 channel_streams = batch['streams']
                 channel_number = batch['channel_number']
-                channel_label = channel_number if channel_number not in (None, '') else 'Unknown'
+                channel_label = _channel_label(channel_number, channel_id)
                 processed_in_channel = sum(
                     1 for row in channel_streams
                     if progress_tracker.is_processed(row.get('stream_id'))
@@ -1176,6 +1200,7 @@ def analyze_streams(config, input_csv=None,
                     channel_id,
                     len(channel_streams),
                     processed_in_channel,
+                    channel_label=channel_label,
                 )
                 logging.info(
                     "Channel %s starting analysis (%d streams)",
@@ -1192,6 +1217,7 @@ def analyze_streams(config, input_csv=None,
                     logging.warning(f"  No streams for channel {channel_label}")
                     logging.info("Channel %s analysis complete", channel_label)
                     logging.info("Channel %s sorted", channel_label)
+                    progress_tracker.mark_channel_sorted(channel_label)
                     if progress_callback:
                         try:
                             progress_callback(progress_tracker.get_progress())
@@ -1321,6 +1347,7 @@ def analyze_streams(config, input_csv=None,
                 f_fails.flush()
                 logging.info("Channel %s analysis complete", channel_label)
                 logging.info("Channel %s sorted", channel_label)
+                progress_tracker.mark_channel_sorted(channel_label)
                 if progress_callback:
                     try:
                         progress_callback(progress_tracker.get_progress())
