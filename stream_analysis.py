@@ -34,7 +34,7 @@ from provider_data import refresh_provider_data
 class ProgressTracker:
     """Track analysis progress with ETA and resumability"""
 
-    def __init__(self, total_streams, checkpoint_file, use_checkpoint=True):
+    def __init__(self, total_streams, checkpoint_file, use_checkpoint=True, total_channels=0):
         self.total = total_streams
         # If resuming from a checkpoint, treat already-processed IDs as progress
         # so UIs/CLI progress bars don't look "stuck" at 0%.
@@ -47,6 +47,11 @@ class ProgressTracker:
         if self.processed_ids:
             self.processed = len(self.processed_ids)
         self.lock = threading.Lock()
+        self.total_channels = total_channels
+        self.current_channel_index = 0
+        self.current_channel_id = None
+        self.streams_completed_in_channel = 0
+        self.streams_total_in_channel = 0
     
     def load_checkpoint(self):
         """Load previously processed stream IDs"""
@@ -79,12 +84,14 @@ class ProgressTracker:
                 'failed_count': self.failed
             }, f, indent=2)
     
-    def mark_processed(self, stream_id, success=True):
+    def mark_processed(self, stream_id, success=True, channel_id=None):
         """Mark a stream as processed"""
         with self.lock:
             self.processed += 1
             if not success:
                 self.failed += 1
+            if channel_id is not None and channel_id == self.current_channel_id:
+                self.streams_completed_in_channel += 1
             normalized_id = self._normalize_stream_id(stream_id)
             if normalized_id is not None:
                 self.processed_ids.add(normalized_id)
@@ -107,6 +114,14 @@ class ProgressTracker:
         except (TypeError, ValueError):
             return str(stream_id)
     
+    def set_channel_context(self, channel_index, channel_id, streams_total, streams_completed=0):
+        """Set channel-scoped progress details."""
+        with self.lock:
+            self.current_channel_index = channel_index
+            self.current_channel_id = channel_id
+            self.streams_total_in_channel = streams_total
+            self.streams_completed_in_channel = streams_completed
+
     def get_progress(self):
         """Get current progress statistics"""
         with self.lock:
@@ -114,14 +129,19 @@ class ProgressTracker:
             rate = self.processed / elapsed if elapsed > 0 else 0
             remaining = self.total - self.processed
             eta_seconds = remaining / rate if rate > 0 else 0
-            
+
             return {
                 'processed': self.processed,
                 'total': self.total,
                 'failed': self.failed,
                 'rate': rate,
                 'eta_seconds': int(eta_seconds),
-                'percent': (self.processed / self.total * 100) if self.total > 0 else 0
+                'percent': (self.processed / self.total * 100) if self.total > 0 else 0,
+                'total_channels': self.total_channels,
+                'current_channel_index': self.current_channel_index,
+                'current_channel_id': self.current_channel_id,
+                'streams_completed_in_channel': self.streams_completed_in_channel,
+                'streams_total_in_channel': self.streams_total_in_channel,
             }
     
     def print_progress(self):
@@ -585,7 +605,11 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
         
         # Mark as processed
         if progress_tracker:
-            progress_tracker.mark_processed(stream_id, status == "OK")
+            progress_tracker.mark_processed(
+                stream_id,
+                status == "OK",
+                channel_id=row.get('channel_id'),
+            )
         
         # Respect ffmpeg duration to avoid hammering provider
         if isinstance(elapsed, (int, float)) and elapsed < duration:
@@ -1025,12 +1049,42 @@ def analyze_streams(config, input_csv=None,
             streams_callback(streams_to_analyze)
         except Exception:
             logging.debug("streams_callback failed during analysis setup", exc_info=True)
+
+    streams_by_channel = defaultdict(list)
+    channel_lookup = {}
+    missing_channel_rows = []
+    for row in streams_to_analyze:
+        channel_id = row.get('channel_id')
+        if channel_id is None or (isinstance(channel_id, float) and pd.isna(channel_id)):
+            # Explicitly track missing channel IDs so they do not get silently grouped.
+            missing_channel_rows.append(row)
+            continue
+        if channel_id not in channel_lookup:
+            channel_lookup[channel_id] = {
+                'channel_number': row.get('channel_number'),
+                'channel_group_id': row.get('channel_group_id'),
+            }
+        streams_by_channel[channel_id].append(row)
+
+    def _channel_sort_key(channel_id):
+        channel_number = channel_lookup.get(channel_id, {}).get('channel_number')
+        try:
+            numeric = int(channel_number)
+            missing = False
+        except (TypeError, ValueError):
+            numeric = 0
+            missing = True
+        return (1 if missing else 0, numeric, str(channel_id))
+
+    channel_order = sorted(channel_lookup.keys(), key=_channel_sort_key)
+    total_channels = len(channel_order) + (1 if missing_channel_rows else 0)
     
     # Initialize progress tracker
     progress_tracker = ProgressTracker(
         len(streams_to_analyze),
         config.resolve_path('logs/checkpoint.json'),
-        use_checkpoint=not force_full_analysis
+        use_checkpoint=not force_full_analysis,
+        total_channels=total_channels,
     )
 
     # Emit an initial progress update immediately (0 / total) so UIs can show
@@ -1086,79 +1140,195 @@ def analyze_streams(config, input_csv=None,
             flush_every = max(1, min(5000, flush_every))
 
             cancelled = False
-            it = iter(streams_to_analyze)
-            max_in_flight = max(1, workers * 4)
 
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = set()
-                future_to_row = {}
+            if missing_channel_rows:
+                logging.warning(
+                    "Encountered %d streams without channel_id; processing them last.",
+                    len(missing_channel_rows),
+                )
 
-                def _submit_next():
-                    row = next(it, None)
-                    if row is None:
-                        return False
-                    fut = executor.submit(_analyze_stream_task, row, config, progress_tracker, force_full_analysis)
-                    futures.add(fut)
-                    future_to_row[fut] = row
-                    return True
+            channel_batches = []
+            for channel_id in channel_order:
+                channel_batches.append({
+                    'channel_id': channel_id,
+                    'channel_number': channel_lookup.get(channel_id, {}).get('channel_number'),
+                    'streams': streams_by_channel.get(channel_id, []),
+                })
+            if missing_channel_rows:
+                channel_batches.append({
+                    'channel_id': None,
+                    'channel_number': None,
+                    'streams': missing_channel_rows,
+                })
 
-                # Prime the queue
-                for _ in range(min(max_in_flight, len(streams_to_analyze))):
-                    if not _submit_next():
-                        break
+            for channel_index, batch in enumerate(channel_batches, start=1):
+                channel_id = batch['channel_id']
+                channel_streams = batch['streams']
+                channel_number = batch['channel_number']
+                channel_label = channel_number if channel_number not in (None, '') else 'Unknown'
+                processed_in_channel = sum(
+                    1 for row in channel_streams
+                    if progress_tracker.is_processed(row.get('stream_id'))
+                )
 
-                while futures:
-                    done, _pending = wait(futures, return_when=FIRST_COMPLETED)
-                    for future in done:
-                        futures.discard(future)
-                        original_row = future_to_row.pop(future, None) or {}
+                progress_tracker.set_channel_context(
+                    channel_index,
+                    channel_id,
+                    len(channel_streams),
+                    processed_in_channel,
+                )
+                logging.info(
+                    "Channel %s starting analysis (%d streams)",
+                    channel_label,
+                    len(channel_streams),
+                )
+                if progress_callback:
+                    try:
+                        progress_callback(progress_tracker.get_progress())
+                    except Exception:
+                        logging.debug("progress_callback failed during channel start", exc_info=True)
+
+                if not channel_streams:
+                    logging.warning(f"  No streams for channel {channel_label}")
+                    logging.info("Channel %s analysis complete", channel_label)
+                    logging.info("Channel %s sorted", channel_label)
+                    if progress_callback:
                         try:
-                            result_row = future.result()
+                            progress_callback(progress_tracker.get_progress())
+                        except Exception:
+                            logging.debug("progress_callback failed after empty channel", exc_info=True)
+                    continue
 
-                            if result_row is None:  # Already processed
-                                pass
-                            else:
-                                analyzed_count += 1
-                                writer_out.writerow(result_row)
+                channel_results = []
+                channel_failures = []
+                it = iter(channel_streams)
+                max_in_flight = max(1, workers * 4)
 
-                                if result_row.get('status') != 'OK':
-                                    writer_fails.writerow(result_row)
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = set()
+                    future_to_row = {}
+
+                    def _submit_next():
+                        row = next(it, None)
+                        if row is None:
+                            return False
+                        fut = executor.submit(
+                            _analyze_stream_task,
+                            row,
+                            config,
+                            progress_tracker,
+                            force_full_analysis,
+                        )
+                        futures.add(fut)
+                        future_to_row[fut] = row
+                        return True
+
+                    for _ in range(min(max_in_flight, len(channel_streams))):
+                        if not _submit_next():
+                            break
+
+                    while futures:
+                        done, _pending = wait(futures, return_when=FIRST_COMPLETED)
+                        for future in done:
+                            futures.discard(future)
+                            original_row = future_to_row.pop(future, None) or {}
+                            try:
+                                result_row = future.result()
+
+                                if result_row is None:  # Already processed
+                                    pass
+                                else:
+                                    analyzed_count += 1
+                                    channel_results.append(result_row)
+
+                                    if result_row.get('status') != 'OK':
+                                        channel_failures.append(result_row)
 
                                 if analyzed_count % flush_every == 0:
                                     f_out.flush()
                                     f_fails.flush()
 
-                            # Update progress (and allow cancellation if callback returns False)
-                            if progress_callback:
-                                try:
-                                    keep_going = progress_callback(progress_tracker.get_progress())
-                                    if keep_going is False:
-                                        cancelled = True
-                                except Exception:
-                                    logging.debug("progress_callback failed during analysis", exc_info=True)
-                            else:
-                                progress_tracker.print_progress()
+                                if progress_callback:
+                                    try:
+                                        keep_going = progress_callback(progress_tracker.get_progress())
+                                        if keep_going is False:
+                                            cancelled = True
+                                    except Exception:
+                                        logging.debug("progress_callback failed during analysis", exc_info=True)
+                                else:
+                                    progress_tracker.print_progress()
 
-                        except Exception as exc:
-                            logging.error(
-                                "Stream %s generated exception: %s",
-                                original_row.get('stream_name'),
-                                exc,
-                            )
+                            except Exception as exc:
+                                logging.error(
+                                    "Stream %s generated exception: %s",
+                                    original_row.get('stream_name'),
+                                    exc,
+                                )
 
-                        if cancelled:
-                            break
-
-                        # Backfill to keep the queue full
-                        while not cancelled and len(futures) < max_in_flight:
-                            if not _submit_next():
+                            if cancelled:
                                 break
 
-                    if cancelled:
-                        # Best-effort cancel of remaining tasks
-                        for fut in list(futures):
-                            fut.cancel()
-                        break
+                            while not cancelled and len(futures) < max_in_flight:
+                                if not _submit_next():
+                                    break
+
+                        if cancelled:
+                            for fut in list(futures):
+                                fut.cancel()
+                            break
+
+                if cancelled:
+                    break
+
+                ordered_ids = order_streams_for_channel(channel_results)
+                rows_by_id = {}
+                unordered_rows = []
+                for row in channel_results:
+                    stream_id = row.get('stream_id')
+                    if stream_id in (None, '', 'N/A'):
+                        unordered_rows.append(row)
+                        continue
+                    rows_by_id[str(stream_id)] = row
+                for stream_id in ordered_ids:
+                    key = str(stream_id)
+                    row = rows_by_id.pop(key, None)
+                    if row:
+                        writer_out.writerow(row)
+                for row in unordered_rows:
+                    writer_out.writerow(row)
+                for row in rows_by_id.values():
+                    writer_out.writerow(row)
+
+                failures_by_id = {}
+                unordered_failures = []
+                for row in channel_failures:
+                    stream_id = row.get('stream_id')
+                    if stream_id in (None, '', 'N/A'):
+                        unordered_failures.append(row)
+                        continue
+                    failures_by_id[str(stream_id)] = row
+                for stream_id in ordered_ids:
+                    key = str(stream_id)
+                    row = failures_by_id.pop(key, None)
+                    if row:
+                        writer_fails.writerow(row)
+                for row in unordered_failures:
+                    writer_fails.writerow(row)
+                for row in failures_by_id.values():
+                    writer_fails.writerow(row)
+
+                f_out.flush()
+                f_fails.flush()
+                logging.info("Channel %s analysis complete", channel_label)
+                logging.info("Channel %s sorted", channel_label)
+                if progress_callback:
+                    try:
+                        progress_callback(progress_tracker.get_progress())
+                    except Exception:
+                        logging.debug("progress_callback failed after channel completion", exc_info=True)
+
+            if cancelled:
+                logging.info("Analysis cancelled by request")
 
             # Final flush
             f_out.flush()
@@ -1184,18 +1354,10 @@ def analyze_streams(config, input_csv=None,
             return analyzed_count
             
         df_final['stream_id'] = pd.to_numeric(df_final['stream_id'], errors='coerce')
-        df_final.dropna(subset=['stream_id'], inplace=True)
-        
-        if df_final.empty:
-            # All rows were dropped - write empty CSV with headers
-            df_empty = pd.DataFrame(columns=final_columns)
-            df_empty.to_csv(output_csv, index=False, na_rep='N/A')
-            logging.warning("All rows dropped during deduplication")
-            return analyzed_count
-            
-        df_final['stream_id'] = df_final['stream_id'].astype(int)
-        df_final.sort_values(by='timestamp', ascending=True, inplace=True)
-        df_final.drop_duplicates(subset=['stream_id'], keep='last', inplace=True)
+        if df_final['stream_id'].notna().any():
+            mask = df_final['stream_id'].isna() | ~df_final['stream_id'].duplicated(keep='last')
+            df_final = df_final[mask]
+
         df_final = df_final.reindex(columns=final_columns)
         df_final.to_csv(output_csv, index=False, na_rep='N/A')
         logging.info(f"Results saved to {output_csv}")
