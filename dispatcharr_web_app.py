@@ -117,13 +117,7 @@ BACKGROUND_RUNNER_IDLE_SLEEP_SECONDS = 10
 _background_runner_enabled = False
 _background_runner_lock = threading.Lock()
 _background_runner_enabled_event = threading.Event()
-_background_runner_ready_event = threading.Event()
 _background_runner_thread = None
-
-
-def _background_runner_loop_entry():
-    _background_runner_ready_event.wait()
-    _background_runner_loop()
 
 
 def _get_background_runner_enabled():
@@ -147,7 +141,7 @@ def _ensure_background_runner_thread():
         if _background_runner_thread and _background_runner_thread.is_alive():
             return
         _background_runner_thread = threading.Thread(
-            target=_background_runner_loop_entry,
+            target=_background_runner_loop,
             name="background-windowed-runner",
             daemon=True,
         )
@@ -4151,9 +4145,6 @@ def api_update_config():
         return jsonify({'success': True, 'message': 'Configuration updated'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
-
-
-_background_runner_ready_event.set()
 
 
 if __name__ == '__main__':
