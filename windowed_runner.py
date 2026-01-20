@@ -5,6 +5,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urljoin, urlparse
 
@@ -47,6 +48,8 @@ class WindowedRunnerState:
         self._memory_conn = None
         if self.db_path == ":memory:":
             self._memory_conn = sqlite3.connect(":memory:")
+        else:
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._ensure_tables()
 
     def _connect(self):
