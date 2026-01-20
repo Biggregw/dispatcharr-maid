@@ -37,6 +37,15 @@ State is persisted to `data/windowed_runner.sqlite` and updated after each chann
 3. Boosts for failure statuses and favourites (if enabled).
 4. `next_eligible_at` gates rapid reprocessing within the same run.
 
+## Workspace outputs
+Each windowed run writes analysis CSVs into an isolated workspace:
+
+```
+csv/windowed/<YYYYMMDD_HHMMSS>/channel_<id>/
+```
+
+This prevents stale or corrupted shared CSV artifacts from affecting windowed runs. The runner does not auto-clean these workspaces—remove older `csv/windowed/<run_id>/` directories when you no longer need the per-run artifacts.
+
 ## Slot 1 playable-now gate
 After ordering a channel’s streams, the runner runs a fast playable-now check on the slot 1 candidate. If it fails, it tries the next candidate (up to `--slot1-check-limit`). The first passing stream becomes slot 1, while the remaining order is preserved. If none pass, the scored order is preserved and the channel run is marked as `no_playable_candidates`.
 
