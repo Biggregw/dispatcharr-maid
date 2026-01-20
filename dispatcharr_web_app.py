@@ -555,6 +555,7 @@ def _run_background_channel(api, config, state, channel, run_id):
         return
     if not _background_runner_enabled_event.is_set():
         return
+    logging.info("Background runner starting channel %s", channel_id)
     base_csv_root = Path(config.resolve_path("csv"))
     base_csv_root.mkdir(parents=True, exist_ok=True)
 
@@ -727,6 +728,13 @@ def _run_background_channel(api, config, state, channel, run_id):
         duration_seconds,
         next_eligible_at,
         str(slot1_selected) if slot1_selected is not None else None,
+    )
+    logging.info(
+        "Background runner finished channel %s result=%s duration=%ss slot1=%s",
+        channel_id,
+        result_status,
+        duration_seconds,
+        slot1_selected,
     )
     logging.info(
         "Background channel %s result=%s duration=%ss slot1_changed=%s provider_cooldown=%s no_playable=%s",
