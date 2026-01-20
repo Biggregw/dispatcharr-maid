@@ -4152,11 +4152,13 @@ def api_update_config():
 if __name__ == '__main__':
     if "--snapshot-dispatcharr-loop" in sys.argv:
         _run_dispatcharr_snapshot_loop()
-        sys.exit(0)
+        if __name__ == '__main__':
+            sys.exit(0)
 
     if "--snapshot-dispatcharr" in sys.argv:
         _append_dispatcharr_snapshot()
-        sys.exit(0)
+        if __name__ == '__main__':
+            sys.exit(0)
 
     print("\n" + "="*70)
     print("🧹 DISPATCHARR MAID - WEB APPLICATION")
