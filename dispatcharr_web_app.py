@@ -156,6 +156,10 @@ app.secret_key = _load_or_create_secret_key()
 
 CORS(app)
 
+@app.before_serving
+def _start_background_runner():
+    _ensure_background_runner_thread()
+
 _dispatcharr_auth_state = {
     'authenticated': False,
     'last_error': None
