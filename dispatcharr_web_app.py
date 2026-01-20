@@ -59,9 +59,24 @@ from stream_analysis import (
     fetch_streams,
     analyze_streams,
     score_streams,
+    order_streams_for_channel,
     reorder_streams
 )
 from job_workspace import create_job_workspace
+from windowed_runner import (
+    ChannelSelector,
+    WindowedRunnerState,
+    build_provider_key,
+    build_stream_key,
+    is_status_failure,
+    playable_now_check,
+    DEFAULT_FAST_CHECK_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_COOLDOWN_SECONDS,
+    DEFAULT_PROVIDER_FAIL_THRESHOLD,
+    DEFAULT_PROVIDER_FAIL_WINDOW_SECONDS,
+    DEFAULT_SLOT1_CHECK_LIMIT,
+    DEFAULT_STREAM_COOLDOWN_SECONDS,
+)
 
 # Ensure logs always show up in Docker logs/stdout, even if something else
 # configured logging before this module is imported.
@@ -110,6 +125,7 @@ _dispatcharr_auth_state = {
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
+        _ensure_background_runner_thread()
         if session.get("logged_in"):
             return view(*args, **kwargs)
         return redirect(url_for("login"))
@@ -383,6 +399,343 @@ def _maybe_auto_save_job_request(data, preview_only=False):
     _save_stream_name_regex_presets(presets)
     return True
 
+
+BACKGROUND_RUNNER_PRIORITY = "stale,failures,favourites"
+BACKGROUND_RUNNER_SLEEP_SECONDS = 5
+BACKGROUND_RUNNER_IDLE_SLEEP_SECONDS = 10
+
+_background_runner_enabled = False
+_background_runner_lock = threading.Lock()
+_background_runner_enabled_event = threading.Event()
+_background_runner_thread = None
+
+
+def _get_background_runner_enabled():
+    with _background_runner_lock:
+        return _background_runner_enabled
+
+
+def _set_background_runner_enabled(enabled):
+    global _background_runner_enabled
+    with _background_runner_lock:
+        _background_runner_enabled = bool(enabled)
+        if _background_runner_enabled:
+            _background_runner_enabled_event.set()
+        else:
+            _background_runner_enabled_event.clear()
+
+
+def _ensure_background_runner_thread():
+    global _background_runner_thread
+    with _background_runner_lock:
+        if _background_runner_thread and _background_runner_thread.is_alive():
+            return
+        _background_runner_thread = threading.Thread(
+            target=_background_runner_loop,
+            name="background-windowed-runner",
+            daemon=True,
+        )
+        _background_runner_thread.start()
+
+
+def _status_failure_reason(record):
+    status = record.get("status") or record.get("validation_result")
+    if not status:
+        return None
+    status_text = str(status).strip().lower()
+    if is_status_failure(status_text):
+        return f"analysis_status:{status_text}"
+    return None
+
+
+def _build_windowed_workspace(base_csv_dir, run_id, channel_id):
+    return Path(base_csv_dir) / "windowed" / run_id / f"channel_{channel_id}"
+
+
+def _prepare_windowed_streams_override(streams, channel_id, stream_provider_map):
+    prepared = []
+    for stream in streams:
+        if not isinstance(stream, dict):
+            continue
+        stream = dict(stream)
+        stream["channel_id"] = channel_id
+        m3u_account = stream.get("m3u_account")
+        if m3u_account in ("", None):
+            try:
+                stream_id = int(stream.get("id"))
+            except (TypeError, ValueError):
+                stream_id = None
+            if stream_id is not None:
+                stream["m3u_account"] = stream_provider_map.get(stream_id)
+        prepared.append(stream)
+    return prepared
+
+
+def _build_records_for_ordering(current_streams, scored_lookup):
+    records_for_ordering = []
+    for stream in current_streams:
+        sid = stream.get("id")
+        if sid is None:
+            continue
+        try:
+            sid_key = int(sid)
+        except Exception:
+            sid_key = sid
+        record = scored_lookup.get(sid_key)
+        if record is None:
+            record = {
+                "stream_id": sid_key,
+                "stream_name": stream.get("name"),
+                "m3u_account": stream.get("m3u_account"),
+                "m3u_account_name": stream.get("m3u_account_name"),
+                "service_name": stream.get("service_name"),
+                "service_provider": stream.get("service_provider"),
+                "resolution": stream.get("resolution"),
+                "avg_bitrate_kbps": stream.get("bitrate_kbps") or stream.get("ffmpeg_output_bitrate"),
+                "fps": stream.get("source_fps") or stream.get("fps"),
+                "video_codec": stream.get("video_codec"),
+                "audio_codec": stream.get("audio_codec"),
+                "interlaced_status": stream.get("interlaced_status"),
+                "status": stream.get("status"),
+                "stream_url": stream.get("url"),
+            }
+        else:
+            record = dict(record)
+        records_for_ordering.append(record)
+    return records_for_ordering
+
+
+def _order_channel_streams(records_for_ordering, config):
+    ordering_cfg = config.get("ordering") or {}
+    try:
+        fallback_depth = int(ordering_cfg.get("fallback_depth", 3) or 3)
+    except (ValueError, TypeError):
+        fallback_depth = 3
+    try:
+        similar_score_delta = float(ordering_cfg.get("similar_score_delta", 5) or 5)
+    except (ValueError, TypeError):
+        similar_score_delta = 5.0
+    ordering_details = order_streams_for_channel(
+        records_for_ordering,
+        resilience_mode=ordering_cfg.get("resilience_mode"),
+        fallback_depth=fallback_depth,
+        similar_score_delta=similar_score_delta,
+        reliability_sort=ordering_cfg.get("reliability_sort"),
+        return_details=True,
+    )
+    return ordering_details
+
+
+def _select_next_background_channel(api, state, selector):
+    all_channels = api.fetch_channels() or []
+    channels = []
+    for channel in all_channels:
+        if not isinstance(channel, dict):
+            continue
+        channel_id = channel.get("id")
+        if channel_id is None:
+            continue
+        group_id = channel.get("channel_group_id")
+        state.ensure_channel(channel_id, group_id)
+        channels.append(channel)
+    if not channels:
+        return None
+    channel_ids = [channel.get("id") for channel in channels if channel.get("id") is not None]
+    channel_states = state.list_channel_states(channel_ids)
+    next_state = selector.select_next(channel_states)
+    if not next_state:
+        return None
+    return next((ch for ch in channels if ch.get("id") == next_state.channel_id), None)
+
+
+def _run_background_channel(api, config, state, channel, run_id):
+    channel_id = channel.get("id")
+    if channel_id is None:
+        return
+    base_csv_root = Path(config.resolve_path("csv"))
+    base_csv_root.mkdir(parents=True, exist_ok=True)
+
+    start_time = time.time()
+    result_status = "ok"
+    slot1_selected = None
+    slot1_changed = False
+    provider_cooldown_applied = False
+    no_playable = False
+
+    try:
+        streams = api.fetch_channel_streams(channel_id)
+        if not streams:
+            result_status = "no_streams"
+        else:
+            channel_workspace = _build_windowed_workspace(base_csv_root, run_id, channel_id)
+            channel_workspace.mkdir(parents=True, exist_ok=True)
+            config.set_csv_root(channel_workspace)
+
+            stream_provider_map = api.fetch_stream_provider_map()
+            streams_override = _prepare_windowed_streams_override(
+                streams,
+                channel_id,
+                stream_provider_map,
+            )
+            config.set("filters", "specific_channel_ids", [channel_id])
+            config.set("filters", "channel_group_ids", [])
+
+            fetch_streams(
+                api,
+                config,
+                stream_provider_map_override=stream_provider_map,
+                channels_override=[channel],
+                streams_override=streams_override,
+            )
+            analyze_streams(config, api=api, apply_reorder=False)
+            score_streams(api, config, update_stats=False)
+
+            scored_df = pd.read_csv(config.resolve_path("csv/05_iptv_streams_scored_sorted.csv"))
+            scored_df["channel_id"] = pd.to_numeric(scored_df["channel_id"], errors="coerce")
+            scored_df = scored_df[scored_df["channel_id"] == channel_id]
+            if scored_df.empty:
+                result_status = "no_scored_streams"
+            else:
+                scored_records = scored_df.to_dict("records")
+                scored_lookup = {}
+                for record in scored_records:
+                    sid = record.get("stream_id")
+                    if sid in (None, "N/A"):
+                        continue
+                    try:
+                        sid_key = int(sid)
+                    except Exception:
+                        sid_key = sid
+                    scored_lookup[sid_key] = record
+
+                records_for_ordering = _build_records_for_ordering(streams, scored_lookup)
+                ordering_details = _order_channel_streams(records_for_ordering, config)
+                ordered_ids = ordering_details.get("ordered_ids", [])
+                if not ordered_ids:
+                    result_status = "no_ordered_streams"
+                else:
+                    current_ids = {stream.get("id") for stream in streams}
+                    ordered_ids = [sid for sid in ordered_ids if sid in current_ids]
+                    if not ordered_ids:
+                        result_status = "no_valid_ordered_streams"
+                    else:
+                        for record in records_for_ordering:
+                            reason = _status_failure_reason(record)
+                            if reason:
+                                stream_id = record.get("stream_id")
+                                stream_url = record.get("stream_url")
+                                stream_key = build_stream_key(stream_id, stream_url)
+                                provider_key = build_provider_key(record)
+                                state.record_stream_failure(
+                                    stream_key,
+                                    reason,
+                                    DEFAULT_STREAM_COOLDOWN_SECONDS,
+                                )
+                                if state.record_provider_failure(
+                                    provider_key,
+                                    reason,
+                                    DEFAULT_PROVIDER_COOLDOWN_SECONDS,
+                                    DEFAULT_PROVIDER_FAIL_THRESHOLD,
+                                    DEFAULT_PROVIDER_FAIL_WINDOW_SECONDS,
+                                ):
+                                    provider_cooldown_applied = True
+
+                        slot1_candidates_checked = 0
+                        for candidate_id in ordered_ids:
+                            if slot1_candidates_checked >= DEFAULT_SLOT1_CHECK_LIMIT:
+                                break
+                            record = scored_lookup.get(candidate_id) or {}
+                            stream_url = record.get("stream_url")
+                            if not stream_url:
+                                stream_obj = next((s for s in streams if s.get("id") == candidate_id), {})
+                                stream_url = stream_obj.get("url")
+                            stream_key = build_stream_key(candidate_id, stream_url)
+                            provider_key = build_provider_key({**record, "stream_url": stream_url})
+                            if state.is_stream_in_cooldown(stream_key):
+                                continue
+                            if state.is_provider_in_cooldown(provider_key):
+                                continue
+                            slot1_candidates_checked += 1
+                            ok, reason = playable_now_check(stream_url, DEFAULT_FAST_CHECK_TIMEOUT_SECONDS)
+                            if ok:
+                                slot1_selected = candidate_id
+                                break
+                            state.record_stream_failure(
+                                stream_key,
+                                f"playable_now:{reason}",
+                                DEFAULT_STREAM_COOLDOWN_SECONDS,
+                            )
+                            if state.record_provider_failure(
+                                provider_key,
+                                f"playable_now:{reason}",
+                                DEFAULT_PROVIDER_COOLDOWN_SECONDS,
+                                DEFAULT_PROVIDER_FAIL_THRESHOLD,
+                                DEFAULT_PROVIDER_FAIL_WINDOW_SECONDS,
+                            ):
+                                provider_cooldown_applied = True
+
+                        if slot1_selected is None:
+                            no_playable = True
+                            slot1_selected = ordered_ids[0]
+                            result_status = "no_playable_candidates"
+
+                        final_order = [slot1_selected] + [sid for sid in ordered_ids if sid != slot1_selected]
+                        slot1_changed = bool(ordered_ids) and ordered_ids[0] != slot1_selected
+                        api.update_channel_streams(channel_id, final_order)
+    except Exception as exc:
+        logging.exception("Background channel %s failed: %s", channel_id, exc)
+        result_status = "error"
+
+    duration_seconds = int(time.time() - start_time)
+    next_eligible_at = int(time.time()) + 60
+    state.update_channel_state(
+        channel_id,
+        result_status,
+        duration_seconds,
+        next_eligible_at,
+        str(slot1_selected) if slot1_selected is not None else None,
+    )
+    logging.info(
+        "Background channel %s result=%s duration=%ss slot1_changed=%s provider_cooldown=%s no_playable=%s",
+        channel_id,
+        result_status,
+        duration_seconds,
+        slot1_changed,
+        provider_cooldown_applied,
+        no_playable,
+    )
+
+
+def _background_runner_loop():
+    state_db_path = Path("data") / "windowed_runner.sqlite"
+    state_db_path.parent.mkdir(parents=True, exist_ok=True)
+    state = WindowedRunnerState(str(state_db_path))
+    selector = ChannelSelector(BACKGROUND_RUNNER_PRIORITY.split(","))
+    run_id = None
+
+    while True:
+        _background_runner_enabled_event.wait()
+        if not _get_background_runner_enabled():
+            continue
+        if run_id is None:
+            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        try:
+            api = DispatcharrAPI()
+            api.login()
+            config = Config("config.yaml")
+            channel = _select_next_background_channel(api, state, selector)
+            if channel is None:
+                time.sleep(BACKGROUND_RUNNER_IDLE_SLEEP_SECONDS)
+            else:
+                _run_background_channel(api, config, state, channel, run_id)
+                if _background_runner_enabled_event.is_set():
+                    time.sleep(BACKGROUND_RUNNER_SLEEP_SECONDS)
+        except Exception as exc:
+            logging.warning("Background runner loop error: %s", exc, exc_info=True)
+            time.sleep(BACKGROUND_RUNNER_IDLE_SLEEP_SECONDS)
+
+        if not _background_runner_enabled_event.is_set():
+            run_id = None
 
 
 
@@ -2505,6 +2858,26 @@ def _build_config_from_history_job(history_job):
 
 
 # API Endpoints
+
+@app.route('/api/background-runner', methods=['GET'])
+@login_required
+def api_background_runner_status():
+    _ensure_background_runner_thread()
+    return jsonify({'success': True, 'enabled': _get_background_runner_enabled()})
+
+
+@app.route('/api/background-runner', methods=['POST'])
+@login_required
+def api_background_runner_toggle():
+    _ensure_background_runner_thread()
+    data = request.get_json(silent=True) or {}
+    if 'enabled' in data:
+        enabled = bool(data.get('enabled'))
+    else:
+        enabled = not _get_background_runner_enabled()
+    _set_background_runner_enabled(enabled)
+    return jsonify({'success': True, 'enabled': enabled})
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
