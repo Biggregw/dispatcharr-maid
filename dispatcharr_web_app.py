@@ -775,12 +775,6 @@ def _background_runner_loop():
 
 
 
-_start_in_reloader = os.getenv("WERKZEUG_RUN_MAIN") == "true"
-_debug_env = os.getenv("FLASK_ENV") == "development" or os.getenv("DEBUG") == "1"
-if not _debug_env or _start_in_reloader:
-    _ensure_background_runner_thread()
-
-
 def _run_dispatcharr_snapshot_loop():
     lock_path = Path("dispatcharr_snapshot_loop.pid")
     lock_file = None
@@ -2915,6 +2909,8 @@ def api_background_runner_toggle():
         enabled = bool(data.get('enabled'))
     else:
         enabled = not _get_background_runner_enabled()
+    if enabled:
+        _ensure_background_runner_thread()
     _set_background_runner_enabled(enabled)
     return jsonify({'success': True, 'enabled': enabled})
 
