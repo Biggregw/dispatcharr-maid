@@ -754,7 +754,8 @@ def _background_runner_loop():
                 if run_id is None:
                     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
                 api = DispatcharrAPI()
-                api.login()
+                if not api.token:
+                    api.login()
                 config = Config("config.yaml")
                 channel = _select_next_background_channel(api, state, selector)
                 if channel is None:
