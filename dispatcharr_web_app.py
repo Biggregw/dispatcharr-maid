@@ -137,6 +137,8 @@ def _set_background_runner_enabled(enabled):
 
 def _ensure_background_runner_thread():
     global _background_runner_thread
+    if os.environ.get("FLASK_RUN_FROM_CLI") == "true" and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        return
     with _background_runner_lock:
         if _background_runner_thread and _background_runner_thread.is_alive():
             return
@@ -738,7 +740,7 @@ def _run_background_channel(api, config, state, channel, run_id):
 
 
 def _background_runner_loop():
-    logging.info("Background runner thread started")
+    logging.info("Background runner loop entered")
     while True:
         try:
             state_db_path = Path("data") / "windowed_runner.sqlite"
