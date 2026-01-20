@@ -2925,6 +2925,45 @@ def api_background_runner_toggle():
     return jsonify({'success': True, 'enabled': enabled})
 
 
+@app.route('/api/background-runner/progress', methods=['GET'])
+@login_required
+def api_background_runner_progress():
+    runner_state = WindowedRunnerState("data/windowed_runner.sqlite")
+    with runner_state._connect() as conn:
+        completed_channels = conn.execute(
+            "SELECT COUNT(*) FROM channel_state WHERE last_checked_at IS NOT NULL"
+        ).fetchone()[0]
+        total_channels = conn.execute(
+            "SELECT COUNT(*) FROM channel_state"
+        ).fetchone()[0]
+        last_row = conn.execute(
+            """
+            SELECT channel_id, last_status, last_duration_seconds
+            FROM channel_state
+            WHERE last_checked_at IS NOT NULL
+            ORDER BY last_checked_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if last_row:
+        last_channel_id, last_status, last_duration_seconds = last_row
+    else:
+        last_channel_id = None
+        last_status = None
+        last_duration_seconds = None
+    return jsonify(
+        {
+            "success": True,
+            "enabled": _get_background_runner_enabled(),
+            "completed_channels": completed_channels,
+            "total_channels": total_channels,
+            "last_channel_id": last_channel_id,
+            "last_status": last_status,
+            "last_duration_seconds": last_duration_seconds,
+        }
+    )
+
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     error = None
