@@ -48,6 +48,10 @@ def parse_args():
     return parser.parse_args()
 
 
+def build_windowed_workspace(base_csv_dir, run_id, channel_id):
+    return Path(base_csv_dir) / "windowed" / run_id / f"channel_{channel_id}"
+
+
 def _parse_csv_int_list(value):
     if not value:
         return []
@@ -166,6 +170,10 @@ def run_windowed_batch():
 
     api = DispatcharrAPI()
     config = Config()
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_csv_root = Path(config.resolve_path("csv"))
+    windowed_root = base_csv_root / "windowed" / run_id
+    windowed_root.mkdir(parents=True, exist_ok=True)
 
     state_db_path = Path(args.data_db)
     state_db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -261,6 +269,9 @@ def run_windowed_batch():
             if not streams:
                 result_status = "no_streams"
             else:
+                channel_workspace = build_windowed_workspace(base_csv_root, run_id, channel_id)
+                channel_workspace.mkdir(parents=True, exist_ok=True)
+                config.set_csv_root(channel_workspace)
                 streams_override = _prepare_streams_override(streams, channel_id, stream_provider_map)
                 config.set("filters", "specific_channel_ids", [channel_id])
                 config.set("filters", "channel_group_ids", [])

@@ -183,9 +183,10 @@ class ProgressTracker:
 class Config:
     """Configuration management"""
 
-    def __init__(self, config_file='config.yaml', working_dir=None):
+    def __init__(self, config_file='config.yaml', working_dir=None, csv_root=None):
         self.working_dir = Path(working_dir) if working_dir else Path(config_file).parent
         self.config_file = Path(self.working_dir, Path(config_file).name)
+        self.csv_root = Path(csv_root) if csv_root else None
         self.config = self._load_config()
     
     def _load_config(self):
@@ -299,8 +300,15 @@ class Config:
         with open(self.config_file, 'w') as f:
             yaml.dump(self.config, f, default_flow_style=False)
 
+    def set_csv_root(self, csv_root):
+        """Override the CSV root directory (optional)."""
+        self.csv_root = Path(csv_root) if csv_root else None
+
     def resolve_path(self, relative_path):
         """Resolve a path within the working directory"""
+        if self.csv_root and (relative_path == "csv" or relative_path.startswith("csv/")):
+            suffix = relative_path[4:] if relative_path != "csv" else ""
+            return str(self.csv_root / suffix) if suffix else str(self.csv_root)
         return str(Path(self.working_dir, relative_path))
 
 
@@ -323,6 +331,33 @@ def _get_provider_semaphore(provider):
         if provider not in provider_semaphores:
             provider_semaphores[provider] = threading.Semaphore(1)
         return provider_semaphores[provider]
+
+
+def _normalize_csv_value(value):
+    if isinstance(value, str):
+        return value.replace("\r\n", "\n").replace("\r", "\n")
+    return value
+
+
+def _normalize_csv_row(row):
+    if not isinstance(row, dict):
+        return row
+    return {key: _normalize_csv_value(value) for key, value in row.items()}
+
+
+def _build_csv_writer(file_handle, fieldnames):
+    return csv.DictWriter(
+        file_handle,
+        fieldnames=fieldnames,
+        extrasaction="ignore",
+        quoting=csv.QUOTE_ALL,
+        escapechar="\\",
+        lineterminator="\n",
+    )
+
+
+def _read_analysis_csv(path):
+    return pd.read_csv(path, dtype=str, keep_default_na=False)
 
 
 # FFmpeg utilities
@@ -1089,7 +1124,7 @@ def analyze_streams(config, input_csv=None,
         days_to_keep = 7
     if not force_full_analysis and days_to_keep > 0 and os.path.exists(output_csv):
         try:
-            df_processed = pd.read_csv(output_csv)
+            df_processed = _read_analysis_csv(output_csv)
             df_processed['timestamp'] = pd.to_datetime(df_processed['timestamp'], errors='coerce')
             cutoff_date = datetime.now() - timedelta(days=days_to_keep)
             recent_urls = df_processed[df_processed['timestamp'] > cutoff_date]['stream_url'].unique()
@@ -1202,8 +1237,8 @@ def analyze_streams(config, input_csv=None,
         with open(output_csv, 'a', newline='', encoding='utf-8') as f_out, \
              open(fails_csv, 'a', newline='', encoding='utf-8') as f_fails:
 
-            writer_out = csv.DictWriter(f_out, fieldnames=final_columns, extrasaction='ignore')
-            writer_fails = csv.DictWriter(f_fails, fieldnames=final_columns, extrasaction='ignore')
+            writer_out = _build_csv_writer(f_out, final_columns)
+            writer_fails = _build_csv_writer(f_fails, final_columns)
 
             if not output_exists or os.path.getsize(output_csv) == 0:
                 writer_out.writeheader()
@@ -1371,11 +1406,11 @@ def analyze_streams(config, input_csv=None,
                     key = str(stream_id)
                     row = rows_by_id.pop(key, None)
                     if row:
-                        writer_out.writerow(row)
+                        writer_out.writerow(_normalize_csv_row(row))
                 for row in unordered_rows:
-                    writer_out.writerow(row)
+                    writer_out.writerow(_normalize_csv_row(row))
                 for row in rows_by_id.values():
-                    writer_out.writerow(row)
+                    writer_out.writerow(_normalize_csv_row(row))
 
                 failures_by_id = {}
                 unordered_failures = []
@@ -1389,11 +1424,11 @@ def analyze_streams(config, input_csv=None,
                     key = str(stream_id)
                     row = failures_by_id.pop(key, None)
                     if row:
-                        writer_fails.writerow(row)
+                        writer_fails.writerow(_normalize_csv_row(row))
                 for row in unordered_failures:
-                    writer_fails.writerow(row)
+                    writer_fails.writerow(_normalize_csv_row(row))
                 for row in failures_by_id.values():
-                    writer_fails.writerow(row)
+                    writer_fails.writerow(_normalize_csv_row(row))
 
                 f_out.flush()
                 f_fails.flush()
@@ -1424,7 +1459,7 @@ def analyze_streams(config, input_csv=None,
         # Deduplicate final results
         logging.info("Deduplicating results...")
         try:
-            df_final = pd.read_csv(output_csv)
+            df_final = _read_analysis_csv(output_csv)
         except (FileNotFoundError, pd.errors.EmptyDataError):
             # File doesn't exist or is empty - nothing to deduplicate
             logging.warning(f"Output CSV is empty or doesn't exist: {output_csv}")
@@ -1440,7 +1475,14 @@ def analyze_streams(config, input_csv=None,
             df_final = df_final[mask]
 
         df_final = df_final.reindex(columns=final_columns)
-        df_final.to_csv(output_csv, index=False, na_rep='N/A')
+        df_final.to_csv(
+            output_csv,
+            index=False,
+            na_rep='N/A',
+            quoting=csv.QUOTE_ALL,
+            escapechar="\\",
+            lineterminator="\n",
+        )
         logging.info(f"Results saved to {output_csv}")
         return analyzed_count
     

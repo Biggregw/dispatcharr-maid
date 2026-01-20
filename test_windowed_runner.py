@@ -1,5 +1,8 @@
 import time
+from pathlib import Path
 
+from stream_analysis import Config
+from tools.run_windowed_batch import build_windowed_workspace
 from windowed_runner import ChannelSelector, WindowedRunnerState
 
 
@@ -53,3 +56,18 @@ def test_provider_cooldown_triggers_after_threshold():
     )
     assert applied is True
     assert state.is_provider_in_cooldown(provider_key) is True
+
+
+def test_windowed_runner_csv_override_uses_workspace(tmp_path):
+    config = Config(config_file=str(tmp_path / "config.yaml"), working_dir=tmp_path)
+    run_id = "20240101_010101"
+    channel_id = 42
+    base_csv_root = Path(config.resolve_path("csv"))
+    channel_workspace = build_windowed_workspace(base_csv_root, run_id, channel_id)
+
+    config.set_csv_root(channel_workspace)
+
+    resolved = Path(config.resolve_path("csv/03_iptv_stream_measurements.csv"))
+    assert resolved == channel_workspace / "03_iptv_stream_measurements.csv"
+    assert resolved != base_csv_root / "03_iptv_stream_measurements.csv"
+    assert channel_workspace.parent.parent == base_csv_root / "windowed"
