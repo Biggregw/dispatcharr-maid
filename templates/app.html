@@ -982,6 +982,12 @@
                         </button>
                         <div class="action-help">Reorders streams based on current quality analysis.</div>
                     </div>
+                    <div class="action-stack">
+                        <button class="action-btn tertiary" id="background-runner-toggle" type="button">
+                            Background Channel Optimisation: OFF
+                        </button>
+                        <div class="action-help">Runs a background pass that keeps channel ordering optimized.</div>
+                    </div>
                 </div>
                 <div class="analysis-settings">
                     <label for="analysisProfile" style="display: block; margin-bottom: 8px; font-weight: 700; color: #1f2937; font-size: 1.05em;">
@@ -1104,6 +1110,8 @@
         const lastRenderedStatuses = {};
         let jobTickerInterval = null;
         let jobTickerState = null;
+        let backgroundRunnerEnabled = false;
+        let backgroundRunnerBusy = false;
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
@@ -1163,6 +1171,11 @@
         document.addEventListener('DOMContentLoaded', function() {
             loadGroups();
             loadJobHistory();
+            loadBackgroundRunnerState();
+            const backgroundRunnerButton = document.getElementById('background-runner-toggle');
+            if (backgroundRunnerButton) {
+                backgroundRunnerButton.addEventListener('click', toggleBackgroundRunner);
+            }
 
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
@@ -1448,6 +1461,67 @@
             const btn = document.getElementById('optimize-streams-button');
             if (btn) {
                 btn.disabled = selectedChannels.length === 0;
+            }
+        }
+
+        function updateBackgroundRunnerToggle(enabled) {
+            const btn = document.getElementById('background-runner-toggle');
+            if (!btn) return;
+            btn.textContent = enabled
+                ? 'Background Channel Optimisation: ON'
+                : 'Background Channel Optimisation: OFF';
+            btn.classList.remove('secondary', 'tertiary');
+            btn.classList.add(enabled ? 'secondary' : 'tertiary');
+        }
+
+        function setBackgroundRunnerBusy(isBusy) {
+            const btn = document.getElementById('background-runner-toggle');
+            if (!btn) return;
+            backgroundRunnerBusy = isBusy;
+            btn.disabled = isBusy;
+            if (isBusy) {
+                btn.textContent = 'Updating background runner...';
+            }
+        }
+
+        async function loadBackgroundRunnerState() {
+            try {
+                const response = await fetch('/api/background-runner', { cache: 'no-store' });
+                const data = await response.json();
+                if (data.success) {
+                    backgroundRunnerEnabled = Boolean(data.enabled);
+                    updateBackgroundRunnerToggle(backgroundRunnerEnabled);
+                }
+            } catch (error) {
+                // Best-effort only.
+            }
+        }
+
+        async function toggleBackgroundRunner(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            if (backgroundRunnerBusy) {
+                return;
+            }
+            setBackgroundRunnerBusy(true);
+            try {
+                const response = await fetch('/api/background-runner', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ enabled: !backgroundRunnerEnabled })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    backgroundRunnerEnabled = Boolean(data.enabled);
+                    updateBackgroundRunnerToggle(backgroundRunnerEnabled);
+                }
+            } catch (error) {
+                // Best-effort only.
+            } finally {
+                setBackgroundRunnerBusy(false);
+                updateBackgroundRunnerToggle(backgroundRunnerEnabled);
             }
         }
 
