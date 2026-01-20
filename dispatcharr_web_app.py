@@ -738,35 +738,38 @@ def _run_background_channel(api, config, state, channel, run_id):
 
 
 def _background_runner_loop():
-    state_db_path = Path("data") / "windowed_runner.sqlite"
-    state_db_path.parent.mkdir(parents=True, exist_ok=True)
-    state = WindowedRunnerState(str(state_db_path))
-    selector = ChannelSelector(BACKGROUND_RUNNER_PRIORITY.split(","))
-    run_id = None
-
+    logging.info("Background runner thread started")
     while True:
-        _background_runner_enabled_event.wait()
-        if not _get_background_runner_enabled():
-            continue
-        if run_id is None:
-            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         try:
-            api = DispatcharrAPI()
-            api.login()
-            config = Config("config.yaml")
-            channel = _select_next_background_channel(api, state, selector)
-            if channel is None:
-                time.sleep(BACKGROUND_RUNNER_IDLE_SLEEP_SECONDS)
-            else:
-                _run_background_channel(api, config, state, channel, run_id)
-                if _background_runner_enabled_event.is_set():
-                    time.sleep(BACKGROUND_RUNNER_SLEEP_SECONDS)
-        except Exception as exc:
-            logging.warning("Background runner loop error: %s", exc, exc_info=True)
-            time.sleep(BACKGROUND_RUNNER_IDLE_SLEEP_SECONDS)
-
-        if not _background_runner_enabled_event.is_set():
+            state_db_path = Path("data") / "windowed_runner.sqlite"
+            state_db_path.parent.mkdir(parents=True, exist_ok=True)
+            state = WindowedRunnerState(str(state_db_path))
+            selector = ChannelSelector(BACKGROUND_RUNNER_PRIORITY.split(","))
             run_id = None
+
+            while True:
+                _background_runner_enabled_event.wait()
+                if not _get_background_runner_enabled():
+                    continue
+                if run_id is None:
+                    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                api = DispatcharrAPI()
+                api.login()
+                config = Config("config.yaml")
+                channel = _select_next_background_channel(api, state, selector)
+                if channel is None:
+                    logging.info("Background runner idle, no eligible channels")
+                    time.sleep(BACKGROUND_RUNNER_IDLE_SLEEP_SECONDS)
+                else:
+                    _run_background_channel(api, config, state, channel, run_id)
+                    if _background_runner_enabled_event.is_set():
+                        time.sleep(BACKGROUND_RUNNER_SLEEP_SECONDS)
+
+                if not _background_runner_enabled_event.is_set():
+                    run_id = None
+        except Exception:
+            logging.exception("Background runner loop error")
+            time.sleep(BACKGROUND_RUNNER_IDLE_SLEEP_SECONDS)
 
 
 
