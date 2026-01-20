@@ -154,11 +154,6 @@ app.secret_key = _load_or_create_secret_key()
 
 CORS(app)
 
-_start_in_reloader = os.getenv("WERKZEUG_RUN_MAIN") == "true"
-_debug_env = os.getenv("FLASK_ENV") == "development" or os.getenv("DEBUG") == "1"
-if not _debug_env or _start_in_reloader:
-    _ensure_background_runner_thread()
-
 _dispatcharr_auth_state = {
     'authenticated': False,
     'last_error': None
@@ -773,6 +768,13 @@ def _background_runner_loop():
         if not _background_runner_enabled_event.is_set():
             run_id = None
 
+
+
+
+_start_in_reloader = os.getenv("WERKZEUG_RUN_MAIN") == "true"
+_debug_env = os.getenv("FLASK_ENV") == "development" or os.getenv("DEBUG") == "1"
+if not _debug_env or _start_in_reloader:
+    _ensure_background_runner_thread()
 
 
 def _run_dispatcharr_snapshot_loop():
