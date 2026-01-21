@@ -846,22 +846,93 @@
             font-weight: 600;
         }
 
-        .background-status-grid {
+        .background-status-panel {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 12px;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 16px;
             margin-bottom: 16px;
         }
 
-        .background-status-item {
-            padding: 10px 12px;
-            border-radius: 10px;
+        .background-status-card {
+            padding: 14px 16px;
+            border-radius: 12px;
             border: 1px solid #e2e8f0;
             background: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
 
-        .background-status-item .summary-row {
-            margin-bottom: 0;
+        .background-status-card-title {
+            font-weight: 700;
+            color: #1f2937;
+            font-size: 0.95em;
+        }
+
+        .background-status-card-body {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .status-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .status-label {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #6b7280;
+        }
+
+        .status-value {
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .status-value--primary {
+            color: #4f46e5;
+        }
+
+        .status-value--muted {
+            color: #6b7280;
+            font-weight: 500;
+        }
+
+        .background-outcomes {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 8px;
+        }
+
+        .background-outcome-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            border-radius: 8px;
+            background: #eef2f7;
+            font-size: 0.9em;
+            gap: 8px;
+        }
+
+        .background-outcome-label {
+            color: #475569;
+            font-weight: 600;
+        }
+
+        .background-outcome-value {
+            color: #111827;
+            font-weight: 700;
+        }
+
+        .background-status-card .action-btn {
+            padding: 8px 12px;
+            font-size: 0.9em;
+            width: 100%;
+            justify-content: center;
         }
 
         .background-activity-table {
@@ -987,51 +1058,56 @@
             <h2>Background Channel Optimisation</h2>
             <div>
                 <h3 style="margin-bottom: 12px; color: #1f2937;">Status</h3>
-                <div class="background-status-grid">
-                    <div class="background-status-item">
-                        <div class="summary-row">
-                            <span class="summary-label">State:</span>
-                            <span class="summary-value" id="background-optimisation-running">—</span>
+                <div class="background-status-panel">
+                    <div class="background-status-card">
+                        <div class="background-status-card-title">State &amp; control</div>
+                        <div class="background-status-card-body">
+                            <div class="status-field">
+                                <span class="status-label">State</span>
+                                <span class="status-value status-value--primary" id="background-optimisation-running">—</span>
+                            </div>
+                            <div class="status-field">
+                                <span class="status-label">Control</span>
+                                <span class="status-value">
+                                    <button class="action-btn tertiary" id="background-runner-toggle" type="button">
+                                        Background Channel Optimisation: OFF
+                                    </button>
+                                </span>
+                            </div>
                         </div>
                     </div>
-                    <div class="background-status-item">
-                        <div class="summary-row">
-                            <span class="summary-label">Control:</span>
-                            <span class="summary-value">
-                                <button class="action-btn tertiary" id="background-runner-toggle" type="button" style="padding: 8px 12px; font-size: 0.9em;">
-                                    Background Channel Optimisation: OFF
-                                </button>
-                            </span>
+                    <div class="background-status-card">
+                        <div class="background-status-card-title">Progress</div>
+                        <div class="background-status-card-body">
+                            <div class="status-field">
+                                <span class="status-label">Current pass</span>
+                                <span class="status-value" id="background-optimisation-pass">—</span>
+                            </div>
+                            <div class="status-field">
+                                <span class="status-label">Last processed channel</span>
+                                <span class="status-value" id="background-optimisation-last-channel">—</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="background-status-item">
-                        <div class="summary-row">
-                            <span class="summary-label">Current pass:</span>
-                            <span class="summary-value" id="background-optimisation-pass">—</span>
+                    <div class="background-status-card">
+                        <div class="background-status-card-title">Recent outcomes</div>
+                        <div class="background-status-card-body">
+                            <div class="background-outcomes" id="background-optimisation-outcomes">
+                                <span class="status-value status-value--muted">—</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="background-status-item">
-                        <div class="summary-row">
-                            <span class="summary-label">Last processed channel:</span>
-                            <span class="summary-value" id="background-optimisation-last-channel">—</span>
-                        </div>
-                    </div>
-                    <div class="background-status-item">
-                        <div class="summary-row">
-                            <span class="summary-label">Last update time:</span>
-                            <span class="summary-value" id="background-optimisation-updated-at">—</span>
-                        </div>
-                    </div>
-                    <div class="background-status-item">
-                        <div class="summary-row">
-                            <span class="summary-label">Recent outcomes:</span>
-                            <span class="summary-value" id="background-optimisation-outcomes">—</span>
-                        </div>
-                    </div>
-                    <div class="background-status-item">
-                        <div class="summary-row">
-                            <span class="summary-label">Last decision:</span>
-                            <span class="summary-value" id="background-optimisation-last-decision">—</span>
+                    <div class="background-status-card">
+                        <div class="background-status-card-title">Timing</div>
+                        <div class="background-status-card-body">
+                            <div class="status-field">
+                                <span class="status-label">Last update time</span>
+                                <span class="status-value status-value--muted" id="background-optimisation-updated-at">—</span>
+                            </div>
+                            <div class="status-field">
+                                <span class="status-label">Last decision</span>
+                                <span class="status-value status-value--muted" id="background-optimisation-last-decision">—</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1304,12 +1380,66 @@
             }
         }
         
+        function getGroupLowestChannelNumber(group) {
+            const groupId = Number(group?.id);
+            const channels = Array.isArray(allChannels[groupId]) ? allChannels[groupId] : [];
+            const candidates = channels
+                .map(channel => Number(channel?.channel_number))
+                .filter(value => Number.isFinite(value));
+            if (Array.isArray(group?.channels)) {
+                group.channels.forEach(channel => {
+                    const value = Number(channel?.channel_number);
+                    if (Number.isFinite(value)) {
+                        candidates.push(value);
+                    }
+                });
+            }
+            if (Array.isArray(group?.channel_numbers)) {
+                group.channel_numbers.forEach(number => {
+                    const value = Number(number);
+                    if (Number.isFinite(value)) {
+                        candidates.push(value);
+                    }
+                });
+            }
+            if (candidates.length === 0) {
+                return null;
+            }
+            return Math.min(...candidates);
+        }
+
+        function getOrderedGroups(groups) {
+            return groups
+                .map((group, index) => ({
+                    group,
+                    index,
+                    minChannel: getGroupLowestChannelNumber(group)
+                }))
+                .sort((a, b) => {
+                    const aHasChannel = Number.isFinite(a.minChannel);
+                    const bHasChannel = Number.isFinite(b.minChannel);
+                    if (aHasChannel && bHasChannel) {
+                        if (a.minChannel !== b.minChannel) {
+                            return a.minChannel - b.minChannel;
+                        }
+                        return a.index - b.index;
+                    }
+                    if (aHasChannel !== bHasChannel) {
+                        return aHasChannel ? -1 : 1;
+                    }
+                    return a.index - b.index;
+                })
+                .map(item => item.group);
+        }
+
         // Render groups
         function renderGroups() {
             const grid = document.getElementById('group-grid');
             grid.innerHTML = '';
 
-            allGroups.forEach(group => {
+            const orderedGroups = getOrderedGroups(allGroups);
+
+            orderedGroups.forEach(group => {
                 const item = document.createElement('div');
                 const isExpanded = Boolean(groupExpansionState[group.id]);
                 item.className = 'group-item';
@@ -1741,7 +1871,7 @@
 
         function formatBackgroundOutcomes(entries) {
             if (!Array.isArray(entries) || entries.length === 0) {
-                return '—';
+                return [];
             }
             const counts = {
                 reordered: 0,
@@ -1758,14 +1888,40 @@
                 }
             });
             const parts = [
-                `Reordered ${counts.reordered}`,
-                `Skipped ${counts.skipped}`,
-                `Unchanged ${counts.unchanged}`
+                { label: 'Reordered', value: counts.reordered },
+                { label: 'Skipped', value: counts.skipped },
+                { label: 'Unchanged', value: counts.unchanged }
             ];
             if (counts.other > 0) {
-                parts.push(`Other ${counts.other}`);
+                parts.push({ label: 'Other', value: counts.other });
             }
-            return parts.join(' · ');
+            return parts;
+        }
+
+        function renderBackgroundOptimisationOutcomes(outcomes) {
+            const container = document.getElementById('background-optimisation-outcomes');
+            if (!container) return;
+            container.innerHTML = '';
+            if (!Array.isArray(outcomes) || outcomes.length === 0) {
+                const placeholder = document.createElement('span');
+                placeholder.className = 'status-value status-value--muted';
+                placeholder.textContent = '—';
+                container.appendChild(placeholder);
+                return;
+            }
+            outcomes.forEach(outcome => {
+                const item = document.createElement('div');
+                item.className = 'background-outcome-item';
+                const label = document.createElement('span');
+                label.className = 'background-outcome-label';
+                label.textContent = outcome.label ?? '—';
+                const value = document.createElement('span');
+                value.className = 'background-outcome-value';
+                value.textContent = outcome.value ?? '—';
+                item.appendChild(label);
+                item.appendChild(value);
+                container.appendChild(item);
+            });
         }
 
         function formatBackgroundDecision(entry) {
@@ -1791,12 +1947,12 @@
                 setBackgroundOptimisationValue('background-optimisation-pass', state.pass_count);
                 setBackgroundOptimisationValue('background-optimisation-last-channel', state.last_channel_id);
                 setBackgroundOptimisationValue('background-optimisation-updated-at', state.updated_at);
-                setBackgroundOptimisationValue('background-optimisation-outcomes', formatBackgroundOutcomes(activity));
+                renderBackgroundOptimisationOutcomes(formatBackgroundOutcomes(activity));
                 setBackgroundOptimisationValue('background-optimisation-last-decision', formatBackgroundDecision(lastEntry));
                 renderBackgroundOptimisationActivity(activity);
             } catch (error) {
                 setBackgroundOptimisationValue('background-optimisation-running', '—');
-                setBackgroundOptimisationValue('background-optimisation-outcomes', '—');
+                renderBackgroundOptimisationOutcomes([]);
                 setBackgroundOptimisationValue('background-optimisation-last-decision', '—');
                 renderBackgroundOptimisationActivity([]);
             }
