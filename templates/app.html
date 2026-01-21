@@ -1049,7 +1049,7 @@
                         <thead>
                             <tr>
                                 <th>Timestamp</th>
-                                <th>Channel ID</th>
+                                <th>Channel</th>
                                 <th>Action</th>
                                 <th>Reason</th>
                                 <th>Score delta</th>
@@ -1639,6 +1639,63 @@
             element.textContent = value;
         }
 
+        function formatActivityTimestamp(value) {
+            if (value === null || value === undefined || value === '') {
+                return '—';
+            }
+            const parsed = new Date(value);
+            if (Number.isNaN(parsed.getTime())) {
+                return String(value);
+            }
+            return new Intl.DateTimeFormat('en-GB', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            }).format(parsed);
+        }
+
+        function getChannelNameById(channelId) {
+            if (channelId === null || channelId === undefined || channelId === '') {
+                return null;
+            }
+            const channelIdString = String(channelId);
+            for (const groupId in allChannels) {
+                const channel = allChannels[groupId].find(ch => String(ch.id) === channelIdString);
+                if (channel) {
+                    return channel.name;
+                }
+            }
+            return null;
+        }
+
+        function formatChannelLabel(channelId) {
+            const name = getChannelNameById(channelId);
+            if (name) {
+                return name;
+            }
+            return channelId === null || channelId === undefined || channelId === ''
+                ? 'Unknown channel'
+                : `Unknown channel (ID ${channelId})`;
+        }
+
+        function formatScoreDelta(value) {
+            if (value === null || value === undefined || value === '') {
+                return '—';
+            }
+            const numericValue = Number(value);
+            if (!Number.isFinite(numericValue)) {
+                return '—';
+            }
+            const formatted = Math.abs(numericValue).toFixed(2);
+            if (numericValue === 0) {
+                return formatted;
+            }
+            return `${numericValue > 0 ? '+' : '-'}${formatted}`;
+        }
+
         function renderBackgroundOptimisationActivity(entries) {
             const body = document.getElementById('background-optimisation-activity');
             if (!body) return;
@@ -1658,14 +1715,17 @@
             const rows = entries.slice().reverse();
             rows.forEach(entry => {
                 const row = document.createElement('tr');
-                const timestamp = entry?.timestamp ?? '';
+                const timestamp = formatActivityTimestamp(entry?.timestamp);
                 const channelId = entry?.channel_id ?? '';
+                const channelLabel = formatChannelLabel(channelId);
                 const actionTaken = entry?.action_taken ?? '';
                 const reason = entry?.reason ?? '';
-                const scoreDelta = entry?.score_delta ?? '';
+                const scoreDelta = formatScoreDelta(entry?.score_delta);
                 const passCount = entry?.pass_count ?? '';
 
-                [timestamp, channelId, actionTaken, reason, scoreDelta, passCount].forEach(value => {
+                row.dataset.channelId = channelId;
+
+                [timestamp, channelLabel, actionTaken, reason, scoreDelta, passCount].forEach(value => {
                     const cell = document.createElement('td');
                     if (value === null || value === undefined || value === '') {
                         cell.textContent = '—';
