@@ -542,6 +542,26 @@ def _build_windowed_workspace(base_csv_dir, run_id, channel_id):
     return Path(base_csv_dir) / "windowed" / run_id / f"channel_{channel_id}"
 
 
+def _cleanup_background_workspace(channel_workspace, channel_id, reason):
+    if channel_workspace is None:
+        return
+    try:
+        shutil.rmtree(channel_workspace)
+        logging.info(
+            "Background optimisation cleaned workspace for channel %s (%s)",
+            channel_id,
+            reason,
+        )
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        logging.warning(
+            "Background optimisation failed cleaning workspace for channel %s: %s",
+            channel_id,
+            exc,
+        )
+
+
 def _prepare_windowed_streams_override(streams, channel_id, stream_provider_map):
     prepared = []
     for stream in streams:
@@ -768,6 +788,8 @@ def _run_background_optimization_channel(
     reason = "unknown"
     score_delta = None
     completed = False
+    stop_requested = False
+    channel_workspace = None
 
     if channel_id is None:
         reason = "missing_channel_id"
@@ -787,6 +809,7 @@ def _run_background_optimization_channel(
 
     if not _background_runner_enabled_event.is_set():
         reason = "stopped"
+        stop_requested = True
         _append_background_reorder_log(
             {
                 "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -852,6 +875,7 @@ def _run_background_optimization_channel(
 
         if not _background_runner_enabled_event.is_set():
             reason = "stopped"
+            stop_requested = True
         else:
             channel_workspace = _build_windowed_workspace(base_csv_root, run_id, channel_id)
             channel_workspace.mkdir(parents=True, exist_ok=True)
@@ -875,11 +899,13 @@ def _run_background_optimization_channel(
 
             if not _background_runner_enabled_event.is_set():
                 reason = "stopped"
+                stop_requested = True
             else:
                 analyze_streams(config, api=api, apply_reorder=False)
 
                 if not _background_runner_enabled_event.is_set():
                     reason = "stopped"
+                    stop_requested = True
                 else:
                     score_streams(api, config, update_stats=False)
                     score_lookup = _load_scored_stream_lookup(config, channel_id)
@@ -986,6 +1012,9 @@ def _run_background_optimization_channel(
         reason = f"error:{exc}"
         action_taken = "skipped"
         completed = True
+
+    if stop_requested:
+        _cleanup_background_workspace(channel_workspace, channel_id, reason)
 
     _append_background_reorder_log(
         {
