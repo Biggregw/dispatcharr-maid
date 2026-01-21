@@ -1407,6 +1407,11 @@
 
         function getGroupLowestChannelNumber(group) {
             const candidates = [];
+            const minNumber = group?.min_channel_number;
+            const parsedMin = extractChannelNumber(minNumber);
+            if (Number.isFinite(parsedMin)) {
+                candidates.push(parsedMin);
+            }
             if (Array.isArray(group?.channels)) {
                 group.channels.forEach(channel => {
                     const value = extractChannelNumber(channel);
