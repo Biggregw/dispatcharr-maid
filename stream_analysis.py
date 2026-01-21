@@ -1750,6 +1750,7 @@ def _historical_stream_penalties(window_hours=24):
     cutoff = now - timedelta(hours=window_hours)
     top_streams_by_channel = defaultdict(list)
     penalties = defaultdict(float)
+    suggestion_usage_by_channel = {}
 
     for record in _read_ndjson(quality_checks_path):
         timestamp = _parse_history_timestamp(record.get("timestamp"))
@@ -1791,6 +1792,12 @@ def _historical_stream_penalties(window_hours=24):
         channel_id = record.get("channel_id") or record.get("id")
         if channel_id is None:
             continue
+        channel_key = str(channel_id)
+        usage = suggestion_usage_by_channel.setdefault(
+            channel_key,
+            {"channel_id": channel_id, "suggestion_present": False, "ordering_used": False},
+        )
+        usage["suggestion_present"] = True
         reason = str(
             record.get("reason")
             or record.get("suggestion_reason")
@@ -1799,7 +1806,6 @@ def _historical_stream_penalties(window_hours=24):
         ).lower()
         if not reason:
             continue
-        channel_key = str(channel_id)
         timeline = top_streams_by_channel.get(channel_key, [])
         if not timeline:
             continue
@@ -1814,6 +1820,15 @@ def _historical_stream_penalties(window_hours=24):
         if "unstable" in reason or "switch" in reason:
             # Probe-level instability signal from suggestions: small deterministic penalty.
             penalties[last_stream] -= 5.0
+            usage["ordering_used"] = True
+
+    for usage in suggestion_usage_by_channel.values():
+        logging.info(
+            "ordering_input channel=%s suggestion_present=%s ordering_used=%s",
+            usage["channel_id"],
+            usage["suggestion_present"],
+            usage["ordering_used"],
+        )
 
     capped = {}
     for stream_id, penalty in penalties.items():
