@@ -88,13 +88,15 @@ class DispatcharrAPI:
             return response.json()
             
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 401:
+            response = e.response
+            if response is not None and response.status_code == 401:
                 # Token expired, refresh and retry
                 if self._refresh_token():
                     response = requests.get(url, headers=self._get_headers(), timeout=timeout)
                     response.raise_for_status()
                     return response.json()
-            raise Exception(f"GET {url} failed: {e}")
+            status = response.status_code if response is not None else "unknown"
+            raise Exception(f"GET {url} failed ({status}): {e}")
         
         except requests.exceptions.RequestException as e:
             raise Exception(f"GET {url} failed: {e}")
@@ -170,7 +172,8 @@ class DispatcharrAPI:
             return response.json()
             
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 401:
+            response = e.response
+            if response is not None and response.status_code == 401:
                 # Token expired, refresh and retry
                 if self._refresh_token():
                     response = requests.post(
@@ -181,7 +184,8 @@ class DispatcharrAPI:
                     )
                     response.raise_for_status()
                     return response.json()
-            raise Exception(f"POST {url} failed: {e}")
+            status = response.status_code if response is not None else "unknown"
+            raise Exception(f"POST {url} failed ({status}): {e}")
         
         except requests.exceptions.RequestException as e:
             raise Exception(f"POST {url} failed: {e}")
