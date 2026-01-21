@@ -20,6 +20,7 @@ import time
 import uuid
 import fcntl
 import requests
+from collections import deque
 from contextlib import contextmanager
 from functools import wraps
 from datetime import datetime, timedelta, timezone
@@ -512,6 +513,29 @@ def _append_background_reorder_log(entry):
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _load_background_reorder_log_entries(limit=50):
+    log_path = _background_reorder_log_path()
+    if not log_path.exists():
+        return []
+    entries = deque(maxlen=limit)
+    try:
+        with log_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    logging.warning("Failed reading background reorder log line: %s", exc)
+                    continue
+                entries.append(entry)
+    except OSError as exc:
+        logging.warning("Failed reading background reorder log: %s", exc)
+        return []
+    return list(entries)
 
 
 def _build_windowed_workspace(base_csv_dir, run_id, channel_id):
@@ -3187,6 +3211,24 @@ def api_background_runner_progress():
             "last_channel_id": last_channel_id,
             "last_status": last_status,
             "last_duration_seconds": last_duration_seconds,
+        }
+    )
+
+
+@app.route('/api/background-optimisation/status', methods=['GET'])
+@login_required
+def api_background_optimisation_status():
+    state = _load_background_reorder_state()
+    recent_activity = _load_background_reorder_log_entries(limit=50)
+    if not isinstance(state, dict):
+        state = {}
+    if not isinstance(recent_activity, list):
+        recent_activity = []
+    return jsonify(
+        {
+            "enabled": _get_background_runner_enabled(),
+            "state": state,
+            "recent_activity": recent_activity,
         }
     )
 
