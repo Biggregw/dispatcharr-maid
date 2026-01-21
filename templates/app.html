@@ -1293,6 +1293,7 @@
         let backgroundRunnerEnabled = false;
         let backgroundRunnerBusy = false;
         let backgroundOptimisationActivityEntries = [];
+        const channelNameLookup = new Map();
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
@@ -1372,9 +1373,13 @@
                 if (data.success) {
                     allGroups = data.groups;
                     orderedGroups = getOrderedGroups(allGroups);
+                    refreshChannelNameLookup();
                     renderGroups();
                     document.getElementById('group-loading').classList.add('hidden');
                     document.getElementById('group-container').classList.remove('hidden');
+                    if (Array.isArray(backgroundOptimisationActivityEntries) && backgroundOptimisationActivityEntries.length) {
+                        renderBackgroundOptimisationActivity(backgroundOptimisationActivityEntries);
+                    }
                 } else {
                     showError('group-error', data.error);
                 }
@@ -1530,6 +1535,7 @@
 
                 if (data.success) {
                     allChannels = { ...allChannels, ...data.channels };
+                    refreshChannelNameLookup();
                 } else {
                     showError('group-error', data.error || 'Failed to load channels.');
                 }
@@ -1802,18 +1808,48 @@
             }).format(parsed);
         }
 
-        function getChannelNameById(channelId) {
+        function normalizeChannelId(channelId) {
             if (channelId === null || channelId === undefined || channelId === '') {
                 return null;
             }
-            const channelIdString = String(channelId);
-            for (const groupId in allChannels) {
-                const channel = allChannels[groupId].find(ch => String(ch.id) === channelIdString);
-                if (channel) {
-                    return channel.name;
-                }
+            const raw = String(channelId).trim();
+            if (!raw) return null;
+            const numeric = Number(raw);
+            return Number.isFinite(numeric) ? String(numeric) : raw;
+        }
+
+        function refreshChannelNameLookup() {
+            channelNameLookup.clear();
+
+            if (Array.isArray(allGroups)) {
+                allGroups.forEach(group => {
+                    if (!Array.isArray(group?.channels)) return;
+                    group.channels.forEach(channel => {
+                        const id = channel?.id ?? channel?.channel_id;
+                        const name = channel?.name ?? channel?.channel_name;
+                        const key = normalizeChannelId(id);
+                        if (key && name) {
+                            channelNameLookup.set(key, name);
+                        }
+                    });
+                });
             }
-            return null;
+
+            Object.values(allChannels || {}).forEach(channels => {
+                if (!Array.isArray(channels)) return;
+                channels.forEach(channel => {
+                    const key = normalizeChannelId(channel?.id);
+                    if (key && channel?.name) {
+                        channelNameLookup.set(key, channel.name);
+                    }
+                });
+            });
+        }
+
+        function getChannelNameById(channelId) {
+            const key = normalizeChannelId(channelId);
+            if (!key) return null;
+            return channelNameLookup.get(key) || null;
         }
 
         function formatChannelLabel(channelId) {
