@@ -480,7 +480,7 @@ def _load_background_reorder_state():
     return data if isinstance(data, dict) else {}
 
 
-def _save_background_reorder_state(channel_id=None, pass_count=None):
+def _save_background_reorder_state(channel_id=None, pass_count=None, schedule=None):
     state_path = _background_reorder_state_path()
     state_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = state_path.with_suffix(".tmp")
@@ -499,6 +499,8 @@ def _save_background_reorder_state(channel_id=None, pass_count=None):
             payload["last_channel_id"] = channel_id
         if pass_count is not None:
             payload["pass_count"] = pass_count
+        if schedule is not None:
+            payload["schedule"] = schedule
         payload["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         with tmp_path.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False)
@@ -681,7 +683,136 @@ def _next_background_start_index(channels, last_channel_id):
 def _sleep_while_enabled(duration_seconds):
     end_time = time.time() + duration_seconds
     while _background_runner_enabled_event.is_set() and time.time() < end_time:
+        _apply_background_schedule()
         time.sleep(min(1.0, end_time - time.time()))
+
+
+def _parse_schedule_time(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        value = f"{int(value):04d}"
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if ":" in raw:
+        parts = raw.split(":")
+        if len(parts) != 2:
+            return None
+        hour_text, minute_text = parts
+    else:
+        if len(raw) != 4 or not raw.isdigit():
+            return None
+        hour_text, minute_text = raw[:2], raw[2:]
+    try:
+        hour = int(hour_text)
+        minute = int(minute_text)
+    except ValueError:
+        return None
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return hour * 60 + minute
+
+
+def _normalize_schedule_time(value):
+    minutes = _parse_schedule_time(value)
+    if minutes is None:
+        return None
+    hour = minutes // 60
+    minute = minutes % 60
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _get_background_schedule_config(state=None):
+    if state is None:
+        state = _load_background_reorder_state()
+    schedule = state.get("schedule") if isinstance(state, dict) else None
+    if not isinstance(schedule, dict):
+        schedule = {}
+    start = _normalize_schedule_time(schedule.get("start"))
+    end = _normalize_schedule_time(schedule.get("end"))
+    return {
+        "enabled": bool(schedule.get("enabled")),
+        "start": start,
+        "end": end,
+    }
+
+
+def _schedule_window_active(start_time, end_time, now=None):
+    start_minutes = _parse_schedule_time(start_time)
+    end_minutes = _parse_schedule_time(end_time)
+    if start_minutes is None or end_minutes is None:
+        return False
+    if start_minutes == end_minutes:
+        return False
+    if now is None:
+        current = datetime.now()
+        now = current.hour * 60 + current.minute
+    if start_minutes < end_minutes:
+        return start_minutes <= now < end_minutes
+    return now >= start_minutes or now < end_minutes
+
+
+def _build_background_schedule_status(state=None):
+    schedule = _get_background_schedule_config(state)
+    active = False
+    if schedule["enabled"]:
+        active = _schedule_window_active(schedule["start"], schedule["end"])
+    return {
+        "enabled": schedule["enabled"],
+        "start": schedule["start"],
+        "end": schedule["end"],
+        "active": active,
+    }
+
+
+def _apply_background_schedule():
+    schedule = _get_background_schedule_config()
+    if not schedule["enabled"]:
+        return schedule
+    is_active = _schedule_window_active(schedule["start"], schedule["end"])
+    if is_active and not _get_background_runner_enabled():
+        _ensure_background_runner_thread()
+        _set_background_runner_enabled(True)
+    elif not is_active and _get_background_runner_enabled():
+        _set_background_runner_enabled(False)
+    schedule["active"] = is_active
+    return schedule
+
+
+def _build_background_schedule_update(data):
+    state = _load_background_reorder_state()
+    current = _get_background_schedule_config(state)
+    enabled = current["enabled"]
+    start = current["start"]
+    end = current["end"]
+
+    if "enabled" in data:
+        enabled = bool(data.get("enabled"))
+    if "start" in data:
+        if data.get("start") in (None, ""):
+            start = None
+        else:
+            start = _normalize_schedule_time(data.get("start"))
+            if start is None:
+                return None, "Start time must be HH:MM (24-hour)."
+    if "end" in data:
+        if data.get("end") in (None, ""):
+            end = None
+        else:
+            end = _normalize_schedule_time(data.get("end"))
+            if end is None:
+                return None, "End time must be HH:MM (24-hour)."
+
+    if enabled and (not start or not end):
+        return None, "Start and end times are required when schedule is enabled."
+
+    return {
+        "enabled": enabled,
+        "start": start,
+        "end": end,
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }, None
 
 
 def _load_scored_stream_lookup(config, channel_id):
@@ -1036,7 +1167,8 @@ def _background_runner_loop():
     run_id = None
     while True:
         try:
-            _background_runner_enabled_event.wait()
+            _apply_background_schedule()
+            _background_runner_enabled_event.wait(timeout=30)
             if not _get_background_runner_enabled():
                 continue
             if run_id is None:
@@ -1048,6 +1180,9 @@ def _background_runner_loop():
             stream_provider_map = api.fetch_stream_provider_map()
 
             while _background_runner_enabled_event.is_set():
+                _apply_background_schedule()
+                if not _background_runner_enabled_event.is_set():
+                    break
                 channels = api.fetch_channels() or []
                 active_channels = [
                     ch for ch in channels if _is_active_channel(ch)
@@ -3323,8 +3458,25 @@ def api_background_optimisation_status():
             "enabled": _get_background_runner_enabled(),
             "state": state,
             "recent_activity": enriched_activity,
+            "schedule": _build_background_schedule_status(state),
         }
     )
+
+
+@app.route('/api/background-optimisation/schedule', methods=['GET', 'POST'])
+@login_required
+def api_background_optimisation_schedule():
+    if request.method == 'GET':
+        state = _load_background_reorder_state()
+        return jsonify({"success": True, "schedule": _build_background_schedule_status(state)})
+    data = request.get_json(silent=True) or {}
+    schedule, error = _build_background_schedule_update(data)
+    if error:
+        return jsonify({"success": False, "error": error}), 400
+    _save_background_reorder_state(schedule=schedule)
+    _apply_background_schedule()
+    state = _load_background_reorder_state()
+    return jsonify({"success": True, "schedule": _build_background_schedule_status(state)})
 
 
 @app.route('/login', methods=['GET', 'POST'])

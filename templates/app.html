@@ -935,6 +935,50 @@
             justify-content: center;
         }
 
+        .background-schedule-controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 8px;
+        }
+
+        .background-schedule-controls label {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #6b7280;
+        }
+
+        .background-schedule-controls input[type="time"] {
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            font-size: 0.9em;
+            color: #111827;
+            background: #ffffff;
+        }
+
+        .background-schedule-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .background-schedule-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9em;
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .background-schedule-toggle input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+        }
+
         .background-activity-table {
             width: 100%;
             border-collapse: collapse;
@@ -1107,6 +1151,38 @@
                             <div class="status-field">
                                 <span class="status-label">Last decision</span>
                                 <span class="status-value status-value--muted" id="background-optimisation-last-decision">—</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="background-status-card">
+                        <div class="background-status-card-title">Schedule</div>
+                        <div class="background-status-card-body">
+                            <div class="status-field">
+                                <span class="status-label">Window</span>
+                                <span class="status-value status-value--muted" id="background-optimisation-schedule-window">—</span>
+                            </div>
+                            <div class="status-field">
+                                <span class="status-label">Active now</span>
+                                <span class="status-value" id="background-optimisation-schedule-active">—</span>
+                            </div>
+                            <div class="background-schedule-controls">
+                                <label for="background-schedule-start">
+                                    Start (24h)
+                                    <input type="time" id="background-schedule-start" name="background-schedule-start" step="60">
+                                </label>
+                                <label for="background-schedule-end">
+                                    End (24h)
+                                    <input type="time" id="background-schedule-end" name="background-schedule-end" step="60">
+                                </label>
+                            </div>
+                            <div class="background-schedule-actions">
+                                <label class="background-schedule-toggle" for="background-schedule-enabled">
+                                    <input type="checkbox" id="background-schedule-enabled">
+                                    Enable schedule
+                                </label>
+                                <button class="action-btn tertiary" id="background-schedule-save" type="button">
+                                    Save schedule
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1293,6 +1369,13 @@
         let backgroundRunnerEnabled = false;
         let backgroundRunnerBusy = false;
         let backgroundOptimisationActivityEntries = [];
+        let backgroundScheduleBusy = false;
+        let backgroundScheduleState = {
+            enabled: false,
+            start: null,
+            end: null,
+            active: false
+        };
         const channelNameLookup = new Map();
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
@@ -1358,6 +1441,10 @@
             const backgroundRunnerButton = document.getElementById('background-runner-toggle');
             if (backgroundRunnerButton) {
                 backgroundRunnerButton.addEventListener('click', toggleBackgroundRunner);
+            }
+            const scheduleSaveButton = document.getElementById('background-schedule-save');
+            if (scheduleSaveButton) {
+                scheduleSaveButton.addEventListener('click', saveBackgroundSchedule);
             }
 
             // Check for active jobs periodically
@@ -1785,6 +1872,99 @@
             }
         }
 
+        function setBackgroundScheduleBusy(isBusy) {
+            const button = document.getElementById('background-schedule-save');
+            backgroundScheduleBusy = isBusy;
+            if (button) {
+                button.disabled = isBusy;
+                if (isBusy) {
+                    button.textContent = 'Saving...';
+                } else {
+                    button.textContent = 'Save schedule';
+                }
+            }
+        }
+
+        function formatScheduleWindow(schedule) {
+            if (!schedule || !schedule.start || !schedule.end) {
+                return '—';
+            }
+            return `${schedule.start} → ${schedule.end}`;
+        }
+
+        function updateBackgroundScheduleDisplay(schedule) {
+            if (!schedule) {
+                backgroundScheduleState = {
+                    enabled: false,
+                    start: null,
+                    end: null,
+                    active: false
+                };
+            } else {
+                backgroundScheduleState = {
+                    enabled: Boolean(schedule.enabled),
+                    start: schedule.start || null,
+                    end: schedule.end || null,
+                    active: Boolean(schedule.active)
+                };
+            }
+            const windowValue = formatScheduleWindow(backgroundScheduleState);
+            setBackgroundOptimisationValue('background-optimisation-schedule-window', windowValue);
+            setBackgroundOptimisationValue(
+                'background-optimisation-schedule-active',
+                backgroundScheduleState.enabled ? (backgroundScheduleState.active ? 'Yes' : 'No') : 'Disabled'
+            );
+            const startInput = document.getElementById('background-schedule-start');
+            if (startInput && !backgroundScheduleBusy) {
+                startInput.value = backgroundScheduleState.start || '';
+            }
+            const endInput = document.getElementById('background-schedule-end');
+            if (endInput && !backgroundScheduleBusy) {
+                endInput.value = backgroundScheduleState.end || '';
+            }
+            const enabledToggle = document.getElementById('background-schedule-enabled');
+            if (enabledToggle && !backgroundScheduleBusy) {
+                enabledToggle.checked = backgroundScheduleState.enabled;
+            }
+        }
+
+        async function saveBackgroundSchedule(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            if (backgroundScheduleBusy) {
+                return;
+            }
+            const startInput = document.getElementById('background-schedule-start');
+            const endInput = document.getElementById('background-schedule-end');
+            const enabledToggle = document.getElementById('background-schedule-enabled');
+            if (!startInput || !endInput || !enabledToggle) {
+                return;
+            }
+            const payload = {
+                enabled: enabledToggle.checked,
+                start: startInput.value,
+                end: endInput.value
+            };
+            setBackgroundScheduleBusy(true);
+            try {
+                const response = await fetch('/api/background-optimisation/schedule', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (data.success) {
+                    updateBackgroundScheduleDisplay(data.schedule);
+                }
+            } catch (error) {
+                // Best-effort only.
+            } finally {
+                setBackgroundScheduleBusy(false);
+            }
+        }
+
         function setBackgroundOptimisationValue(elementId, value) {
             const element = document.getElementById(elementId);
             if (!element) return;
@@ -2016,6 +2196,7 @@
                 const state = data?.state || {};
                 const enabled = Boolean(data?.enabled);
                 const activity = Array.isArray(data?.recent_activity) ? data.recent_activity : [];
+                const schedule = data?.schedule || null;
                 const lastEntry = activity.length ? activity[activity.length - 1] : null;
                 backgroundOptimisationActivityEntries = activity;
                 setBackgroundOptimisationValue('background-optimisation-running', enabled ? 'Running' : 'Stopped');
@@ -2025,12 +2206,14 @@
                 renderBackgroundOptimisationOutcomes(formatBackgroundOutcomes(activity));
                 setBackgroundOptimisationValue('background-optimisation-last-decision', formatBackgroundDecision(lastEntry));
                 renderBackgroundOptimisationActivity(activity);
+                updateBackgroundScheduleDisplay(schedule);
             } catch (error) {
                 backgroundOptimisationActivityEntries = [];
                 setBackgroundOptimisationValue('background-optimisation-running', '—');
                 renderBackgroundOptimisationOutcomes([]);
                 setBackgroundOptimisationValue('background-optimisation-last-decision', '—');
                 renderBackgroundOptimisationActivity([]);
+                updateBackgroundScheduleDisplay(null);
             }
         }
 
