@@ -1860,14 +1860,11 @@
         function formatChannelLabel(channelId, channelName) {
             const name = channelName || getChannelNameById(channelId);
             if (name) {
-                if (channelId === null || channelId === undefined || channelId === '') {
-                    return name;
-                }
-                return `${name} (ID ${channelId})`;
+                return name;
             }
             return channelId === null || channelId === undefined || channelId === ''
                 ? 'Unknown channel'
-                : `Unknown channel (ID ${channelId})`;
+                : 'Unknown channel';
         }
 
         function formatScoreDelta(value) {
@@ -1989,7 +1986,27 @@
             const reason = entry?.reason ?? '—';
             const channelId = entry?.channel_id ?? null;
             const channelLabel = formatChannelLabel(channelId, entry?.channel_name);
-            return `${channelLabel} · ${action} (${reason})`;
+            if (!reason || reason === '—') {
+                return `${channelLabel} · ${action}`;
+            }
+            return `${channelLabel} · ${action} · ${reason}`;
+        }
+
+        function formatTimeSince(isoValue) {
+            if (!isoValue) return '—';
+            const timestamp = Date.parse(isoValue);
+            if (Number.isNaN(timestamp)) {
+                return '—';
+            }
+            const diffMs = Date.now() - timestamp;
+            if (diffMs < 0) {
+                return '0h 0m 0s';
+            }
+            const totalSeconds = Math.floor(diffMs / 1000);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            return `${hours}h ${minutes}m ${seconds}s`;
         }
 
         async function loadBackgroundOptimisationStatus() {
@@ -2004,7 +2021,7 @@
                 setBackgroundOptimisationValue('background-optimisation-running', enabled ? 'Running' : 'Stopped');
                 setBackgroundOptimisationValue('background-optimisation-pass', state.pass_count);
                 setBackgroundOptimisationValue('background-optimisation-last-channel', state.last_channel_id);
-                setBackgroundOptimisationValue('background-optimisation-updated-at', state.updated_at);
+                setBackgroundOptimisationValue('background-optimisation-updated-at', formatTimeSince(state.updated_at));
                 renderBackgroundOptimisationOutcomes(formatBackgroundOutcomes(activity));
                 setBackgroundOptimisationValue('background-optimisation-last-decision', formatBackgroundDecision(lastEntry));
                 renderBackgroundOptimisationActivity(activity);
