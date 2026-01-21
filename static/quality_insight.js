@@ -58,8 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const summary = document.createElement('summary');
       const name = document.createElement('span');
       const nameText = item.channel_name || 'Unknown channel';
-      const idText = item.channel_id ? ` (ID ${item.channel_id})` : '';
-      name.textContent = `${nameText}${idText}`;
+      name.textContent = nameText;
 
       const rag = document.createElement('span');
       const ragStatus = item.rag_status || 'green';
