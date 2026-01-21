@@ -1291,6 +1291,7 @@
         let jobTickerState = null;
         let backgroundRunnerEnabled = false;
         let backgroundRunnerBusy = false;
+        let backgroundOptimisationActivityEntries = [];
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
@@ -1530,6 +1531,9 @@
                         renderGroupChannels(id);
                     }
                 });
+                if (Array.isArray(backgroundOptimisationActivityEntries) && backgroundOptimisationActivityEntries.length) {
+                    renderBackgroundOptimisationActivity(backgroundOptimisationActivityEntries);
+                }
                 updateSelectionState();
             }
         }
@@ -1943,6 +1947,7 @@
                 const enabled = Boolean(data?.enabled);
                 const activity = Array.isArray(data?.recent_activity) ? data.recent_activity : [];
                 const lastEntry = activity.length ? activity[activity.length - 1] : null;
+                backgroundOptimisationActivityEntries = activity;
                 setBackgroundOptimisationValue('background-optimisation-running', enabled ? 'Running' : 'Stopped');
                 setBackgroundOptimisationValue('background-optimisation-pass', state.pass_count);
                 setBackgroundOptimisationValue('background-optimisation-last-channel', state.last_channel_id);
@@ -1951,6 +1956,7 @@
                 setBackgroundOptimisationValue('background-optimisation-last-decision', formatBackgroundDecision(lastEntry));
                 renderBackgroundOptimisationActivity(activity);
             } catch (error) {
+                backgroundOptimisationActivityEntries = [];
                 setBackgroundOptimisationValue('background-optimisation-running', '—');
                 renderBackgroundOptimisationOutcomes([]);
                 setBackgroundOptimisationValue('background-optimisation-last-decision', '—');
