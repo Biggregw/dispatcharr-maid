@@ -20,10 +20,10 @@ import time
 import uuid
 import fcntl
 import requests
+from contextlib import contextmanager
 from functools import wraps
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from queue import Queue
 
 import pandas as pd
 import yaml
@@ -60,22 +60,15 @@ from stream_analysis import (
     analyze_streams,
     score_streams,
     order_streams_for_channel,
-    reorder_streams
+    reorder_streams,
+    RELIABILITY_RECENT_HOURS,
+    _append_reorder_event,
+    _ordering_score_from_record,
+    _recent_reordered_channels,
 )
 from job_workspace import create_job_workspace
 from windowed_runner import (
-    ChannelSelector,
-    WindowedRunnerState,
-    build_provider_key,
-    build_stream_key,
     is_status_failure,
-    playable_now_check,
-    DEFAULT_FAST_CHECK_TIMEOUT_SECONDS,
-    DEFAULT_PROVIDER_COOLDOWN_SECONDS,
-    DEFAULT_PROVIDER_FAIL_THRESHOLD,
-    DEFAULT_PROVIDER_FAIL_WINDOW_SECONDS,
-    DEFAULT_SLOT1_CHECK_LIMIT,
-    DEFAULT_STREAM_COOLDOWN_SECONDS,
 )
 
 # Ensure logs always show up in Docker logs/stdout, even if something else
@@ -113,6 +106,8 @@ def _load_or_create_secret_key():
 BACKGROUND_RUNNER_PRIORITY = "stale,failures,favourites"
 BACKGROUND_RUNNER_SLEEP_SECONDS = 5
 BACKGROUND_RUNNER_IDLE_SLEEP_SECONDS = 10
+BACKGROUND_OPTIMIZATION_CHANNEL_SLEEP_SECONDS = 2
+BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS = 15
 
 _background_runner_enabled = False
 _background_runner_lock = threading.Lock()
@@ -449,6 +444,65 @@ def _status_failure_reason(record):
     return None
 
 
+def _background_reorder_state_path():
+    return Path("logs") / "background_reorder_state.json"
+
+
+def _background_reorder_log_path():
+    return Path("logs") / "background_reorder_log.ndjson"
+
+
+@contextmanager
+def _background_reorder_state_lock():
+    state_path = _background_reorder_state_path()
+    lock_path = state_path.with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _load_background_reorder_state():
+    state_path = _background_reorder_state_path()
+    if not state_path.exists():
+        return {}
+    with _background_reorder_state_lock():
+        try:
+            with state_path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            logging.warning("Failed reading background reorder state: %s", exc)
+            return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_background_reorder_state(channel_id):
+    state_path = _background_reorder_state_path()
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "last_channel_id": channel_id,
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    tmp_path = state_path.with_suffix(".tmp")
+    with _background_reorder_state_lock():
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, state_path)
+
+
+def _append_background_reorder_log(entry):
+    log_path = _background_reorder_log_path()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
 def _build_windowed_workspace(base_csv_dir, run_id, channel_id):
     return Path(base_csv_dir) / "windowed" / run_id / f"channel_{channel_id}"
 
@@ -527,63 +581,201 @@ def _order_channel_streams(records_for_ordering, config):
     return ordering_details
 
 
-def _select_next_background_channel(api, state, selector):
-    all_channels = api.fetch_channels() or []
-    channels = []
-    for channel in all_channels:
-        if not isinstance(channel, dict):
-            continue
-        channel_id = channel.get("id")
-        if channel_id is None:
-            continue
-        group_id = channel.get("channel_group_id")
-        state.ensure_channel(channel_id, group_id)
-        channels.append(channel)
+def _is_active_channel(channel):
+    if not isinstance(channel, dict):
+        return False
+    for key in ("active", "is_active", "enabled", "is_enabled"):
+        if key in channel:
+            return bool(channel.get(key))
+    status = str(channel.get("status") or "").strip().lower()
+    if status in ("inactive", "disabled"):
+        return False
+    return True
+
+
+def _sorted_background_channels(channels):
+    def _safe_int(value):
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    def _sort_key(channel):
+        channel_number = _safe_int(channel.get("channel_number"))
+        if channel_number is None:
+            channel_number = float("inf")
+        channel_id = _safe_int(channel.get("id"))
+        return (channel_number, channel_id if channel_id is not None else 0)
+
+    return sorted(channels, key=_sort_key)
+
+
+def _next_background_start_index(channels, last_channel_id):
     if not channels:
-        return None
-    channel_ids = [channel.get("id") for channel in channels if channel.get("id") is not None]
-    channel_states = state.list_channel_states(channel_ids)
-    next_state = selector.select_next(channel_states)
-    if not next_state:
-        return None
-    return next((ch for ch in channels if ch.get("id") == next_state.channel_id), None)
+        return 0
+    if last_channel_id is None:
+        return 0
+    for index, channel in enumerate(channels):
+        if str(channel.get("id")) == str(last_channel_id):
+            # Resume from the channel after the last fully processed one.
+            return (index + 1) % len(channels)
+    return 0
 
 
-def _run_background_channel(api, config, state, channel, run_id):
-    channel_id = channel.get("id")
+def _sleep_while_enabled(duration_seconds):
+    end_time = time.time() + duration_seconds
+    while _background_runner_enabled_event.is_set() and time.time() < end_time:
+        time.sleep(min(1.0, end_time - time.time()))
+
+
+def _load_scored_stream_lookup(config, channel_id):
+    try:
+        scored_df = pd.read_csv(config.resolve_path("csv/05_iptv_streams_scored_sorted.csv"))
+    except FileNotFoundError:
+        return {}
+
+    scored_df["channel_id"] = pd.to_numeric(scored_df["channel_id"], errors="coerce")
+    scored_df = scored_df[scored_df["channel_id"] == channel_id]
+    if scored_df.empty:
+        return {}
+
+    scored_df["stream_id"] = pd.to_numeric(scored_df["stream_id"], errors="coerce")
+    scored_df.dropna(subset=["stream_id"], inplace=True)
+    lookup = {}
+    for record in scored_df.to_dict("records"):
+        sid = record.get("stream_id")
+        if sid in (None, "N/A"):
+            continue
+        try:
+            sid_key = int(sid)
+        except Exception:
+            sid_key = sid
+        lookup[sid_key] = record
+    return lookup
+
+
+def _score_delta_from_orders(score_lookup, old_order, new_order):
+    if not old_order or not new_order:
+        return None
+    old_top = old_order[0]
+    new_top = new_order[0]
+    if old_top is None or new_top is None:
+        return None
+    old_record = score_lookup.get(old_top)
+    new_record = score_lookup.get(new_top)
+    old_score = _ordering_score_from_record(old_record) if old_record else None
+    new_score = _ordering_score_from_record(new_record) if new_record else None
+    if old_score is None or new_score is None:
+        return None
+    return new_score - old_score
+
+
+def _dominant_score_improvement(score_lookup, old_order, new_order):
+    """Return (is_dominant, reason, delta, new_top_record)."""
+    if not old_order or not new_order:
+        return False, "missing_order", None, None
+    old_top = old_order[0]
+    new_top = new_order[0]
+    if old_top is None or new_top is None:
+        return False, "missing_top", None, None
+    old_record = score_lookup.get(old_top)
+    new_record = score_lookup.get(new_top)
+    old_score = _ordering_score_from_record(old_record) if old_record else None
+    new_score = _ordering_score_from_record(new_record) if new_record else None
+    if old_score is None or new_score is None:
+        return False, "missing_score", None, new_record
+
+    score_values = [
+        _ordering_score_from_record(record)
+        for record in score_lookup.values()
+        if _ordering_score_from_record(record) is not None
+    ]
+    score_range = (
+        max(score_values) - min(score_values)
+        if len(score_values) > 1
+        else 0.0
+    )
+    min_delta = score_range * 0.1
+    delta = new_score - old_score
+    if delta <= 0:
+        return False, "score_not_higher", delta, new_record
+    if min_delta > 0 and delta <= min_delta:
+        return False, "score_delta_too_small", delta, new_record
+    return True, "score_dominant", delta, new_record
+
+
+def _run_background_optimization_channel(
+    api,
+    config,
+    channel,
+    stream_provider_map,
+    recent_reorder_channels,
+    run_id,
+):
+    # Background optimisation is intentionally slow and probe-complete.
+    # Avoid early exits or impatience logic beyond honoring stop requests.
+    channel_id = channel.get("id") if isinstance(channel, dict) else None
+    old_stream_order = []
+    new_stream_order = []
+    action_taken = "skipped"
+    reason = "unknown"
+    score_delta = None
+    completed = False
+
     if channel_id is None:
-        return
+        reason = "missing_channel_id"
+        _append_background_reorder_log(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "channel_id": channel_id,
+                "action_taken": action_taken,
+                "reason": reason,
+                "old_stream_order": old_stream_order,
+                "new_stream_order": new_stream_order,
+                "score_delta": score_delta,
+            }
+        )
+        return {"completed": completed, "action": action_taken, "channel_id": channel_id}
+
     if not _background_runner_enabled_event.is_set():
-        return
-    logging.info("Background runner starting channel %s", channel_id)
+        reason = "stopped"
+        _append_background_reorder_log(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "channel_id": channel_id,
+                "action_taken": action_taken,
+                "reason": reason,
+                "old_stream_order": old_stream_order,
+                "new_stream_order": new_stream_order,
+                "score_delta": score_delta,
+            }
+        )
+        return {"completed": completed, "action": action_taken, "channel_id": channel_id}
+
+    logging.info("Background optimisation starting channel %s", channel_id)
     base_csv_root = Path(config.resolve_path("csv"))
     base_csv_root.mkdir(parents=True, exist_ok=True)
 
-    start_time = time.time()
-    result_status = "ok"
-    slot1_selected = None
-    slot1_changed = False
-    provider_cooldown_applied = False
-    no_playable = False
-    stop_requested = False
-
-    def _should_stop_background_runner():
-        return not _background_runner_enabled_event.is_set()
-
     try:
-        streams = api.fetch_channel_streams(channel_id)
+        streams = api.fetch_channel_streams(channel_id) or []
+        old_stream_order = [
+            stream.get("id")
+            for stream in streams
+            if isinstance(stream, dict) and stream.get("id") is not None
+        ]
+
         if not streams:
-            result_status = "no_streams"
+            reason = "no_streams"
+            action_taken = "skipped"
+            completed = True
         else:
-            if _should_stop_background_runner():
-                result_status = "stopped"
-                stop_requested = True
+            if not _background_runner_enabled_event.is_set():
+                reason = "stopped"
             else:
                 channel_workspace = _build_windowed_workspace(base_csv_root, run_id, channel_id)
                 channel_workspace.mkdir(parents=True, exist_ok=True)
                 config.set_csv_root(channel_workspace)
 
-                stream_provider_map = api.fetch_stream_provider_map()
                 streams_override = _prepare_windowed_streams_override(
                     streams,
                     channel_id,
@@ -599,188 +791,172 @@ def _run_background_channel(api, config, state, channel, run_id):
                     channels_override=[channel],
                     streams_override=streams_override,
                 )
-            if _should_stop_background_runner():
-                result_status = "stopped"
-                stop_requested = True
-            else:
-                analyze_streams(config, api=api, apply_reorder=False)
 
-            if _should_stop_background_runner():
-                result_status = "stopped"
-                stop_requested = True
-            else:
-                score_streams(api, config, update_stats=False)
-
-            if _should_stop_background_runner():
-                result_status = "stopped"
-                stop_requested = True
-            else:
-                scored_df = pd.read_csv(config.resolve_path("csv/05_iptv_streams_scored_sorted.csv"))
-                scored_df["channel_id"] = pd.to_numeric(scored_df["channel_id"], errors="coerce")
-                scored_df = scored_df[scored_df["channel_id"] == channel_id]
-                if scored_df.empty:
-                    result_status = "no_scored_streams"
+                if not _background_runner_enabled_event.is_set():
+                    reason = "stopped"
                 else:
-                    scored_records = scored_df.to_dict("records")
-                    scored_lookup = {}
-                    for record in scored_records:
-                        sid = record.get("stream_id")
-                        if sid in (None, "N/A"):
-                            continue
-                        try:
-                            sid_key = int(sid)
-                        except Exception:
-                            sid_key = sid
-                        scored_lookup[sid_key] = record
+                    analyze_streams(config, api=api, apply_reorder=False)
 
-                    records_for_ordering = _build_records_for_ordering(streams, scored_lookup)
-                    ordering_details = _order_channel_streams(records_for_ordering, config)
-                    ordered_ids = ordering_details.get("ordered_ids", [])
-                    if not ordered_ids:
-                        result_status = "no_ordered_streams"
+                    if not _background_runner_enabled_event.is_set():
+                        reason = "stopped"
                     else:
-                        current_ids = {stream.get("id") for stream in streams}
-                        ordered_ids = [sid for sid in ordered_ids if sid in current_ids]
-                        if not ordered_ids:
-                            result_status = "no_valid_ordered_streams"
+                        score_streams(api, config, update_stats=False)
+                        score_lookup = _load_scored_stream_lookup(config, channel_id)
+                        if not score_lookup:
+                            reason = "no_scored_streams"
+                            action_taken = "skipped"
+                            completed = True
                         else:
-                            for record in records_for_ordering:
-                                if _should_stop_background_runner():
-                                    result_status = "stopped"
-                                    stop_requested = True
-                                    break
-                                reason = _status_failure_reason(record)
-                                if reason:
-                                    stream_id = record.get("stream_id")
-                                    stream_url = record.get("stream_url")
-                                    stream_key = build_stream_key(stream_id, stream_url)
-                                    provider_key = build_provider_key(record)
-                                    state.record_stream_failure(
-                                        stream_key,
-                                        reason,
-                                        DEFAULT_STREAM_COOLDOWN_SECONDS,
+                            records_for_ordering = _build_records_for_ordering(
+                                streams,
+                                score_lookup,
+                            )
+                            # Single ordering computation per channel per pass to avoid preview/apply divergence.
+                            ordering_details = _order_channel_streams(
+                                records_for_ordering,
+                                config,
+                            )
+                            new_stream_order = ordering_details.get("ordered_ids", [])
+                            if not new_stream_order:
+                                reason = "no_ordered_streams"
+                                action_taken = "skipped"
+                                completed = True
+                            # Safety: avoid rapid reorders by honoring recent reorder guards.
+                            elif str(channel_id) in recent_reorder_channels:
+                                reason = "recent_reorder_guard"
+                                action_taken = "skipped"
+                                completed = True
+                            else:
+                                is_dominant, dominance_reason, delta, new_top_record = (
+                                    _dominant_score_improvement(
+                                        score_lookup,
+                                        old_stream_order,
+                                        new_stream_order,
                                     )
-                                    if state.record_provider_failure(
-                                        provider_key,
-                                        reason,
-                                        DEFAULT_PROVIDER_COOLDOWN_SECONDS,
-                                        DEFAULT_PROVIDER_FAIL_THRESHOLD,
-                                        DEFAULT_PROVIDER_FAIL_WINDOW_SECONDS,
-                                    ):
-                                        provider_cooldown_applied = True
-
-                            slot1_candidates_checked = 0
-                            for candidate_id in ordered_ids:
-                                if stop_requested or _should_stop_background_runner():
-                                    result_status = "stopped"
-                                    stop_requested = True
-                                    break
-                                if slot1_candidates_checked >= DEFAULT_SLOT1_CHECK_LIMIT:
-                                    break
-                                record = scored_lookup.get(candidate_id) or {}
-                                stream_url = record.get("stream_url")
-                                if not stream_url:
-                                    stream_obj = next((s for s in streams if s.get("id") == candidate_id), {})
-                                    stream_url = stream_obj.get("url")
-                                stream_key = build_stream_key(candidate_id, stream_url)
-                                provider_key = build_provider_key({**record, "stream_url": stream_url})
-                                if state.is_stream_in_cooldown(stream_key):
-                                    continue
-                                if state.is_provider_in_cooldown(provider_key):
-                                    continue
-                                slot1_candidates_checked += 1
-                                ok, reason = playable_now_check(stream_url, DEFAULT_FAST_CHECK_TIMEOUT_SECONDS)
-                                if ok:
-                                    slot1_selected = candidate_id
-                                    break
-                                state.record_stream_failure(
-                                    stream_key,
-                                    f"playable_now:{reason}",
-                                    DEFAULT_STREAM_COOLDOWN_SECONDS,
                                 )
-                                if state.record_provider_failure(
-                                    provider_key,
-                                    f"playable_now:{reason}",
-                                    DEFAULT_PROVIDER_COOLDOWN_SECONDS,
-                                    DEFAULT_PROVIDER_FAIL_THRESHOLD,
-                                    DEFAULT_PROVIDER_FAIL_WINDOW_SECONDS,
-                                ):
-                                    provider_cooldown_applied = True
+                                score_delta = delta
+                                # Convergent stability: only reorder on clear score-dominant improvement.
+                                if old_stream_order == new_stream_order or not is_dominant:
+                                    reason = "order_already_optimal"
+                                    action_taken = "unchanged"
+                                    completed = True
+                                else:
+                                    historical_penalty = 0.0
+                                    if isinstance(new_top_record, dict):
+                                        historical_penalty = new_top_record.get("historical_penalty")
+                                    try:
+                                        historical_penalty = float(historical_penalty)
+                                    except (TypeError, ValueError):
+                                        historical_penalty = 0.0
+                                    if historical_penalty < 0:
+                                        reason = "historical_penalty_guard"
+                                        action_taken = "unchanged"
+                                        completed = True
+                                    else:
+                                        api.update_channel_streams(
+                                            channel_id,
+                                            new_stream_order,
+                                        )
+                                        _append_reorder_event(
+                                            Path("logs"),
+                                            channel_id,
+                                            old_stream_order[0] if old_stream_order else None,
+                                            new_stream_order[0] if new_stream_order else None,
+                                            "background_optimization",
+                                        )
+                                        reason = "score_order_improved"
+                                        action_taken = "reordered"
+                                        completed = True
 
-                            if not stop_requested:
-                                if slot1_selected is None:
-                                    no_playable = True
-                                    slot1_selected = ordered_ids[0]
-                                    result_status = "no_playable_candidates"
-
-                                final_order = [slot1_selected] + [sid for sid in ordered_ids if sid != slot1_selected]
-                                slot1_changed = bool(ordered_ids) and ordered_ids[0] != slot1_selected
-                                api.update_channel_streams(channel_id, final_order)
+                        if score_delta is None:
+                            score_delta = _score_delta_from_orders(
+                                score_lookup,
+                                old_stream_order,
+                                new_stream_order,
+                            )
     except Exception as exc:
-        logging.exception("Background channel %s failed: %s", channel_id, exc)
-        result_status = "error"
+        logging.exception("Background optimisation channel %s failed: %s", channel_id, exc)
+        reason = f"error:{exc}"
+        action_taken = "skipped"
+        completed = True
 
-    duration_seconds = int(time.time() - start_time)
-    next_eligible_at = int(time.time()) + 60
-    state.update_channel_state(
-        channel_id,
-        result_status,
-        duration_seconds,
-        next_eligible_at,
-        str(slot1_selected) if slot1_selected is not None else None,
+    _append_background_reorder_log(
+        {
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "channel_id": channel_id,
+            "action_taken": action_taken,
+            "reason": reason,
+            "old_stream_order": old_stream_order,
+            "new_stream_order": new_stream_order,
+            "score_delta": score_delta,
+        }
     )
-    logging.info(
-        "Background runner finished channel %s result=%s duration=%ss slot1=%s",
-        channel_id,
-        result_status,
-        duration_seconds,
-        slot1_selected,
-    )
-    logging.info(
-        "Background channel %s result=%s duration=%ss slot1_changed=%s provider_cooldown=%s no_playable=%s",
-        channel_id,
-        result_status,
-        duration_seconds,
-        slot1_changed,
-        provider_cooldown_applied,
-        no_playable,
-    )
+    return {"completed": completed, "action": action_taken, "channel_id": channel_id}
 
 
 def _background_runner_loop():
-    logging.info("Background runner loop entered")
+    logging.info("Background optimisation loop entered")
+    run_id = None
     while True:
         try:
-            state_db_path = Path("data") / "windowed_runner.sqlite"
-            state_db_path.parent.mkdir(parents=True, exist_ok=True)
-            state = WindowedRunnerState(str(state_db_path))
-            selector = ChannelSelector(BACKGROUND_RUNNER_PRIORITY.split(","))
-            run_id = None
+            _background_runner_enabled_event.wait()
+            if not _get_background_runner_enabled():
+                continue
+            if run_id is None:
+                run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            api = DispatcharrAPI()
+            if not api.token:
+                api.login()
+            config = Config("config.yaml")
+            stream_provider_map = api.fetch_stream_provider_map()
 
-            while True:
-                _background_runner_enabled_event.wait()
-                if not _get_background_runner_enabled():
+            while _background_runner_enabled_event.is_set():
+                channels = api.fetch_channels() or []
+                active_channels = [
+                    ch for ch in channels if _is_active_channel(ch)
+                ]
+                if not active_channels:
+                    logging.info("Background optimisation idle, no active channels")
+                    _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
                     continue
-                if run_id is None:
-                    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-                api = DispatcharrAPI()
-                if not api.token:
-                    api.login()
-                config = Config("config.yaml")
-                channel = _select_next_background_channel(api, state, selector)
-                if channel is None:
-                    logging.info("Background runner idle, no eligible channels")
-                    time.sleep(BACKGROUND_RUNNER_IDLE_SLEEP_SECONDS)
-                else:
-                    _run_background_channel(api, config, state, channel, run_id)
-                    if _background_runner_enabled_event.is_set():
-                        time.sleep(BACKGROUND_RUNNER_SLEEP_SECONDS)
 
-                if not _background_runner_enabled_event.is_set():
-                    run_id = None
+                ordered_channels = _sorted_background_channels(active_channels)
+                state = _load_background_reorder_state()
+                last_channel_id = state.get("last_channel_id")
+                # Resume from the next channel after the last fully processed ID.
+                start_index = _next_background_start_index(ordered_channels, last_channel_id)
+                ordered_cycle = ordered_channels[start_index:] + ordered_channels[:start_index]
+                recent_reorder_channels = _recent_reordered_channels(
+                    Path("logs"),
+                    RELIABILITY_RECENT_HOURS,
+                )
+
+                for channel in ordered_cycle:
+                    if not _background_runner_enabled_event.is_set():
+                        break
+                    result = _run_background_optimization_channel(
+                        api,
+                        config,
+                        channel,
+                        stream_provider_map,
+                        recent_reorder_channels,
+                        run_id,
+                    )
+                    if result.get("completed") and result.get("channel_id") is not None:
+                        _save_background_reorder_state(result["channel_id"])
+                    if result.get("action") == "reordered" and result.get("channel_id") is not None:
+                        recent_reorder_channels.add(str(result["channel_id"]))
+                    if _background_runner_enabled_event.is_set():
+                        _sleep_while_enabled(BACKGROUND_OPTIMIZATION_CHANNEL_SLEEP_SECONDS)
+
+                if _background_runner_enabled_event.is_set():
+                    _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
+
+            if not _background_runner_enabled_event.is_set():
+                run_id = None
         except Exception:
-            logging.exception("Background runner loop error")
-            time.sleep(BACKGROUND_RUNNER_IDLE_SLEEP_SECONDS)
+            logging.exception("Background optimisation loop error")
+            _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
 
 
 
@@ -2928,29 +3104,20 @@ def api_background_runner_toggle():
 @app.route('/api/background-runner/progress', methods=['GET'])
 @login_required
 def api_background_runner_progress():
-    runner_state = WindowedRunnerState("data/windowed_runner.sqlite")
-    with runner_state._connect() as conn:
-        completed_channels = conn.execute(
-            "SELECT COUNT(*) FROM channel_state WHERE last_checked_at IS NOT NULL"
-        ).fetchone()[0]
-        total_channels = conn.execute(
-            "SELECT COUNT(*) FROM channel_state"
-        ).fetchone()[0]
-        last_row = conn.execute(
-            """
-            SELECT channel_id, last_status, last_duration_seconds
-            FROM channel_state
-            WHERE last_checked_at IS NOT NULL
-            ORDER BY last_checked_at DESC
-            LIMIT 1
-            """
-        ).fetchone()
-    if last_row:
-        last_channel_id, last_status, last_duration_seconds = last_row
-    else:
-        last_channel_id = None
-        last_status = None
-        last_duration_seconds = None
+    state = _load_background_reorder_state()
+    last_channel_id = state.get("last_channel_id")
+    last_status = None
+    last_duration_seconds = None
+    completed_channels = None
+    total_channels = None
+    try:
+        api = DispatcharrAPI()
+        if not api.token:
+            api.login()
+        channels = api.fetch_channels() or []
+        total_channels = len([ch for ch in channels if _is_active_channel(ch)])
+    except Exception:
+        total_channels = None
     return jsonify(
         {
             "success": True,
