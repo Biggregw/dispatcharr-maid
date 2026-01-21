@@ -3025,6 +3025,7 @@ def order_streams_for_channel(
     similar_score_delta=5,
     reliability_sort=False,
     return_details=False,
+    ordering_config=None,
 ):
     """Order streams using a continuous, deterministic score.
 
@@ -3034,6 +3035,9 @@ def order_streams_for_channel(
 
     Deprecated ordering toggles (resilience_mode, fallback_depth, similar_score_delta,
     reliability_sort) are accepted for compatibility but ignored.
+
+    Advanced background optimization is controlled through ordering_config and only
+    activates when explicitly enabled.
     """
 
     if not records:
@@ -3044,6 +3048,67 @@ def order_streams_for_channel(
             'slot1_reason': None,
             'slot1_overrode': False,
         }
+
+    def _normalize_ordering_config(config):
+        config = config or {}
+        def _bool(key, default=False):
+            value = config.get(key, default)
+            return bool(value) if value is not None else default
+
+        def _float(key, default):
+            try:
+                return float(config.get(key, default))
+            except (TypeError, ValueError):
+                return float(default)
+
+        def _int(key, default):
+            try:
+                return int(config.get(key, default))
+            except (TypeError, ValueError):
+                return int(default)
+
+        def _fraction(key, default):
+            value = _float(key, default)
+            if value > 1:
+                return value / 100.0
+            return max(min(value, 1.0), 0.0)
+
+        return {
+            "background_optimize": _bool("background_optimize", False),
+            "sequence_optimize": _bool("sequence_optimize", False),
+            "sequence_candidate_pool": _int("sequence_candidate_pool", 0),
+            "sequence_diversity_weight": _float("sequence_diversity_weight", 0.08),
+            "diversity_top_n": _int("diversity_top_n", 0),
+            "diversity_weight": _float("diversity_weight", 0.15),
+            "stability_weight": _float("stability_weight", 0.0),
+            "recent_failure_minutes": _int("recent_failure_minutes", 0),
+            "recent_failure_penalty": _float("recent_failure_penalty", 0.0),
+            "playback_weight": _float("playback_weight", 0.0),
+            "adaptive_tiers": _bool("adaptive_tiers", False),
+            "adaptive_hd_percentile": _fraction("adaptive_hd_percentile", 0.8),
+            "adaptive_frames_percentile": _fraction("adaptive_frames_percentile", 0.7),
+            "pareto_sort": _bool("pareto_sort", False),
+            "cluster_similar": _bool("cluster_similar", False),
+            "optimize_slot1": _bool("optimize_slot1", False),
+            "slot1_candidate_limit": _int("slot1_candidate_limit", 5),
+        }
+
+    ordering_cfg = _normalize_ordering_config(ordering_config)
+    if ordering_cfg["background_optimize"]:
+        ordering_cfg["sequence_optimize"] = True
+        ordering_cfg["diversity_top_n"] = max(ordering_cfg["diversity_top_n"], 5)
+        ordering_cfg["adaptive_tiers"] = True
+        ordering_cfg["pareto_sort"] = True
+        ordering_cfg["cluster_similar"] = True
+        ordering_cfg["optimize_slot1"] = True
+        if ordering_cfg["playback_weight"] <= 0:
+            ordering_cfg["playback_weight"] = 0.15
+        if ordering_cfg["recent_failure_minutes"] <= 0:
+            ordering_cfg["recent_failure_minutes"] = 60
+        if ordering_cfg["recent_failure_penalty"] <= 0:
+            ordering_cfg["recent_failure_penalty"] = 0.12
+        if ordering_cfg["stability_weight"] <= 0:
+            ordering_cfg["stability_weight"] = 0.05
 
     def _is_buffering(record):
         # Buffering detection is conservative and based on timeout signals only;
@@ -3120,6 +3185,275 @@ def order_streams_for_channel(
             ordering = record.get('score')
         return _safe_float(ordering)
 
+    def _resolution_height(record):
+        parsed = _parse_resolution(record.get('resolution'))
+        if parsed:
+            _, height = parsed
+            return height
+        return None
+
+    def _quality_score(record):
+        value = _score_value(record)
+        return value if value is not None else 0.0
+
+    def _reliability_score(record):
+        explicit = _safe_float(record.get('reliability_score'))
+        if explicit is not None:
+            return max(min(explicit, 1.0), 0.0)
+        success_rate = _safe_float(record.get('historical_success_rate'))
+        if success_rate is not None:
+            return max(min(success_rate, 1.0), 0.0)
+        validation = str(record.get('validation_result') or record.get('status') or '').strip().lower()
+        if validation == 'ok':
+            return 0.85
+        if validation == 'fail':
+            return 0.1
+        if validation == 'timeout':
+            return 0.25
+        return 0.5
+
+    def _stability_multiplier(record):
+        weight = ordering_cfg["stability_weight"]
+        if weight <= 0:
+            return 1.0
+        rank = _safe_float(record.get('previous_rank'))
+        if rank is None:
+            rank = _safe_float(record.get('last_rank'))
+        if rank is None:
+            rank = _safe_float(record.get('prior_order'))
+        if rank is None:
+            return 1.0
+        return 1.0 + (weight * (1.0 / (1.0 + max(rank, 0))))
+
+    def _playback_multiplier(record):
+        weight = ordering_cfg["playback_weight"]
+        if weight <= 0:
+            return 1.0
+        playback_score = _safe_float(record.get('playback_score'))
+        if playback_score is None:
+            success_rate = _safe_float(record.get('playback_success_rate'))
+            buffer_rate = _safe_float(record.get('buffer_rate'))
+            if success_rate is None and buffer_rate is None:
+                return 1.0
+            success_rate = success_rate if success_rate is not None else 1.0
+            buffer_rate = buffer_rate if buffer_rate is not None else 0.0
+            playback_score = max(min(success_rate - buffer_rate, 1.0), 0.0)
+        playback_score = max(min(playback_score, 1.0), 0.0)
+        return 1.0 + (playback_score - 0.5) * weight
+
+    def _recent_failure_seconds(record, now):
+        recent_seconds = _safe_float(record.get('recent_failure_seconds'))
+        if recent_seconds is not None:
+            return max(recent_seconds, 0.0)
+        ts = _parse_history_timestamp(record.get('last_failure_ts'))
+        if ts:
+            return max((now - ts).total_seconds(), 0.0)
+        return None
+
+    def _recent_failure_multiplier(record, now):
+        window_minutes = ordering_cfg["recent_failure_minutes"]
+        if window_minutes <= 0:
+            return 1.0
+        penalty = ordering_cfg["recent_failure_penalty"]
+        if penalty <= 0:
+            return 1.0
+        recent_seconds = _recent_failure_seconds(record, now)
+        if recent_seconds is None:
+            return 1.0
+        window_seconds = window_minutes * 60.0
+        if recent_seconds <= window_seconds:
+            decay = 1.0 - (recent_seconds / window_seconds)
+            return max(1.0 - (penalty * decay), 0.5)
+        return 1.0
+
+    def _provider_key(record):
+        for key in ('m3u_account', 'service_provider', 'm3u_account_name', 'provider_id'):
+            value = record.get(key)
+            if value not in (None, '', 'N/A'):
+                return str(value)
+        url = record.get('stream_url') or record.get('url')
+        if url:
+            try:
+                parsed = urlparse(str(url))
+                if parsed.hostname:
+                    return parsed.hostname.lower()
+            except Exception:
+                return None
+        return None
+
+    def _codec_family(record):
+        codec = str(record.get('video_codec') or '').lower()
+        if 'hevc' in codec or '265' in codec:
+            return 'hevc'
+        if 'avc' in codec or 'h264' in codec:
+            return 'h264'
+        if codec:
+            return codec.split('.')[0]
+        return None
+
+    def _cluster_key(record):
+        height = _resolution_height(record) or 0
+        if height >= 2160:
+            height_bucket = '2160p'
+        elif height >= 1080:
+            height_bucket = '1080p'
+        elif height >= 720:
+            height_bucket = '720p'
+        elif height >= 576:
+            height_bucket = '576p'
+        else:
+            height_bucket = 'sd'
+        bitrate = _safe_float(record.get('avg_bitrate_kbps')) or 0.0
+        if bitrate >= 15000:
+            bitrate_bucket = '15m'
+        elif bitrate >= 8000:
+            bitrate_bucket = '8m'
+        elif bitrate >= 4000:
+            bitrate_bucket = '4m'
+        else:
+            bitrate_bucket = 'low'
+        return (height_bucket, _codec_family(record), bitrate_bucket, _provider_key(record))
+
+    def _pairwise_penalty(prev_record, candidate_record, weight):
+        if not prev_record or weight <= 0:
+            return 0.0
+        penalty = 0.0
+        if _provider_key(prev_record) and _provider_key(prev_record) == _provider_key(candidate_record):
+            penalty += weight
+        if _codec_family(prev_record) and _codec_family(prev_record) == _codec_family(candidate_record):
+            penalty += weight * 0.4
+        return penalty
+
+    def _interleave_clusters(records_in_tier):
+        if not records_in_tier:
+            return records_in_tier
+        clusters = defaultdict(list)
+        for record in records_in_tier:
+            clusters[_cluster_key(record)].append(record)
+        ordered_cluster_keys = sorted(
+            clusters.keys(),
+            key=lambda key: (
+                -max(_quality_score(rec) for rec in clusters[key]),
+                _stable_tiebreaker(key),
+            ),
+        )
+        ordered = []
+        while ordered_cluster_keys:
+            next_keys = []
+            for key in ordered_cluster_keys:
+                if clusters[key]:
+                    ordered.append(clusters[key].pop(0))
+                if clusters[key]:
+                    next_keys.append(key)
+            ordered_cluster_keys = next_keys
+        return ordered
+
+    def _pareto_order(records_in_tier):
+        if not records_in_tier:
+            return records_in_tier
+        remaining = records_in_tier[:]
+        ordered = []
+        while remaining:
+            frontier = []
+            for candidate in remaining:
+                dominated = False
+                candidate_quality = candidate.get('_quality_score', _quality_score(candidate))
+                candidate_reliability = candidate.get('_reliability_score', _reliability_score(candidate))
+                for other in remaining:
+                    if other is candidate:
+                        continue
+                    other_quality = other.get('_quality_score', _quality_score(other))
+                    other_reliability = other.get('_reliability_score', _reliability_score(other))
+                    if (
+                        other_quality >= candidate_quality
+                        and other_reliability >= candidate_reliability
+                        and (other_quality > candidate_quality or other_reliability > candidate_reliability)
+                    ):
+                        dominated = True
+                        break
+                if not dominated:
+                    frontier.append(candidate)
+            frontier.sort(key=_score_key)
+            ordered.extend(frontier)
+            remaining = [rec for rec in remaining if rec not in frontier]
+        return ordered
+
+    def _optimize_sequence(records_in_order, fixed_prefix=None):
+        if not records_in_order:
+            return records_in_order
+        if not ordering_cfg["sequence_optimize"]:
+            return records_in_order
+        fixed_prefix = fixed_prefix or []
+        remaining = [rec for rec in records_in_order if rec not in fixed_prefix]
+        optimized = list(fixed_prefix)
+        candidate_pool = ordering_cfg["sequence_candidate_pool"]
+        diversity_weight = ordering_cfg["sequence_diversity_weight"]
+        while remaining:
+            prev = optimized[-1] if optimized else None
+            pool = remaining if candidate_pool <= 0 else remaining[:candidate_pool]
+            best = None
+            best_score = None
+            for candidate in pool:
+                score = candidate.get('_effective_score', _quality_score(candidate))
+                score -= _pairwise_penalty(prev, candidate, diversity_weight)
+                score += _stable_tiebreaker(candidate.get('stream_id'))
+                if best is None or score > best_score:
+                    best = candidate
+                    best_score = score
+            optimized.append(best)
+            remaining.remove(best)
+        return optimized
+
+    def _diversify_top(records_in_order):
+        top_n = ordering_cfg["diversity_top_n"]
+        if top_n <= 1 or len(records_in_order) <= 1:
+            return records_in_order
+        diversified = []
+        remaining = list(records_in_order)
+        while remaining and len(diversified) < top_n:
+            prev = diversified[-1] if diversified else None
+            best = None
+            best_score = None
+            for candidate in remaining:
+                score = candidate.get('_effective_score', _quality_score(candidate))
+                score -= _pairwise_penalty(prev, candidate, ordering_cfg["diversity_weight"])
+                score += _stable_tiebreaker(candidate.get('stream_id'))
+                if best is None or score > best_score:
+                    best = candidate
+                    best_score = score
+            diversified.append(best)
+            remaining.remove(best)
+        return diversified + remaining
+
+    def _sequence_objective(records_in_order):
+        total = 0.0
+        prev = None
+        for record in records_in_order:
+            total += record.get('_effective_score', _quality_score(record))
+            total -= _pairwise_penalty(prev, record, ordering_cfg["sequence_diversity_weight"])
+            prev = record
+        return total
+
+    now = datetime.now(timezone.utc)
+
+    heights = [height for height in (_resolution_height(r) for r in records) if height is not None]
+    frames_values = [
+        value for value in (_decoded_frames_value(r) for r in records)
+        if value not in (None, 0)
+    ]
+    adaptive_height = None
+    adaptive_frames = None
+    if ordering_cfg["adaptive_tiers"] and heights:
+        heights_sorted = sorted(heights)
+        hd_index = int(round((len(heights_sorted) - 1) * ordering_cfg["adaptive_hd_percentile"]))
+        adaptive_height = heights_sorted[max(min(hd_index, len(heights_sorted) - 1), 0)]
+        adaptive_height = max(adaptive_height, 480)
+    if ordering_cfg["adaptive_tiers"] and frames_values:
+        frames_sorted = sorted(frames_values)
+        frames_index = int(round((len(frames_sorted) - 1) * ordering_cfg["adaptive_frames_percentile"]))
+        adaptive_frames = frames_sorted[max(min(frames_index, len(frames_sorted) - 1), 0)]
+        adaptive_frames = max(adaptive_frames, 10)
+
     for record in records:
         ordering_score = _safe_float(record.get('ordering_score'))
         score = _safe_float(record.get('score'))
@@ -3132,6 +3466,18 @@ def order_streams_for_channel(
             final_score = score
         # final_score is recomputed on each analysis run; reuse the current run's value for ordering.
         record['final_score'] = final_score
+        record['_quality_score'] = _quality_score(record)
+        record['_reliability_score'] = _reliability_score(record)
+        record['_recent_failure'] = False
+        recent_multiplier = _recent_failure_multiplier(record, now)
+        if recent_multiplier < 1.0:
+            record['_recent_failure'] = True
+        record['_effective_score'] = (
+            record['_quality_score']
+            * _stability_multiplier(record)
+            * _playback_multiplier(record)
+            * recent_multiplier
+        )
 
     def _status_value(record):
         return str(record.get('status') or '').strip().lower()
@@ -3183,14 +3529,23 @@ def order_streams_for_channel(
             return 5
         if _status_value(record) == 'timeout' or _timeout_count(record) > 0 or _is_buffering(record):
             return 4
+        if ordering_cfg["recent_failure_minutes"] > 0 and record.get('_recent_failure'):
+            return 4
         if _basic_validation_pass(record):
-            if decoded_frames is not None and decoded_frames > 30 and _is_hd_or_better(record):
-                return 1
-            if decoded_frames is not None and decoded_frames > 30 and not _is_hd_or_better(record):
+            hd_threshold = adaptive_height or 720
+            frames_threshold = adaptive_frames or 30
+            if decoded_frames is not None and decoded_frames > frames_threshold:
+                height = _resolution_height(record)
+                if height is not None:
+                    if height >= hd_threshold:
+                        return 1
+                elif _is_hd_or_better(record):
+                    return 1
+            if decoded_frames is not None and decoded_frames > frames_threshold and not _is_hd_or_better(record):
                 return 2
             weak_confidence = (
                 decoded_frames is None
-                or 0 < decoded_frames <= 30
+                or 0 < decoded_frames <= frames_threshold
                 or _missing_core_probe_metadata(record)
                 or _status_value(record) == ''
             )
@@ -3199,7 +3554,9 @@ def order_streams_for_channel(
         return 3
 
     def _score_key(record):
-        score_value = _score_value(record)
+        score_value = record.get('_effective_score')
+        if score_value is None:
+            score_value = _score_value(record)
         if score_value is None:
             score_value = 0.0
         frames = _decoded_frames_value(record)
@@ -3232,7 +3589,12 @@ def order_streams_for_channel(
 
     ordered = []
     for tier in range(1, 6):
-        ordered.extend(sorted(tiered_records[tier], key=_score_key))
+        tier_records = sorted(tiered_records[tier], key=_score_key)
+        if ordering_cfg["pareto_sort"]:
+            tier_records = _pareto_order(tier_records)
+        if ordering_cfg["cluster_similar"]:
+            tier_records = _interleave_clusters(tier_records)
+        ordered.extend(tier_records)
 
     tier1_sorted = sorted(tiered_records[1], key=_score_key)
     tier2_sorted = sorted(tiered_records[2], key=_score_key)
@@ -3254,7 +3616,31 @@ def order_streams_for_channel(
         slot1_rule = 'tier3_weak_signal'
         slot1_reason = 'Selected from Tier 3 (Weak Signal).'
 
+    if ordering_cfg["sequence_optimize"]:
+        ordered = _optimize_sequence(ordered)
+    ordered = _diversify_top(ordered)
+
     ordered_ids = [r.get('stream_id') for r in ordered]
+    if ordering_cfg["optimize_slot1"]:
+        candidates = (tier1_sorted + tier2_sorted + tier3_sorted)[:ordering_cfg["slot1_candidate_limit"]]
+        best_candidate = None
+        best_sequence = None
+        best_objective = None
+        for candidate in candidates:
+            candidate_sequence = [candidate] + [rec for rec in ordered if rec is not candidate]
+            candidate_sequence = _optimize_sequence(candidate_sequence, fixed_prefix=[candidate])
+            objective = _sequence_objective(candidate_sequence)
+            if best_candidate is None or objective > best_objective:
+                best_candidate = candidate
+                best_sequence = candidate_sequence
+                best_objective = objective
+        if best_sequence:
+            ordered = best_sequence
+            ordered_ids = [r.get('stream_id') for r in ordered]
+            slot1 = best_candidate.get('stream_id')
+            slot1_rule = 'background_slot1_optimize'
+            slot1_reason = 'Selected by background optimization objective.'
+
     final_order = ordered_ids if slot1 is None else [slot1] + [sid for sid in ordered_ids if sid != slot1]
     if return_details:
         return {
@@ -3455,6 +3841,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
             similar_score_delta=similar_score_delta,
             reliability_sort=_ignored_reliability_sort,
             return_details=collect_summary,
+            ordering_config=ordering_cfg,
         )
         if collect_summary:
             ordered_stream_ids = ordering_details.get('ordered_ids', [])

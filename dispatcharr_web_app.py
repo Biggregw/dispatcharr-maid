@@ -612,6 +612,7 @@ def _order_channel_streams(records_for_ordering, config):
         similar_score_delta=similar_score_delta,
         reliability_sort=ordering_cfg.get("reliability_sort"),
         return_details=True,
+        ordering_config=ordering_cfg,
     )
     return ordering_details
 
