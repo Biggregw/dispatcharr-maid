@@ -1275,6 +1275,7 @@
         let selectedChannels = [];
         let allGroups = [];
         let allChannels = {};
+        let orderedGroups = [];
         const groupExpansionState = {};
         const groupChannelSelections = {};
         const groupChannelLoading = new Set();
@@ -1370,6 +1371,7 @@
                 
                 if (data.success) {
                     allGroups = data.groups;
+                    orderedGroups = getOrderedGroups(allGroups);
                     renderGroups();
                     document.getElementById('group-loading').classList.add('hidden');
                     document.getElementById('group-container').classList.remove('hidden');
@@ -1381,26 +1383,35 @@
             }
         }
         
+        function extractChannelNumber(channel) {
+            if (channel === null || channel === undefined) {
+                return null;
+            }
+            if (typeof channel === 'number' || typeof channel === 'string') {
+                const value = Number(channel);
+                return Number.isFinite(value) ? value : null;
+            }
+            if (typeof channel === 'object') {
+                const value = Number(
+                    channel.channel_number ?? channel.channel_num ?? channel.number
+                );
+                return Number.isFinite(value) ? value : null;
+            }
+            return null;
+        }
+
         function getGroupLowestChannelNumber(group) {
-            const groupId = Number(group?.id);
-            const channels = Array.isArray(allChannels[groupId]) ? allChannels[groupId] : [];
-            const candidates = channels
-                .map(channel => Number(channel?.channel_number))
-                .filter(value => Number.isFinite(value));
+            const candidates = [];
             if (Array.isArray(group?.channels)) {
                 group.channels.forEach(channel => {
-                    const value = Number(channel?.channel_number);
-                    if (Number.isFinite(value)) {
-                        candidates.push(value);
-                    }
+                    const value = extractChannelNumber(channel);
+                    if (Number.isFinite(value)) candidates.push(value);
                 });
             }
             if (Array.isArray(group?.channel_numbers)) {
                 group.channel_numbers.forEach(number => {
-                    const value = Number(number);
-                    if (Number.isFinite(value)) {
-                        candidates.push(value);
-                    }
+                    const value = extractChannelNumber(number);
+                    if (Number.isFinite(value)) candidates.push(value);
                 });
             }
             if (candidates.length === 0) {
@@ -1438,9 +1449,9 @@
             const grid = document.getElementById('group-grid');
             grid.innerHTML = '';
 
-            const orderedGroups = getOrderedGroups(allGroups);
+            const groupsToRender = Array.isArray(orderedGroups) ? orderedGroups : [];
 
-            orderedGroups.forEach(group => {
+            groupsToRender.forEach(group => {
                 const item = document.createElement('div');
                 const isExpanded = Boolean(groupExpansionState[group.id]);
                 item.className = 'group-item';
