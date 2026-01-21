@@ -845,6 +845,49 @@
             color: #667eea;
             font-weight: 600;
         }
+
+        .background-status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .background-status-item {
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+        }
+
+        .background-status-item .summary-row {
+            margin-bottom: 0;
+        }
+
+        .background-activity-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95em;
+        }
+
+        .background-activity-table th,
+        .background-activity-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .background-activity-table th {
+            background: #f3f4f6;
+            color: #374151;
+            font-weight: 700;
+        }
+
+        .background-activity-empty {
+            text-align: center;
+            color: #6b7280;
+        }
         
         /* Alerts */
         .alert {
@@ -1001,6 +1044,62 @@
                         </select>
                         <span class="helper-text">Choose how deep the analysis should probe. Deep matches today’s defaults.</span>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Background Channel Optimisation -->
+        <div class="card" id="background-optimisation-panel">
+            <h2>Background Channel Optimisation</h2>
+            <div>
+                <h3 style="margin-bottom: 12px; color: #1f2937;">Status</h3>
+                <div class="background-status-grid">
+                    <div class="background-status-item">
+                        <div class="summary-row">
+                            <span class="summary-label">State:</span>
+                            <span class="summary-value" id="background-optimisation-running">—</span>
+                        </div>
+                    </div>
+                    <div class="background-status-item">
+                        <div class="summary-row">
+                            <span class="summary-label">Current pass:</span>
+                            <span class="summary-value" id="background-optimisation-pass">—</span>
+                        </div>
+                    </div>
+                    <div class="background-status-item">
+                        <div class="summary-row">
+                            <span class="summary-label">Last processed channel:</span>
+                            <span class="summary-value" id="background-optimisation-last-channel">—</span>
+                        </div>
+                    </div>
+                    <div class="background-status-item">
+                        <div class="summary-row">
+                            <span class="summary-label">Last update time:</span>
+                            <span class="summary-value" id="background-optimisation-updated-at">—</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <h3 style="margin-bottom: 12px; color: #1f2937;">Recent activity</h3>
+                <div style="overflow-x: auto;">
+                    <table class="background-activity-table">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Channel ID</th>
+                                <th>Action</th>
+                                <th>Reason</th>
+                                <th>Score delta</th>
+                                <th>Pass count</th>
+                            </tr>
+                        </thead>
+                        <tbody id="background-optimisation-activity">
+                            <tr>
+                                <td colspan="6" class="background-activity-empty">No recent activity recorded.</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -1172,6 +1271,7 @@
             loadGroups();
             loadJobHistory();
             loadBackgroundRunnerState();
+            loadBackgroundOptimisationStatus();
             const backgroundRunnerButton = document.getElementById('background-runner-toggle');
             if (backgroundRunnerButton) {
                 backgroundRunnerButton.addEventListener('click', toggleBackgroundRunner);
@@ -1522,6 +1622,72 @@
             } finally {
                 setBackgroundRunnerBusy(false);
                 updateBackgroundRunnerToggle(backgroundRunnerEnabled);
+            }
+        }
+
+        function setBackgroundOptimisationValue(elementId, value) {
+            const element = document.getElementById(elementId);
+            if (!element) return;
+            if (value === null || value === undefined || value === '') {
+                element.textContent = '—';
+                return;
+            }
+            element.textContent = value;
+        }
+
+        function renderBackgroundOptimisationActivity(entries) {
+            const body = document.getElementById('background-optimisation-activity');
+            if (!body) return;
+            body.innerHTML = '';
+
+            if (!Array.isArray(entries) || entries.length === 0) {
+                const row = document.createElement('tr');
+                const cell = document.createElement('td');
+                cell.colSpan = 6;
+                cell.className = 'background-activity-empty';
+                cell.textContent = 'No recent activity recorded.';
+                row.appendChild(cell);
+                body.appendChild(row);
+                return;
+            }
+
+            entries.forEach(entry => {
+                const row = document.createElement('tr');
+                const timestamp = entry?.timestamp ?? '';
+                const channelId = entry?.channel_id ?? '';
+                const actionTaken = entry?.action_taken ?? '';
+                const reason = entry?.reason ?? '';
+                const scoreDelta = entry?.score_delta ?? '';
+                const passCount = entry?.pass_count ?? '';
+
+                [timestamp, channelId, actionTaken, reason, scoreDelta, passCount].forEach(value => {
+                    const cell = document.createElement('td');
+                    if (value === null || value === undefined || value === '') {
+                        cell.textContent = '—';
+                    } else {
+                        cell.textContent = value;
+                    }
+                    row.appendChild(cell);
+                });
+
+                body.appendChild(row);
+            });
+        }
+
+        async function loadBackgroundOptimisationStatus() {
+            try {
+                const response = await fetch('/api/background-optimisation/status', { cache: 'no-store' });
+                const data = await response.json();
+                const state = data?.state || {};
+                const enabled = Boolean(data?.enabled);
+                setBackgroundOptimisationValue('background-optimisation-running', enabled ? 'Running' : 'Stopped');
+                setBackgroundOptimisationValue('background-optimisation-pass', state.pass_count);
+                setBackgroundOptimisationValue('background-optimisation-last-channel', state.last_channel_id);
+                setBackgroundOptimisationValue('background-optimisation-updated-at', state.updated_at);
+                renderBackgroundOptimisationActivity(data?.recent_activity || []);
+            } catch (error) {
+                setBackgroundOptimisationValue('background-optimisation-running', '—');
+                renderBackgroundOptimisationActivity([]);
             }
         }
 
