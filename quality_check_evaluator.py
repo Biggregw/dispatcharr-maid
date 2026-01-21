@@ -15,6 +15,7 @@ from quality_insight_snapshot import refresh_quality_insight_snapshot
 LOGS_DIR = Path("logs")
 QUALITY_CHECKS_PATH = LOGS_DIR / "quality_checks.ndjson"
 SUGGESTIONS_PATH = LOGS_DIR / "quality_check_suggestions.ndjson"
+EVALUATIONS_PATH = LOGS_DIR / "quality_check_evaluations.ndjson"
 
 WINDOW_HOURS = 168
 DISPATCHARR_SOURCE = "dispatcharr"
@@ -99,6 +100,7 @@ def _collect_top_stream_snapshots(cutoff, last_suggestion_time_by_channel_id):
             "channel_id": channel_id,
             "channel_name": record.get("channel_name"),
             "stream_id": record.get("stream_id") or record.get("id"),
+            "provider_id": record.get("provider_id"),
         })
 
     for key in snapshots_by_channel:
@@ -116,6 +118,15 @@ def _write_suggestions(suggestions, force_write=False):
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _write_evaluations(evaluations, force_write=False):
+    if not evaluations and not force_write:
+        return
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    with EVALUATIONS_PATH.open("a", encoding="utf-8") as handle:
+        for record in evaluations:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def evaluate_quality_checks() -> None:
     now = _utc_now()
     cutoff = now - timedelta(hours=WINDOW_HOURS)
@@ -126,6 +137,7 @@ def evaluate_quality_checks() -> None:
     )
 
     suggestions = []
+    evaluations = []
     emitted_channels = set()
 
     def emit(channel_id, channel_name, reason, confidence):
@@ -151,19 +163,56 @@ def evaluate_quality_checks() -> None:
 
         last_stream_id = None
         switch_count = 0
+        provider_counts = {}
+        provider_values = {}
 
         for item in items:
             sid = item.get("stream_id")
             if last_stream_id and sid and sid != last_stream_id:
                 switch_count += 1
             last_stream_id = sid or last_stream_id
+            provider_id = item.get("provider_id")
+            if provider_id is not None:
+                provider_key = str(provider_id)
+                provider_counts[provider_key] = provider_counts.get(provider_key, 0) + 1
+                provider_values.setdefault(provider_key, provider_id)
+
+        dominant_provider = None
+        if provider_counts:
+            # Dominant provider is the most frequent provider in the window (not temporal dominance).
+            dominant_key = sorted(
+                provider_counts.items(),
+                key=lambda entry: (-entry[1], entry[0]),
+            )[0][0]
+            dominant_provider = provider_values.get(dominant_key)
+
+        confidence_level = "stable"
+        decision_reason = "below_action_threshold"
+        action_taken = "none"
 
         if switch_count >= 2:
-            emit(channel_id, channel_name, "repeated_switching", "high")
+            confidence_level = "high"
+            decision_reason = "action_triggered"
+            action_taken = "suggestion"
+            emit(channel_id, channel_name, "repeated_switching", confidence_level)
         elif switch_count == 1:
-            emit(channel_id, channel_name, "unstable_top_stream", "medium")
+            confidence_level = "medium"
+            decision_reason = "action_triggered"
+            action_taken = "suggestion"
+            emit(channel_id, channel_name, "unstable_top_stream", confidence_level)
+
+        evaluations.append({
+            "timestamp": _format_timestamp(now),
+            "channel_id": channel_id,
+            "observation_count": len(items),
+            "dominant_provider": dominant_provider,
+            "confidence_level": confidence_level,
+            "decision_reason": decision_reason,
+            "action_taken": action_taken,
+        })
 
     _write_suggestions(suggestions, force_write=saw_any)
+    _write_evaluations(evaluations, force_write=saw_any)
     try:
         refresh_quality_insight_snapshot()
     except Exception as exc:
