@@ -3256,11 +3256,41 @@ def api_background_optimisation_status():
         state = {}
     if not isinstance(recent_activity, list):
         recent_activity = []
+    channel_name_by_id = {}
+    try:
+        api = DispatcharrAPI()
+        if not api.token:
+            api.login()
+        channels = api.fetch_channels() or []
+        for channel in channels:
+            if not isinstance(channel, dict):
+                continue
+            channel_id = channel.get("id")
+            if channel_id is None:
+                continue
+            channel_name_by_id[channel_id] = channel.get("name")
+    except Exception:
+        channel_name_by_id = {}
+    enriched_activity = []
+    for entry in recent_activity:
+        if not isinstance(entry, dict):
+            enriched_activity.append(entry)
+            continue
+        channel_id = entry.get("channel_id")
+        channel_name = channel_name_by_id.get(channel_id)
+        if channel_name is None and isinstance(channel_id, str):
+            try:
+                channel_name = channel_name_by_id.get(int(channel_id))
+            except (TypeError, ValueError):
+                channel_name = None
+        enriched_entry = dict(entry)
+        enriched_entry["channel_name"] = channel_name
+        enriched_activity.append(enriched_entry)
     return jsonify(
         {
             "enabled": _get_background_runner_enabled(),
             "state": state,
-            "recent_activity": recent_activity,
+            "recent_activity": enriched_activity,
         }
     )
 
