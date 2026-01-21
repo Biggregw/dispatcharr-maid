@@ -816,131 +816,163 @@ def _run_background_optimization_channel(
             reason = "no_streams"
             action_taken = "skipped"
             completed = True
+            _append_background_reorder_log(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    "channel_id": channel_id,
+                    "action_taken": action_taken,
+                    "reason": reason,
+                    "old_stream_order": old_stream_order,
+                    "new_stream_order": new_stream_order,
+                    "score_delta": score_delta,
+                    "pass_count": pass_count,
+                }
+            )
+            return {"completed": completed, "action": action_taken, "channel_id": channel_id}
+
+        if len(old_stream_order) == 1:
+            reason = "single_stream_no_reorder"
+            action_taken = "skipped"
+            completed = True
+            new_stream_order = list(old_stream_order)
+            _append_background_reorder_log(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    "channel_id": channel_id,
+                    "action_taken": action_taken,
+                    "reason": reason,
+                    "old_stream_order": old_stream_order,
+                    "new_stream_order": new_stream_order,
+                    "score_delta": score_delta,
+                    "pass_count": pass_count,
+                }
+            )
+            return {"completed": completed, "action": action_taken, "channel_id": channel_id}
+
+        if not _background_runner_enabled_event.is_set():
+            reason = "stopped"
         else:
+            channel_workspace = _build_windowed_workspace(base_csv_root, run_id, channel_id)
+            channel_workspace.mkdir(parents=True, exist_ok=True)
+            config.set_csv_root(channel_workspace)
+
+            streams_override = _prepare_windowed_streams_override(
+                streams,
+                channel_id,
+                stream_provider_map,
+            )
+            config.set("filters", "specific_channel_ids", [channel_id])
+            config.set("filters", "channel_group_ids", [])
+
+            fetch_streams(
+                api,
+                config,
+                stream_provider_map_override=stream_provider_map,
+                channels_override=[channel],
+                streams_override=streams_override,
+            )
+
             if not _background_runner_enabled_event.is_set():
                 reason = "stopped"
             else:
-                channel_workspace = _build_windowed_workspace(base_csv_root, run_id, channel_id)
-                channel_workspace.mkdir(parents=True, exist_ok=True)
-                config.set_csv_root(channel_workspace)
-
-                streams_override = _prepare_windowed_streams_override(
-                    streams,
-                    channel_id,
-                    stream_provider_map,
-                )
-                config.set("filters", "specific_channel_ids", [channel_id])
-                config.set("filters", "channel_group_ids", [])
-
-                fetch_streams(
-                    api,
-                    config,
-                    stream_provider_map_override=stream_provider_map,
-                    channels_override=[channel],
-                    streams_override=streams_override,
-                )
+                analyze_streams(config, api=api, apply_reorder=False)
 
                 if not _background_runner_enabled_event.is_set():
                     reason = "stopped"
                 else:
-                    analyze_streams(config, api=api, apply_reorder=False)
-
-                    if not _background_runner_enabled_event.is_set():
-                        reason = "stopped"
+                    score_streams(api, config, update_stats=False)
+                    score_lookup = _load_scored_stream_lookup(config, channel_id)
+                    if not score_lookup:
+                        reason = "no_scored_streams"
+                        action_taken = "skipped"
+                        completed = True
                     else:
-                        score_streams(api, config, update_stats=False)
-                        score_lookup = _load_scored_stream_lookup(config, channel_id)
-                        if not score_lookup:
-                            reason = "no_scored_streams"
+                        records_for_ordering = _build_records_for_ordering(
+                            streams,
+                            score_lookup,
+                        )
+                        # Single ordering computation per channel per pass to avoid preview/apply divergence.
+                        ordering_details = _order_channel_streams(
+                            records_for_ordering,
+                            config,
+                        )
+                        new_stream_order = ordering_details.get("ordered_ids", [])
+                        if not new_stream_order:
+                            reason = "no_ordered_streams"
                             action_taken = "skipped"
                             completed = True
                         else:
-                            records_for_ordering = _build_records_for_ordering(
-                                streams,
+                            score_delta = _score_delta_from_orders(
                                 score_lookup,
+                                old_stream_order,
+                                new_stream_order,
                             )
-                            # Single ordering computation per channel per pass to avoid preview/apply divergence.
-                            ordering_details = _order_channel_streams(
-                                records_for_ordering,
-                                config,
-                            )
-                            new_stream_order = ordering_details.get("ordered_ids", [])
-                            if not new_stream_order:
-                                reason = "no_ordered_streams"
-                                action_taken = "skipped"
+                            if old_stream_order == new_stream_order:
+                                reason = "order_already_optimal"
+                                action_taken = "unchanged"
                                 completed = True
-                            else:
-                                score_delta = _score_delta_from_orders(
-                                    score_lookup,
-                                    old_stream_order,
+                            elif pass_count == 0:
+                                api.update_channel_streams(
+                                    channel_id,
                                     new_stream_order,
                                 )
-                                if old_stream_order == new_stream_order:
-                                    reason = "order_already_optimal"
+                                _append_reorder_event(
+                                    Path("logs"),
+                                    channel_id,
+                                    old_stream_order[0] if old_stream_order else None,
+                                    new_stream_order[0] if new_stream_order else None,
+                                    "background_optimization",
+                                )
+                                reason = "score_order_improved"
+                                action_taken = "reordered"
+                                completed = True
+                            else:
+                                is_dominant, dominance_reason, delta, new_top_record = (
+                                    _dominant_score_improvement(
+                                        score_lookup,
+                                        old_stream_order,
+                                        new_stream_order,
+                                        pass_count,
+                                    )
+                                )
+                                score_delta = delta
+                                # Convergent stability: only reorder on clear score-dominant improvement.
+                                if not is_dominant:
+                                    reason = dominance_reason
                                     action_taken = "unchanged"
                                     completed = True
-                                elif pass_count == 0:
-                                    api.update_channel_streams(
-                                        channel_id,
-                                        new_stream_order,
-                                    )
-                                    _append_reorder_event(
-                                        Path("logs"),
-                                        channel_id,
-                                        old_stream_order[0] if old_stream_order else None,
-                                        new_stream_order[0] if new_stream_order else None,
-                                        "background_optimization",
-                                    )
-                                    reason = "score_order_improved"
-                                    action_taken = "reordered"
+                                # Safety: avoid rapid reorders by honoring recent reorder guards.
+                                elif str(channel_id) in recent_reorder_channels:
+                                    reason = "recent_reorder_guard"
+                                    action_taken = "skipped"
                                     completed = True
                                 else:
-                                    is_dominant, dominance_reason, delta, new_top_record = (
-                                        _dominant_score_improvement(
-                                            score_lookup,
-                                            old_stream_order,
-                                            new_stream_order,
-                                            pass_count,
-                                        )
-                                    )
-                                    score_delta = delta
-                                    # Convergent stability: only reorder on clear score-dominant improvement.
-                                    if not is_dominant:
-                                        reason = dominance_reason
+                                    historical_penalty = 0.0
+                                    if isinstance(new_top_record, dict):
+                                        historical_penalty = new_top_record.get("historical_penalty")
+                                    try:
+                                        historical_penalty = float(historical_penalty)
+                                    except (TypeError, ValueError):
+                                        historical_penalty = 0.0
+                                    if historical_penalty < 0:
+                                        reason = "historical_penalty_guard"
                                         action_taken = "unchanged"
                                         completed = True
-                                    # Safety: avoid rapid reorders by honoring recent reorder guards.
-                                    elif str(channel_id) in recent_reorder_channels:
-                                        reason = "recent_reorder_guard"
-                                        action_taken = "skipped"
-                                        completed = True
                                     else:
-                                        historical_penalty = 0.0
-                                        if isinstance(new_top_record, dict):
-                                            historical_penalty = new_top_record.get("historical_penalty")
-                                        try:
-                                            historical_penalty = float(historical_penalty)
-                                        except (TypeError, ValueError):
-                                            historical_penalty = 0.0
-                                        if historical_penalty < 0:
-                                            reason = "historical_penalty_guard"
-                                            action_taken = "unchanged"
-                                            completed = True
-                                        else:
-                                            api.update_channel_streams(
-                                                channel_id,
-                                                new_stream_order,
-                                            )
-                                            _append_reorder_event(
-                                                Path("logs"),
-                                                channel_id,
-                                                old_stream_order[0] if old_stream_order else None,
-                                                new_stream_order[0] if new_stream_order else None,
-                                                "background_optimization",
-                                            )
-                                            reason = "score_order_improved"
-                                            action_taken = "reordered"
-                                            completed = True
+                                        api.update_channel_streams(
+                                            channel_id,
+                                            new_stream_order,
+                                        )
+                                        _append_reorder_event(
+                                            Path("logs"),
+                                            channel_id,
+                                            old_stream_order[0] if old_stream_order else None,
+                                            new_stream_order[0] if new_stream_order else None,
+                                            "background_optimization",
+                                        )
+                                        reason = "score_order_improved"
+                                        action_taken = "reordered"
+                                        completed = True
 
                         if score_delta is None:
                             score_delta = _score_delta_from_orders(
