@@ -3334,16 +3334,37 @@ def api_groups():
         groups = api.fetch_channel_groups()
         channels = api.fetch_channels()
         
-        # Count channels per group
+        # Count channels per group and track lowest channel number
         group_counts = {}
+        group_min_numbers = {}
         for channel in channels:
             group_id = channel.get('channel_group_id')
             if group_id:
                 group_counts[group_id] = group_counts.get(group_id, 0) + 1
+                raw_number = channel.get('channel_number')
+                channel_number = None
+                if isinstance(raw_number, (int, float)):
+                    channel_number = raw_number
+                elif isinstance(raw_number, str):
+                    stripped_number = raw_number.strip()
+                    if stripped_number:
+                        try:
+                            channel_number = (
+                                float(stripped_number)
+                                if '.' in stripped_number
+                                else int(stripped_number)
+                            )
+                        except ValueError:
+                            channel_number = None
+                if channel_number is not None:
+                    current_min = group_min_numbers.get(group_id)
+                    if current_min is None or channel_number < current_min:
+                        group_min_numbers[group_id] = channel_number
         
-        # Add counts to groups
+        # Add counts and min channel number to groups
         for group in groups:
             group['channel_count'] = group_counts.get(group['id'], 0)
+            group['min_channel_number'] = group_min_numbers.get(group['id'])
         
         # Filter to groups with channels
         groups = [g for g in groups if g.get('channel_count', 0) > 0]
