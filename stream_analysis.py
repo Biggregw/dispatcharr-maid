@@ -3267,6 +3267,50 @@ def order_streams_for_channel(
     return final_order
 
 
+def _ordering_score_from_record(record):
+    ordering = record.get('final_score')
+    if ordering in (None, '', 'N/A'):
+        ordering = record.get('ordering_score')
+    if ordering in (None, '', 'N/A'):
+        ordering = record.get('score')
+    return _safe_float(ordering)
+
+
+def _append_reorder_event(logs_dir, channel_id, old_top_stream_id, new_top_stream_id, reason):
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "reorder_events.ndjson"
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "channel_id": channel_id,
+        "old_top_stream_id": old_top_stream_id,
+        "new_top_stream_id": new_top_stream_id,
+        "reason": reason,
+    }
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _recent_reordered_channels(logs_dir, recent_hours):
+    log_path = logs_dir / "reorder_events.ndjson"
+    if not log_path.exists():
+        return set()
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=recent_hours)
+    recent_channels = set()
+
+    for record in _read_ndjson(log_path):
+        timestamp = _parse_history_timestamp(record.get("timestamp"))
+        if not timestamp or timestamp < cutoff:
+            continue
+        channel_id = record.get("channel_id")
+        if channel_id is None:
+            continue
+        recent_channels.add(str(channel_id))
+
+    return recent_channels
+
+
 def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_changes=True):
     """Reorder streams in Dispatcharr based on scores"""
 
@@ -3331,6 +3375,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
 
     summary = {'channels': []} if collect_summary else None
     any_final_streams = False if collect_summary else None
+    recent_reorder_channels = _recent_reordered_channels(Path("logs"), RELIABILITY_RECENT_HOURS)
 
     channel_lookup = {}
     if collect_summary:
@@ -3425,6 +3470,69 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
             slot1_overrode = False
 
         final_ids = [sid for sid in ordered_stream_ids if sid in current_ids_set]
+        baseline_top_id = _safe_int(final_ids[0]) if final_ids else None
+        current_top_id = None
+        if current_streams:
+            current_top_id = _safe_int(current_streams[0].get('id'))
+
+        proactive_reason = None
+        if final_ids and baseline_top_id in final_ids:
+            candidate_limit = max(2, fallback_depth)
+            scored_candidates = []
+            score_by_stream_id = {}
+            for record in records_for_ordering:
+                stream_id = record.get('stream_id')
+                if stream_id not in current_ids_set:
+                    continue
+                score = _ordering_score_from_record(record)
+                if score is None:
+                    continue
+                score_by_stream_id[stream_id] = score
+                scored_candidates.append((score, stream_id))
+            scored_candidates.sort(key=lambda item: (-item[0], _stable_tiebreaker(item[1])))
+            top_candidates = scored_candidates[:candidate_limit]
+            candidate_id = top_candidates[0][1] if top_candidates else None
+
+            if candidate_id and candidate_id != baseline_top_id:
+                candidate_record = record_lookup.get(candidate_id, {})
+                baseline_record = record_lookup.get(baseline_top_id, {})
+                candidate_score = score_by_stream_id.get(candidate_id) or _ordering_score_from_record(candidate_record)
+                baseline_score = score_by_stream_id.get(baseline_top_id) or _ordering_score_from_record(baseline_record)
+                score_values = list(score_by_stream_id.values())
+                score_range = max(score_values) - min(score_values) if len(score_values) > 1 else 0.0
+                min_delta = score_range * 0.1
+                candidate_penalty = _safe_float(candidate_record.get('historical_penalty')) or 0.0
+                channel_key = str(channel_id)
+
+                if (
+                    candidate_score is not None
+                    and baseline_score is not None
+                    and candidate_score > baseline_score
+                    and min_delta > 0
+                    and (candidate_score - baseline_score) > min_delta
+                    and candidate_penalty >= 0
+                    and channel_key not in recent_reorder_channels
+                ):
+                    final_ids = [
+                        candidate_id,
+                        *[sid for sid in final_ids if sid != candidate_id],
+                    ]
+                    proactive_reason = "proactive_score_dominance"
+                    logging.info(
+                        "proactive_reorder channel_id=%s old_top_stream_id=%s "
+                        "new_top_stream_id=%s old_score=%s new_score=%s reason=%s",
+                        channel_id,
+                        baseline_top_id,
+                        candidate_id,
+                        baseline_score,
+                        candidate_score,
+                        "proactive_score_dominance",
+                    )
+                    if collect_summary:
+                        slot1_stream_id = candidate_id
+                        slot1_rule = "proactive_score_dominance"
+                        slot1_reason = "Selected by proactive score dominance."
+                        slot1_overrode = True
 
         channel_entry = None
         if collect_summary:
@@ -3560,11 +3668,26 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                 summary['channels'].append(channel_entry)
             logging.warning(f"No valid streams for channel {channel_id}")
             continue
+
+        current_order_ids = [
+            _safe_int(stream.get('id'))
+            for stream in current_streams
+            if stream.get('id') is not None
+        ]
+        reorder_applied = current_order_ids != final_ids
         
         if apply_changes:
             try:
                 api.update_channel_streams(channel_id, final_ids)
                 logging.info(f"Reordered channel {channel_id}")
+                if reorder_applied:
+                    _append_reorder_event(
+                        Path("logs"),
+                        channel_id,
+                        current_top_id,
+                        final_ids[0] if final_ids else None,
+                        proactive_reason or "ordering_update",
+                    )
             except Exception as e:
                 logging.error(f"Failed to reorder channel {channel_id}: {e}")
 
