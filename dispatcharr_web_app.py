@@ -1460,9 +1460,11 @@ def _ensure_provider_map(api, config):
     Called for ALL job types so historical results always have provider names.
     """
     dispatcharr_cfg = config.get('dispatcharr') or {}
-    if not dispatcharr_cfg.get('refresh_provider_data', False):
-        return
-    refresh_provider_data(api, config, force=False)
+    refresh_enabled = bool(dispatcharr_cfg.get('refresh_provider_data', False))
+    provider_map_path = Path(config.resolve_path('provider_map.json'))
+    provider_metadata_path = Path(config.resolve_path('provider_metadata.json'))
+    if refresh_enabled or not provider_map_path.exists() or not provider_metadata_path.exists():
+        refresh_provider_data(api, config, force=refresh_enabled)
 
 
 def _job_ran_analysis(job_type):
