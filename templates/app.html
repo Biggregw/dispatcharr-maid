@@ -1852,10 +1852,13 @@
             return channelNameLookup.get(key) || null;
         }
 
-        function formatChannelLabel(channelId) {
-            const name = getChannelNameById(channelId);
+        function formatChannelLabel(channelId, channelName) {
+            const name = channelName || getChannelNameById(channelId);
             if (name) {
-                return name;
+                if (channelId === null || channelId === undefined || channelId === '') {
+                    return name;
+                }
+                return `${name} (ID ${channelId})`;
             }
             return channelId === null || channelId === undefined || channelId === ''
                 ? 'Unknown channel'
@@ -1898,7 +1901,7 @@
                 const row = document.createElement('tr');
                 const timestamp = formatActivityTimestamp(entry?.timestamp);
                 const channelId = entry?.channel_id ?? '';
-                const channelLabel = formatChannelLabel(channelId);
+                const channelLabel = formatChannelLabel(channelId, entry?.channel_name);
                 const actionTaken = entry?.action_taken ?? '';
                 const reason = entry?.reason ?? '';
                 const scoreDelta = formatScoreDelta(entry?.score_delta);
@@ -1980,9 +1983,7 @@
             const action = entry?.action_taken ?? '—';
             const reason = entry?.reason ?? '—';
             const channelId = entry?.channel_id ?? null;
-            const channelLabel = channelId !== null && channelId !== undefined && channelId !== ''
-                ? `Channel ${channelId}`
-                : 'Channel —';
+            const channelLabel = formatChannelLabel(channelId, entry?.channel_name);
             return `${channelLabel} · ${action} (${reason})`;
         }
 
