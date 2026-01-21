@@ -30,6 +30,24 @@ ordering:
   similar_score_delta: 5
   # Enable reliability-first ordering (uses cached historical outcomes; default is unchanged)
   reliability_sort: false
+  # Background optimization toggles (optional; enable only if you supply history/playback metadata)
+  background_optimize: false
+  sequence_optimize: false
+  sequence_candidate_pool: 0
+  sequence_diversity_weight: 0.08
+  diversity_top_n: 0
+  diversity_weight: 0.15
+  stability_weight: 0.0
+  recent_failure_minutes: 60
+  recent_failure_penalty: 0.12
+  playback_weight: 0.15
+  adaptive_tiers: false
+  adaptive_hd_percentile: 0.8
+  adaptive_frames_percentile: 0.7
+  pareto_sort: false
+  cluster_similar: false
+  optimize_slot1: false
+  slot1_candidate_limit: 5
 dispatcharr:
   m3u_accounts_endpoint: /api/channels/m3u-accounts/
   manage_py_path: ""  # Optional: path to Dispatcharr manage.py for direct DB access
