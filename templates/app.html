@@ -962,11 +962,6 @@
             border: 1px solid #e2e8f0;
         }
 
-        .analysis-settings .helper-text {
-            color: #4b5563;
-            font-size: 0.95em;
-        }
-
     </style>
 </head>
 <body>
@@ -976,7 +971,7 @@
                 <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="Dispatcharr Maid">
                 <div class="brand-text">
                     <h1>Dispatcharr Maid</h1>
-                    <p>Interactive Control Panel</p>
+                    <p>Background Channel Optimisation Monitor</p>
                 </div>
             </div>
             <div class="quality-insight-action">
@@ -984,67 +979,6 @@
                     <span class="quality-insight-status quality-insight-status-{{ quality_insight_status|default('green') }}" aria-hidden="true"></span>
                     Quality insight
                 </button>
-            </div>
-        </div>
-        
-        <!-- Scope Selection -->
-        <div class="card" id="scope-selection">
-            <h2>1. Scope selection</h2>
-            <p style="margin-bottom: 12px; color: #4b5563; font-size: 0.95em;">
-                Select the channels you want to include. Expand a group to pick channels or use Select all.
-            </p>
-
-            <div id="group-loading" class="alert alert-info">
-                <span class="spinner"></span> Loading channel groups...
-            </div>
-            <div id="group-error" class="alert alert-error hidden"></div>
-            <div id="group-container" class="hidden">
-                <div class="group-grid" id="group-grid"></div>
-            </div>
-        </div>
-        
-        <!-- Run Controls -->
-        <div class="card" id="run-controls">
-            <h2 class="section-title">2. Run controls</h2>
-            
-            <div class="selection-summary run-jobs-summary">
-                <div class="summary-row">
-                    <span class="summary-label">Channels selected:</span>
-                    <span class="summary-value summary-value--emphasis" id="selected-channels-summary">None yet</span>
-                </div>
-                <div class="summary-helper">Only checked channels will be optimized.</div>
-            </div>
-
-            <div class="run-jobs-controls">
-                <div class="action-grid run-jobs-actions">
-                    <div class="action-stack">
-                        <button class="action-btn primary" id="optimize-streams-button" onclick="startApplyQualityJob(event)" disabled
-                                style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
-                            <span>✅</span>
-                            <span>Optimize Streams</span>
-                        </button>
-                        <div class="action-help">Reorders streams based on current quality analysis.</div>
-                    </div>
-                    <div class="action-stack">
-                        <button class="action-btn tertiary" id="background-runner-toggle" type="button">
-                            Background Channel Optimisation: OFF
-                        </button>
-                        <div class="action-help">Runs a background pass that keeps channel ordering optimized.</div>
-                    </div>
-                </div>
-                <div class="analysis-settings">
-                    <label for="analysisProfile" style="display: block; margin-bottom: 8px; font-weight: 700; color: #1f2937; font-size: 1.05em;">
-                        🧮 Analysis Profile
-                    </label>
-                    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                        <select id="analysisProfile" style="padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em;">
-                        <option value="fast">Fast</option>
-                        <option value="balanced">Balanced</option>
-                        <option value="deep" selected>Deep (default)</option>
-                        </select>
-                        <span class="helper-text">Choose how deep the analysis should probe. Deep matches today’s defaults.</span>
-                    </div>
-                </div>
             </div>
         </div>
 
@@ -1058,6 +992,16 @@
                         <div class="summary-row">
                             <span class="summary-label">State:</span>
                             <span class="summary-value" id="background-optimisation-running">—</span>
+                        </div>
+                    </div>
+                    <div class="background-status-item">
+                        <div class="summary-row">
+                            <span class="summary-label">Control:</span>
+                            <span class="summary-value">
+                                <button class="action-btn tertiary" id="background-runner-toggle" type="button" style="padding: 8px 12px; font-size: 0.9em;">
+                                    Background Channel Optimisation: OFF
+                                </button>
+                            </span>
                         </div>
                     </div>
                     <div class="background-status-item">
@@ -1078,10 +1022,28 @@
                             <span class="summary-value" id="background-optimisation-updated-at">—</span>
                         </div>
                     </div>
+                    <div class="background-status-item">
+                        <div class="summary-row">
+                            <span class="summary-label">Recent outcomes:</span>
+                            <span class="summary-value" id="background-optimisation-outcomes">—</span>
+                        </div>
+                    </div>
+                    <div class="background-status-item">
+                        <div class="summary-row">
+                            <span class="summary-label">Last decision:</span>
+                            <span class="summary-value" id="background-optimisation-last-decision">—</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="analysis-settings" style="margin-top: 12px;">
+                    <strong>Analysis depth:</strong> Background optimisation always runs in deep, probe-complete mode. Manual runs use the same depth.
                 </div>
             </div>
             <div>
                 <h3 style="margin-bottom: 12px; color: #1f2937;">Recent activity</h3>
+                <p style="margin-bottom: 12px; color: #4b5563; font-size: 0.95em;">
+                    Each entry reflects a real background decision. "Action" and "Reason" explain why a channel was reordered, skipped, or left unchanged.
+                </p>
                 <div style="overflow-x: auto;">
                     <table class="background-activity-table">
                         <thead>
@@ -1100,6 +1062,48 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scope Selection -->
+        <div class="card" id="scope-selection">
+            <h2>Manual scope selection</h2>
+            <p style="margin-bottom: 12px; color: #4b5563; font-size: 0.95em;">
+                Select channels only when you need to run a manual optimization pass.
+            </p>
+
+            <div id="group-loading" class="alert alert-info">
+                <span class="spinner"></span> Loading channel groups...
+            </div>
+            <div id="group-error" class="alert alert-error hidden"></div>
+            <div id="group-container" class="hidden">
+                <div class="group-grid" id="group-grid"></div>
+            </div>
+        </div>
+        
+        <!-- Run Controls -->
+        <div class="card" id="run-controls">
+            <h2 class="section-title">Manual run controls</h2>
+            
+            <div class="selection-summary run-jobs-summary">
+                <div class="summary-row">
+                    <span class="summary-label">Channels selected:</span>
+                    <span class="summary-value summary-value--emphasis" id="selected-channels-summary">None yet</span>
+                </div>
+                <div class="summary-helper">Only checked channels will be optimized.</div>
+            </div>
+
+            <div class="run-jobs-controls">
+                <div class="action-grid run-jobs-actions">
+                    <div class="action-stack">
+                        <button class="action-btn primary" id="optimize-streams-button" onclick="startApplyQualityJob(event)" disabled
+                                style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
+                            <span>✅</span>
+                            <span>Optimize Streams</span>
+                        </button>
+                        <div class="action-help">Reorders streams based on the same deep analysis used by the background runner.</div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1651,7 +1655,8 @@
                 return;
             }
 
-            entries.forEach(entry => {
+            const rows = entries.slice().reverse();
+            rows.forEach(entry => {
                 const row = document.createElement('tr');
                 const timestamp = entry?.timestamp ?? '';
                 const channelId = entry?.channel_id ?? '';
@@ -1674,19 +1679,65 @@
             });
         }
 
+        function formatBackgroundOutcomes(entries) {
+            if (!Array.isArray(entries) || entries.length === 0) {
+                return '—';
+            }
+            const counts = {
+                reordered: 0,
+                skipped: 0,
+                unchanged: 0,
+                other: 0
+            };
+            entries.forEach(entry => {
+                const action = String(entry?.action_taken || '').toLowerCase();
+                if (action in counts) {
+                    counts[action] += 1;
+                } else {
+                    counts.other += 1;
+                }
+            });
+            const parts = [
+                `Reordered ${counts.reordered}`,
+                `Skipped ${counts.skipped}`,
+                `Unchanged ${counts.unchanged}`
+            ];
+            if (counts.other > 0) {
+                parts.push(`Other ${counts.other}`);
+            }
+            return parts.join(' · ');
+        }
+
+        function formatBackgroundDecision(entry) {
+            if (!entry) return '—';
+            const action = entry?.action_taken ?? '—';
+            const reason = entry?.reason ?? '—';
+            const channelId = entry?.channel_id ?? null;
+            const channelLabel = channelId !== null && channelId !== undefined && channelId !== ''
+                ? `Channel ${channelId}`
+                : 'Channel —';
+            return `${channelLabel} · ${action} (${reason})`;
+        }
+
         async function loadBackgroundOptimisationStatus() {
             try {
                 const response = await fetch('/api/background-optimisation/status', { cache: 'no-store' });
                 const data = await response.json();
                 const state = data?.state || {};
                 const enabled = Boolean(data?.enabled);
+                const activity = Array.isArray(data?.recent_activity) ? data.recent_activity : [];
+                const lastEntry = activity.length ? activity[activity.length - 1] : null;
                 setBackgroundOptimisationValue('background-optimisation-running', enabled ? 'Running' : 'Stopped');
                 setBackgroundOptimisationValue('background-optimisation-pass', state.pass_count);
                 setBackgroundOptimisationValue('background-optimisation-last-channel', state.last_channel_id);
                 setBackgroundOptimisationValue('background-optimisation-updated-at', state.updated_at);
-                renderBackgroundOptimisationActivity(data?.recent_activity || []);
+                setBackgroundOptimisationValue('background-optimisation-outcomes', formatBackgroundOutcomes(activity));
+                setBackgroundOptimisationValue('background-optimisation-last-decision', formatBackgroundDecision(lastEntry));
+                renderBackgroundOptimisationActivity(activity);
             } catch (error) {
                 setBackgroundOptimisationValue('background-optimisation-running', '—');
+                setBackgroundOptimisationValue('background-optimisation-outcomes', '—');
+                setBackgroundOptimisationValue('background-optimisation-last-decision', '—');
                 renderBackgroundOptimisationActivity([]);
             }
         }
@@ -2031,7 +2082,6 @@
                     channels: selectedChannelsForPayload,
                     group_names: groupNames,
                     channel_names: channelNames,
-                    analysis_profile: document.getElementById('analysisProfile')?.value || 'deep',
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
                     include_filter: document.getElementById('includeFilter')?.value || null,
                     exclude_filter: document.getElementById('excludeFilter')?.value || null,
