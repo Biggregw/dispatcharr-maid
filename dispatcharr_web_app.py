@@ -479,15 +479,26 @@ def _load_background_reorder_state():
     return data if isinstance(data, dict) else {}
 
 
-def _save_background_reorder_state(channel_id):
+def _save_background_reorder_state(channel_id=None, pass_count=None):
     state_path = _background_reorder_state_path()
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "last_channel_id": channel_id,
-        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-    }
     tmp_path = state_path.with_suffix(".tmp")
     with _background_reorder_state_lock():
+        payload = {}
+        if state_path.exists():
+            try:
+                with state_path.open("r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except (OSError, json.JSONDecodeError) as exc:
+                logging.warning("Failed reading background reorder state for update: %s", exc)
+                payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        if channel_id is not None:
+            payload["last_channel_id"] = channel_id
+        if pass_count is not None:
+            payload["pass_count"] = pass_count
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         with tmp_path.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False)
             handle.write("\n")
@@ -670,7 +681,7 @@ def _score_delta_from_orders(score_lookup, old_order, new_order):
     return new_score - old_score
 
 
-def _dominant_score_improvement(score_lookup, old_order, new_order):
+def _dominant_score_improvement(score_lookup, old_order, new_order, pass_count):
     """Return (is_dominant, reason, delta, new_top_record)."""
     if not old_order or not new_order:
         return False, "missing_order", None, None
@@ -685,6 +696,10 @@ def _dominant_score_improvement(score_lookup, old_order, new_order):
     if old_score is None or new_score is None:
         return False, "missing_score", None, new_record
 
+    delta = new_score - old_score
+    if delta <= 0:
+        return False, "score_not_higher", delta, new_record
+
     score_values = [
         _ordering_score_from_record(record)
         for record in score_lookup.values()
@@ -695,10 +710,16 @@ def _dominant_score_improvement(score_lookup, old_order, new_order):
         if len(score_values) > 1
         else 0.0
     )
+
+    if pass_count <= 0:
+        return True, "score_improved", delta, new_record
+    if pass_count == 1:
+        min_delta = score_range * 0.02
+        if min_delta > 0 and delta <= min_delta:
+            return False, "score_delta_too_small", delta, new_record
+        return True, "score_small_dominant", delta, new_record
+
     min_delta = score_range * 0.1
-    delta = new_score - old_score
-    if delta <= 0:
-        return False, "score_not_higher", delta, new_record
     if min_delta > 0 and delta <= min_delta:
         return False, "score_delta_too_small", delta, new_record
     return True, "score_dominant", delta, new_record
@@ -711,6 +732,7 @@ def _run_background_optimization_channel(
     stream_provider_map,
     recent_reorder_channels,
     run_id,
+    pass_count,
 ):
     # Background optimisation is intentionally slow and probe-complete.
     # Avoid early exits or impatience logic beyond honoring stop requests.
@@ -733,6 +755,7 @@ def _run_background_optimization_channel(
                 "old_stream_order": old_stream_order,
                 "new_stream_order": new_stream_order,
                 "score_delta": score_delta,
+                "pass_count": pass_count,
             }
         )
         return {"completed": completed, "action": action_taken, "channel_id": channel_id}
@@ -748,6 +771,7 @@ def _run_background_optimization_channel(
                 "old_stream_order": old_stream_order,
                 "new_stream_order": new_stream_order,
                 "score_delta": score_delta,
+                "pass_count": pass_count,
             }
         )
         return {"completed": completed, "action": action_taken, "channel_id": channel_id}
@@ -821,24 +845,29 @@ def _run_background_optimization_channel(
                                 reason = "no_ordered_streams"
                                 action_taken = "skipped"
                                 completed = True
-                            # Safety: avoid rapid reorders by honoring recent reorder guards.
-                            elif str(channel_id) in recent_reorder_channels:
-                                reason = "recent_reorder_guard"
-                                action_taken = "skipped"
-                                completed = True
                             else:
                                 is_dominant, dominance_reason, delta, new_top_record = (
                                     _dominant_score_improvement(
                                         score_lookup,
                                         old_stream_order,
                                         new_stream_order,
+                                        pass_count,
                                     )
                                 )
                                 score_delta = delta
                                 # Convergent stability: only reorder on clear score-dominant improvement.
-                                if old_stream_order == new_stream_order or not is_dominant:
+                                if old_stream_order == new_stream_order:
                                     reason = "order_already_optimal"
                                     action_taken = "unchanged"
+                                    completed = True
+                                elif not is_dominant:
+                                    reason = dominance_reason
+                                    action_taken = "unchanged"
+                                    completed = True
+                                # Safety: avoid rapid reorders by honoring recent reorder guards.
+                                elif pass_count >= 1 and str(channel_id) in recent_reorder_channels:
+                                    reason = "recent_reorder_guard"
+                                    action_taken = "skipped"
                                     completed = True
                                 else:
                                     historical_penalty = 0.0
@@ -889,6 +918,7 @@ def _run_background_optimization_channel(
             "old_stream_order": old_stream_order,
             "new_stream_order": new_stream_order,
             "score_delta": score_delta,
+            "pass_count": pass_count,
         }
     )
     return {"completed": completed, "action": action_taken, "channel_id": channel_id}
@@ -923,6 +953,10 @@ def _background_runner_loop():
                 ordered_channels = _sorted_background_channels(active_channels)
                 state = _load_background_reorder_state()
                 last_channel_id = state.get("last_channel_id")
+                try:
+                    pass_count = int(state.get("pass_count") or 0)
+                except (TypeError, ValueError):
+                    pass_count = 0
                 # Resume from the next channel after the last fully processed ID.
                 start_index = _next_background_start_index(ordered_channels, last_channel_id)
                 ordered_cycle = ordered_channels[start_index:] + ordered_channels[:start_index]
@@ -931,8 +965,10 @@ def _background_runner_loop():
                     RELIABILITY_RECENT_HOURS,
                 )
 
+                completed_full_cycle = True
                 for channel in ordered_cycle:
                     if not _background_runner_enabled_event.is_set():
+                        completed_full_cycle = False
                         break
                     result = _run_background_optimization_channel(
                         api,
@@ -941,6 +977,7 @@ def _background_runner_loop():
                         stream_provider_map,
                         recent_reorder_channels,
                         run_id,
+                        pass_count,
                     )
                     if result.get("completed") and result.get("channel_id") is not None:
                         _save_background_reorder_state(result["channel_id"])
@@ -950,6 +987,8 @@ def _background_runner_loop():
                         _sleep_while_enabled(BACKGROUND_OPTIMIZATION_CHANNEL_SLEEP_SECONDS)
 
                 if _background_runner_enabled_event.is_set():
+                    if completed_full_cycle:
+                        _save_background_reorder_state(pass_count=pass_count + 1)
                     _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
 
             if not _background_runner_enabled_event.is_set():
