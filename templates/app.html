@@ -1357,6 +1357,11 @@
             end: null,
             active: false
         };
+        let backgroundScopeLoaded = false;
+        let backgroundScopeTouched = false;
+        let backgroundScopeSelectionIds = new Set();
+        let backgroundScopeSaveTimeout = null;
+        const backgroundScopeAppliedGroups = new Set();
         const channelNameLookup = new Map();
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
@@ -1415,6 +1420,7 @@
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
+            loadBackgroundOptimisationScope();
             loadGroups();
             loadJobHistory();
             loadBackgroundRunnerState();
@@ -1454,6 +1460,47 @@
             } catch (error) {
                 showError('group-error', 'Failed to load groups: ' + error.message);
             }
+        }
+
+        async function loadBackgroundOptimisationScope() {
+            try {
+                const response = await fetch('/api/background-optimisation/scope', { cache: 'no-store' });
+                const data = await response.json();
+                if (data.success && Array.isArray(data.selected_channel_ids)) {
+                    backgroundScopeSelectionIds = new Set(
+                        data.selected_channel_ids.map(id => String(id))
+                    );
+                }
+            } catch (error) {
+                // Best-effort only.
+            } finally {
+                backgroundScopeLoaded = true;
+                Object.keys(allChannels).forEach(groupId => {
+                    applyBackgroundScopeSelections(groupId);
+                });
+                updateSelectionState();
+            }
+        }
+
+        function applyBackgroundScopeSelections(groupId) {
+            if (!backgroundScopeLoaded || !backgroundScopeSelectionIds.size) {
+                return;
+            }
+            const normalizedId = Number(groupId);
+            if (backgroundScopeAppliedGroups.has(normalizedId)) {
+                return;
+            }
+            const channels = allChannels[normalizedId];
+            if (!channels) {
+                return;
+            }
+            const selections = getGroupChannelSelections(normalizedId);
+            channels.forEach(ch => {
+                if (backgroundScopeSelectionIds.has(String(ch.id))) {
+                    selections.add(ch.id);
+                }
+            });
+            backgroundScopeAppliedGroups.add(normalizedId);
         }
         
         function extractChannelNumber(channel) {
@@ -1608,6 +1655,7 @@
                 if (data.success) {
                     allChannels = { ...allChannels, ...data.channels };
                     refreshChannelNameLookup();
+                    missing.forEach(id => applyBackgroundScopeSelections(id));
                 } else {
                     showError('group-error', data.error || 'Failed to load channels.');
                 }
@@ -1693,6 +1741,7 @@
             } else {
                 selections.delete(channelId);
             }
+            backgroundScopeTouched = true;
             updateSelectionState();
         }
 
@@ -1720,6 +1769,44 @@
 
             if (selectedChannels.length === 1) {
                 loadDerivedRefreshFilters(selectedChannels[0]);
+            }
+
+            if (backgroundScopeTouched) {
+                scheduleBackgroundScopeSave();
+            }
+        }
+
+        function scheduleBackgroundScopeSave() {
+            if (!backgroundScopeLoaded) {
+                return;
+            }
+            if (backgroundScopeSaveTimeout) {
+                clearTimeout(backgroundScopeSaveTimeout);
+            }
+            backgroundScopeSaveTimeout = setTimeout(() => {
+                saveBackgroundOptimisationScope();
+            }, 400);
+        }
+
+        async function saveBackgroundOptimisationScope() {
+            if (!backgroundScopeLoaded || !backgroundScopeTouched) {
+                return;
+            }
+            const payload = {
+                selected_channel_ids: getSelectedChannelIds()
+            };
+            try {
+                const response = await fetch('/api/background-optimisation/scope', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (data.success) {
+                    backgroundScopeTouched = false;
+                }
+            } catch (error) {
+                // Best-effort only.
             }
         }
 
@@ -2198,6 +2285,7 @@
             const selections = getGroupChannelSelections(groupId);
             if (!shouldSelect) {
                 selections.clear();
+                backgroundScopeTouched = true;
                 renderGroups();
                 updateSelectionState();
                 return;
@@ -2205,6 +2293,7 @@
 
             const channels = allChannels[groupId] || [];
             channels.forEach(ch => selections.add(ch.id));
+            backgroundScopeTouched = true;
             renderGroups();
             updateSelectionState();
         }
