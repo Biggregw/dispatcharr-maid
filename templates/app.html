@@ -1309,7 +1309,7 @@
         <div class="card" id="results-section">
             <h2 class="section-title">3. Results & explanations</h2>
             <div class="alert alert-info">
-                Track the ordering logic as jobs run, then open results from job history to review the recommended order and narrative breakdown.
+                Track the ordering logic as jobs run, then open results from recent activity to review the recommended order and narrative breakdown.
             </div>
             <div class="current-job hidden" id="current-job-card">
                 <h3 style="margin-bottom: 12px; color: #1f2937;">📊 Current Job</h3>
@@ -1317,21 +1317,18 @@
             </div>
         </div>
         
-        <!-- Job History -->
+        <!-- Recent Activity -->
         <div class="card">
-            <details>
-                <summary style="cursor: pointer; font-weight: 700; color: #1f2937; font-size: 1.1em;">
-                    📈 Job History
-                </summary>
-                <div style="margin-top: 16px;">
-                    <div id="history-loading" class="alert alert-info">
-                        <span class="spinner"></span> Loading job history...
-                    </div>
-                    <div id="history-container" class="hidden">
-                        <div class="history-list" id="history-list"></div>
-                    </div>
-                </div>
-            </details>
+            <h3 style="margin-bottom: 12px; color: #1f2937;">Recent activity & checks</h3>
+            <p style="margin-bottom: 12px; color: #4b5563; font-size: 0.95em;">
+                See the latest runs, then open Results for the full narrative. Each entry includes a quick summary of the checks that were performed.
+            </p>
+            <div id="history-loading" class="alert alert-info">
+                <span class="spinner"></span> Loading recent activity...
+            </div>
+            <div id="history-container" class="hidden">
+                <div class="history-list" id="history-list"></div>
+            </div>
         </div>
 
     </div>
@@ -3428,7 +3425,7 @@
             }
         }
         
-        // Load job history
+        // Load recent activity
         async function loadJobHistory() {
             const loading = document.getElementById('history-loading');
             const container = document.getElementById('history-container');
@@ -3443,14 +3440,14 @@
                 if (data.success) {
                     renderJobHistory(data.history);
                 } else if (list) {
-                    const msg = escapeHtml(data.error || 'Unable to load job history.');
+                    const msg = escapeHtml(data.error || 'Unable to load recent activity.');
                     list.innerHTML = `<div class="alert alert-error">${msg}</div>`;
                 }
             } catch (error) {
                 console.error('Failed to load history:', error);
                 if (list) {
                     const msg = escapeHtml(error?.message || String(error));
-                    list.innerHTML = `<div class="alert alert-error">Unable to load job history: ${msg}</div>`;
+                    list.innerHTML = `<div class="alert alert-error">Unable to load recent activity: ${msg}</div>`;
                 }
             } finally {
                 if (loading) loading.classList.add('hidden');
@@ -3469,12 +3466,12 @@
             }[ch]));
         }
 
-        // Render job history
+        // Render recent activity
         function renderJobHistory(history) {
             const list = document.getElementById('history-list');
             
             if (history.length === 0) {
-                list.innerHTML = '<div class="alert alert-info">No jobs completed yet</div>';
+                list.innerHTML = '<div class="alert alert-info">No recent activity yet</div>';
                 return;
             }
             
@@ -3532,6 +3529,18 @@
                 }
                 
                 const isHighlighted = pendingHistoryHighlightJobId && pendingHistoryHighlightJobId === job.job_id;
+                let checksSummary = 'Checks: Not applicable';
+                if (job.result_summary && Number.isFinite(job.result_summary.total)) {
+                    const successRate = Number.isFinite(job.result_summary.success_rate)
+                        ? `${job.result_summary.success_rate}% success`
+                        : 'Success rate unavailable';
+                    checksSummary = `Checks: ${job.result_summary.total.toLocaleString()} reviewed · ${successRate}`;
+                } else if (Number.isFinite(job.stream_checklist_total) && job.stream_checklist_total > 0) {
+                    const processed = Number.isFinite(job.stream_checklist_processed)
+                        ? job.stream_checklist_processed
+                        : job.stream_checklist_total;
+                    checksSummary = `Checks: ${processed.toLocaleString()} of ${job.stream_checklist_total.toLocaleString()} completed`;
+                }
 
                 return `
                     <div class="history-item clickable ${isHighlighted ? 'history-item--new' : ''}" data-job-id="${job.job_id}" onclick="viewJobResults('${job.job_id}')">
@@ -3539,6 +3548,7 @@
                             <div class="history-type">${typeLabel}</div>
                             <div class="history-time" style="font-size: 0.85em; color: #718096;">${context}</div>
                             <div class="history-time" style="font-size: 0.75em; color: #a0aec0;">${timeStr}</div>
+                            <div class="history-time" style="font-size: 0.8em; color: #4a5568;">${checksSummary}</div>
                         </div>
                         <div class="history-meta">
                             <span class="history-status ${statusClass}">
