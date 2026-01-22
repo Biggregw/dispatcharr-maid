@@ -3455,6 +3455,16 @@ def api_background_optimisation_status():
             channel_name_by_id[channel_id] = channel.get("name")
     except Exception:
         channel_name_by_id = {}
+    last_channel_name = None
+    last_channel_id = state.get("last_channel_id")
+    if last_channel_id is not None:
+        last_channel_name = channel_name_by_id.get(last_channel_id)
+        if last_channel_name is None and isinstance(last_channel_id, str):
+            try:
+                last_channel_name = channel_name_by_id.get(int(last_channel_id))
+            except (TypeError, ValueError):
+                last_channel_name = None
+    state["last_channel_name"] = last_channel_name
     enriched_activity = []
     for entry in recent_activity:
         if not isinstance(entry, dict):

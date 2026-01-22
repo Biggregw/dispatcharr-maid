@@ -2178,7 +2178,7 @@
                     : 'Stopped';
                 setBackgroundOptimisationValue('background-optimisation-running', runningLabel);
                 setBackgroundOptimisationValue('background-optimisation-pass', state.pass_count);
-                setBackgroundOptimisationValue('background-optimisation-last-channel', state.last_channel_id);
+                setBackgroundOptimisationValue('background-optimisation-last-channel', currentChannelLabel);
                 setBackgroundOptimisationValue('background-optimisation-updated-at', formatTimeSince(state.updated_at));
                 renderBackgroundOptimisationOutcomes(formatBackgroundOutcomes(activity));
                 setBackgroundOptimisationValue('background-optimisation-last-decision', formatBackgroundDecision(lastEntry));
