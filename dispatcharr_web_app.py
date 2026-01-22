@@ -480,7 +480,12 @@ def _load_background_reorder_state():
     return data if isinstance(data, dict) else {}
 
 
-def _save_background_reorder_state(channel_id=None, pass_count=None, schedule=None):
+def _save_background_reorder_state(
+    channel_id=None,
+    pass_count=None,
+    schedule=None,
+    selected_channel_ids=None,
+):
     state_path = _background_reorder_state_path()
     state_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = state_path.with_suffix(".tmp")
@@ -501,6 +506,8 @@ def _save_background_reorder_state(channel_id=None, pass_count=None, schedule=No
             payload["pass_count"] = pass_count
         if schedule is not None:
             payload["schedule"] = schedule
+        if selected_channel_ids is not None:
+            payload["selected_channel_ids"] = selected_channel_ids
         payload["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         with tmp_path.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False)
@@ -538,6 +545,36 @@ def _load_background_reorder_log_entries(limit=50):
         logging.warning("Failed reading background reorder log: %s", exc)
         return []
     return list(entries)
+
+
+def _normalize_background_scope_selection(data):
+    raw_ids = data.get("selected_channel_ids")
+    if raw_ids is None:
+        return None, "selected_channel_ids is required"
+    if not isinstance(raw_ids, list):
+        return None, "selected_channel_ids must be a list"
+    normalized = []
+    for value in raw_ids:
+        channel_id = _safe_int(value)
+        if channel_id is None:
+            return None, f"Invalid channel id: {value}"
+        normalized.append(channel_id)
+    return normalized, None
+
+
+def _selected_background_channel_ids(state):
+    if not isinstance(state, dict):
+        return None
+    raw_ids = state.get("selected_channel_ids")
+    if not isinstance(raw_ids, list):
+        return None
+    normalized = set()
+    for value in raw_ids:
+        channel_id = _safe_int(value)
+        if channel_id is None:
+            continue
+        normalized.add(str(channel_id))
+    return normalized
 
 
 def _safe_channel_workspace_component(channel_id):
@@ -1201,16 +1238,22 @@ def _background_runner_loop():
                 if not _background_runner_enabled_event.is_set():
                     break
                 channels = api.fetch_channels() or []
+                state = _load_background_reorder_state()
                 active_channels = [
                     ch for ch in channels if _is_active_channel(ch)
                 ]
+                selected_channel_ids = _selected_background_channel_ids(state)
+                if selected_channel_ids is not None:
+                    active_channels = [
+                        ch for ch in active_channels
+                        if str(ch.get("id")) in selected_channel_ids
+                    ]
                 if not active_channels:
                     logging.info("Background optimisation idle, no active channels")
                     _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
                     continue
 
                 ordered_channels = _sorted_background_channels(active_channels)
-                state = _load_background_reorder_state()
                 last_channel_id = state.get("last_channel_id")
                 try:
                     pass_count = int(state.get("pass_count") or 0)
@@ -3504,6 +3547,23 @@ def api_background_optimisation_schedule():
     _apply_background_schedule()
     state = _load_background_reorder_state()
     return jsonify({"success": True, "schedule": _build_background_schedule_status(state)})
+
+
+@app.route('/api/background-optimisation/scope', methods=['GET', 'POST'])
+@login_required
+def api_background_optimisation_scope():
+    if request.method == 'GET':
+        state = _load_background_reorder_state()
+        selected_ids = state.get("selected_channel_ids") if isinstance(state, dict) else None
+        if not isinstance(selected_ids, list):
+            selected_ids = None
+        return jsonify({"success": True, "selected_channel_ids": selected_ids})
+    data = request.get_json(silent=True) or {}
+    selected_ids, error = _normalize_background_scope_selection(data)
+    if error:
+        return jsonify({"success": False, "error": error}), 400
+    _save_background_reorder_state(selected_channel_ids=selected_ids)
+    return jsonify({"success": True, "selected_channel_ids": selected_ids})
 
 
 @app.route('/login', methods=['GET', 'POST'])
