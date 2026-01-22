@@ -2171,7 +2171,12 @@
                 const schedule = data?.schedule || null;
                 const lastEntry = activity.length ? activity[activity.length - 1] : null;
                 backgroundOptimisationActivityEntries = activity;
-                setBackgroundOptimisationValue('background-optimisation-running', enabled ? 'Running' : 'Stopped');
+                const currentChannelId = state.last_channel_id ?? '';
+                const currentChannelLabel = formatChannelLabel(currentChannelId, state.last_channel_name);
+                const runningLabel = enabled
+                    ? `currently checking ${currentChannelLabel}`
+                    : 'Stopped';
+                setBackgroundOptimisationValue('background-optimisation-running', runningLabel);
                 setBackgroundOptimisationValue('background-optimisation-pass', state.pass_count);
                 setBackgroundOptimisationValue('background-optimisation-last-channel', state.last_channel_id);
                 setBackgroundOptimisationValue('background-optimisation-updated-at', formatTimeSince(state.updated_at));
