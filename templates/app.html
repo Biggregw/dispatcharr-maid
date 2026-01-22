@@ -846,6 +846,48 @@
             font-weight: 600;
         }
 
+        .background-summary-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin: 16px 0 20px;
+        }
+
+        .background-summary-card {
+            padding: 16px;
+            border-radius: 14px;
+            border: 1px solid #e2e8f0;
+            background: #f9fafb;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+        }
+
+        .background-summary-card--highlight {
+            border-color: #6366f1;
+            background: #eef2ff;
+        }
+
+        .background-summary-title {
+            font-size: 0.85em;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #475569;
+        }
+
+        .background-summary-value {
+            font-size: 1.05em;
+            font-weight: 700;
+            color: #1f2937;
+        }
+
+        .background-summary-meta {
+            font-size: 0.85em;
+            color: #6b7280;
+        }
+
         .background-status-panel {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -1100,6 +1142,28 @@
         <!-- Background Channel Optimisation -->
         <div class="card" id="background-optimisation-panel">
             <h2>Background Channel Optimisation</h2>
+            <div class="background-summary-panel">
+                <div class="background-summary-card background-summary-card--highlight">
+                    <div class="background-summary-title">Selected for review</div>
+                    <div class="background-summary-value" id="background-summary-selected">None yet</div>
+                    <div class="background-summary-meta" id="background-summary-selected-count">No channels selected</div>
+                </div>
+                <div class="background-summary-card">
+                    <div class="background-summary-title">Active check</div>
+                    <div class="background-summary-value" id="background-summary-active">—</div>
+                    <div class="background-summary-meta" id="background-summary-active-meta">Last update —</div>
+                </div>
+                <div class="background-summary-card">
+                    <div class="background-summary-title">Schedule</div>
+                    <div class="background-summary-value" id="background-summary-schedule">—</div>
+                    <div class="background-summary-meta" id="background-summary-next-start">Next start —</div>
+                </div>
+                <div class="background-summary-card">
+                    <div class="background-summary-title">Will check</div>
+                    <div class="background-summary-value" id="background-summary-scope">—</div>
+                    <div class="background-summary-meta">Based on selected channels</div>
+                </div>
+            </div>
             <div>
                 <h3 style="margin-bottom: 12px; color: #1f2937;">Status</h3>
                 <div class="background-status-panel">
@@ -1357,6 +1421,8 @@
             end: null,
             active: false
         };
+        let backgroundCurrentChannelLabel = '—';
+        let backgroundStatusUpdatedAt = null;
         let backgroundScopeLoaded = false;
         let backgroundScopeTouched = false;
         let backgroundScopeSelectionIds = new Set();
@@ -1814,25 +1880,9 @@
             const summary = document.getElementById('selected-channels-summary');
             if (!summary) return;
 
-            if (!selectedChannels.length) {
-                summary.textContent = 'None yet';
-                return;
-            }
-
-            const names = selectedChannels.map(id => {
-                for (const groupId in allChannels) {
-                    const channel = allChannels[groupId].find(ch => ch.id === id);
-                    if (channel) return channel.name;
-                }
-                return `Channel ${id}`;
-            });
-
-            const maxShown = 3;
-            if (names.length > maxShown) {
-                summary.textContent = `${names.slice(0, maxShown).join(', ')} +${names.length - maxShown} more`;
-            } else {
-                summary.textContent = names.join(', ');
-            }
+            const summaryData = buildSelectedChannelSummary(3);
+            summary.textContent = summaryData.label;
+            updateBackgroundSummarySelection(summaryData);
         }
 
         function updateRefreshUiState() {
@@ -1878,6 +1928,7 @@
                 : 'Background Channel Optimisation: OFF';
             btn.classList.remove('secondary', 'tertiary');
             btn.classList.add(enabled ? 'secondary' : 'tertiary');
+            updateBackgroundSummaryActive();
         }
 
         function setBackgroundRunnerBusy(isBusy) {
@@ -1985,6 +2036,7 @@
             if (enabledToggle && !backgroundScheduleBusy) {
                 enabledToggle.checked = backgroundScheduleState.enabled;
             }
+            updateBackgroundSummarySchedule();
         }
 
         async function saveBackgroundSchedule(event) {
@@ -2025,6 +2077,16 @@
         }
 
         function setBackgroundOptimisationValue(elementId, value) {
+            const element = document.getElementById(elementId);
+            if (!element) return;
+            if (value === null || value === undefined || value === '') {
+                element.textContent = '—';
+                return;
+            }
+            element.textContent = value;
+        }
+
+        function setBackgroundSummaryValue(elementId, value) {
             const element = document.getElementById(elementId);
             if (!element) return;
             if (value === null || value === undefined || value === '') {
@@ -2248,6 +2310,99 @@
             return `${hours}h ${minutes}m ${seconds}s`;
         }
 
+        function buildSelectedChannelSummary(maxShown = 3) {
+            if (!selectedChannels.length) {
+                return { count: 0, label: 'None yet', names: [] };
+            }
+
+            const names = selectedChannels.map(id => getChannelNameById(id) || `Channel ${id}`);
+            if (names.length > maxShown) {
+                return {
+                    count: names.length,
+                    label: `${names.slice(0, maxShown).join(', ')} +${names.length - maxShown} more`,
+                    names
+                };
+            }
+            return { count: names.length, label: names.join(', '), names };
+        }
+
+        function updateBackgroundSummarySelection(summaryData) {
+            const data = summaryData || buildSelectedChannelSummary(4);
+            const countLabel = data.count
+                ? `${data.count} channel${data.count === 1 ? '' : 's'} selected`
+                : 'No channels selected';
+            const scopeLabel = data.count
+                ? `${data.count} channel${data.count === 1 ? '' : 's'} queued`
+                : 'Nothing queued';
+            setBackgroundSummaryValue('background-summary-selected', data.label || 'None yet');
+            setBackgroundSummaryValue('background-summary-selected-count', countLabel);
+            setBackgroundSummaryValue('background-summary-scope', scopeLabel);
+        }
+
+        function getScheduleStartDate(startValue) {
+            if (!startValue) return null;
+            const parts = startValue.split(':').map(Number);
+            if (parts.length < 2) return null;
+            const now = new Date();
+            const start = new Date(now);
+            start.setHours(parts[0], parts[1], 0, 0);
+            if (start.getTime() <= now.getTime()) {
+                start.setDate(start.getDate() + 1);
+            }
+            return start;
+        }
+
+        function formatNextScheduleLabel(scheduleState) {
+            if (!scheduleState?.enabled) {
+                return 'Next start —';
+            }
+            if (scheduleState.active) {
+                return scheduleState.end
+                    ? `Ends at ${scheduleState.end}`
+                    : 'Active now';
+            }
+            const startDate = getScheduleStartDate(scheduleState.start);
+            if (!startDate) {
+                return 'Next start —';
+            }
+            const dayLabel = startDate.toDateString() === new Date().toDateString()
+                ? 'Today'
+                : 'Tomorrow';
+            return `${dayLabel} at ${scheduleState.start}`;
+        }
+
+        function formatScheduleSummary(scheduleState) {
+            if (!scheduleState?.enabled) {
+                return 'Disabled';
+            }
+            if (scheduleState.start && scheduleState.end) {
+                return `${scheduleState.start} → ${scheduleState.end}`;
+            }
+            return 'Enabled';
+        }
+
+        function updateBackgroundSummarySchedule() {
+            setBackgroundSummaryValue(
+                'background-summary-schedule',
+                formatScheduleSummary(backgroundScheduleState)
+            );
+            setBackgroundSummaryValue(
+                'background-summary-next-start',
+                formatNextScheduleLabel(backgroundScheduleState)
+            );
+        }
+
+        function updateBackgroundSummaryActive() {
+            const activeLabel = backgroundRunnerEnabled
+                ? `Checking ${backgroundCurrentChannelLabel}`
+                : 'Idle';
+            const updateLabel = backgroundStatusUpdatedAt
+                ? `Last update ${formatTimeSince(backgroundStatusUpdatedAt)}`
+                : 'Last update —';
+            setBackgroundSummaryValue('background-summary-active', activeLabel);
+            setBackgroundSummaryValue('background-summary-active-meta', updateLabel);
+        }
+
         async function loadBackgroundOptimisationStatus() {
             try {
                 const response = await fetch('/api/background-optimisation/status', { cache: 'no-store' });
@@ -2260,6 +2415,9 @@
                 backgroundOptimisationActivityEntries = activity;
                 const currentChannelId = state.last_channel_id ?? '';
                 const currentChannelLabel = formatChannelLabel(currentChannelId, state.last_channel_name);
+                backgroundCurrentChannelLabel = currentChannelLabel;
+                backgroundStatusUpdatedAt = state.updated_at || null;
+                backgroundRunnerEnabled = enabled;
                 const runningLabel = enabled
                     ? `currently checking ${currentChannelLabel}`
                     : 'Stopped';
@@ -2271,6 +2429,7 @@
                 setBackgroundOptimisationValue('background-optimisation-last-decision', formatBackgroundDecision(lastEntry));
                 renderBackgroundOptimisationActivity(activity);
                 updateBackgroundScheduleDisplay(schedule);
+                updateBackgroundSummaryActive();
             } catch (error) {
                 backgroundOptimisationActivityEntries = [];
                 setBackgroundOptimisationValue('background-optimisation-running', '—');
@@ -2278,6 +2437,9 @@
                 setBackgroundOptimisationValue('background-optimisation-last-decision', '—');
                 renderBackgroundOptimisationActivity([]);
                 updateBackgroundScheduleDisplay(null);
+                backgroundCurrentChannelLabel = '—';
+                backgroundStatusUpdatedAt = null;
+                updateBackgroundSummaryActive();
             }
         }
 
