@@ -540,8 +540,22 @@ def _load_background_reorder_log_entries(limit=50):
     return list(entries)
 
 
+def _safe_channel_workspace_component(channel_id):
+    raw = "" if channel_id is None else str(channel_id)
+    safe = "".join(
+        ch if ch.isalnum() or ch in ("-", "_") else "_"
+        for ch in raw
+    ).strip("_")
+    if not safe:
+        safe = "unknown"
+    if len(safe) > 64:
+        digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+        safe = f"{safe[:52]}_{digest}"
+    return f"channel_{safe}"
+
+
 def _build_windowed_workspace(base_csv_dir, run_id, channel_id):
-    return Path(base_csv_dir) / "windowed" / run_id / f"channel_{channel_id}"
+    return Path(base_csv_dir) / "windowed" / run_id / _safe_channel_workspace_component(channel_id)
 
 
 def _cleanup_background_workspace(channel_workspace, channel_id, reason):
