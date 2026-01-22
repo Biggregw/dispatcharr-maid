@@ -1188,7 +1188,7 @@
                     </div>
                 </div>
                 <div class="analysis-settings" style="margin-top: 12px;">
-                    <strong>Analysis depth:</strong> Background optimisation always runs in deep, probe-complete mode. Manual runs use the same depth.
+                    <strong>Analysis depth:</strong> Background optimisation always runs in deep, probe-complete mode.
                 </div>
             </div>
             <div>
@@ -1220,9 +1220,9 @@
 
         <!-- Scope Selection -->
         <div class="card" id="scope-selection">
-            <h2>Manual scope selection</h2>
+            <h2>Background optimisation scope</h2>
             <p style="margin-bottom: 12px; color: #4b5563; font-size: 0.95em;">
-                Select channels only when you need to run a manual optimization pass.
+                Choose the channels that should be eligible for background optimisation.
             </p>
 
             <div id="group-loading" class="alert alert-info">
@@ -1232,31 +1232,12 @@
             <div id="group-container" class="hidden">
                 <div class="group-grid" id="group-grid"></div>
             </div>
-        </div>
-        
-        <!-- Run Controls -->
-        <div class="card" id="run-controls">
-            <h2 class="section-title">Manual run controls</h2>
-            
             <div class="selection-summary run-jobs-summary">
                 <div class="summary-row">
                     <span class="summary-label">Channels selected:</span>
                     <span class="summary-value summary-value--emphasis" id="selected-channels-summary">None yet</span>
                 </div>
-                <div class="summary-helper">Only checked channels will be optimized.</div>
-            </div>
-
-            <div class="run-jobs-controls">
-                <div class="action-grid run-jobs-actions">
-                    <div class="action-stack">
-                        <button class="action-btn primary" id="optimize-streams-button" onclick="startApplyQualityJob(event)" disabled
-                                style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
-                            <span>✅</span>
-                            <span>Optimize Streams</span>
-                        </button>
-                        <div class="action-help">Reorders streams based on the same deep analysis used by the background runner.</div>
-                    </div>
-                </div>
+                <div class="summary-helper">Only checked channels are eligible for background optimisation.</div>
             </div>
         </div>
         
@@ -1595,7 +1576,6 @@
             });
 
             updateScopeSummary();
-            updateRunControlsState();
         }
 
         function getGroupChannelSelections(groupId) {
@@ -1737,7 +1717,6 @@
 
             updateScopeSummary();
             updateRefreshUiState();
-            updateRunControlsState();
 
             if (selectedChannels.length === 1) {
                 loadDerivedRefreshFilters(selectedChannels[0]);
@@ -1802,13 +1781,6 @@
 
         async function getSelectedChannelsForPayload() {
             return getSelectedChannelIds();
-        }
-
-        function updateRunControlsState() {
-            const btn = document.getElementById('optimize-streams-button');
-            if (btn) {
-                btn.disabled = selectedChannels.length === 0;
-            }
         }
 
         function updateBackgroundRunnerToggle(enabled) {
@@ -2459,14 +2431,6 @@
                 reorder: 'Reorder Streams',
                 cleanup: 'Reorder Streams'
             }[jobType] || jobType;
-        }
-
-        function startApplyQualityJob(event) {
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
-            return startJob('full_cleanup', null, event);
         }
 
         function renderOptimisticStartingJob(jobType, groupNames, channelNames) {
