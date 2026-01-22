@@ -605,61 +605,12 @@
             color: #2d3748;
         }
         
-        /* Job history */
-        .history-list {
-            max-height: 400px;
-            overflow-y: auto;
-        }
-        
-        .history-item {
-            padding: 15px;
-            border-bottom: 1px solid #e2e8f0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            transition: background-color 0.6s ease, box-shadow 0.4s ease;
-        }
-
-        .history-item--new {
-            background: #f0f4ff;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.12);
-        }
-
-        .history-item.clickable {
-            cursor: pointer;
-        }
-        
-        .history-item:hover {
-            background: #f7fafc;
-        }
-        
-        .history-info {
-            flex: 1;
-        }
-        
-        .history-type {
-            font-weight: 600;
-            color: #2d3748;
-            margin-bottom: 5px;
-        }
-        
-        .history-time {
-            color: #718096;
-            font-size: 0.9em;
-        }
-        
+        /* Job status */
         .history-status {
             padding: 5px 15px;
             border-radius: 15px;
             font-weight: 600;
             font-size: 0.9em;
-        }
-
-        .history-meta {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-end;
-            gap: 6px;
         }
         
         .status-completed {
@@ -1309,25 +1260,11 @@
         <div class="card" id="results-section">
             <h2 class="section-title">3. Results & explanations</h2>
             <div class="alert alert-info">
-                Track the ordering logic as jobs run, then open results from recent activity to review the recommended order and narrative breakdown.
+                Track the ordering logic as jobs run, then review results on the Results page for the recommended order and narrative breakdown.
             </div>
             <div class="current-job hidden" id="current-job-card">
                 <h3 style="margin-bottom: 12px; color: #1f2937;">📊 Current Job</h3>
                 <div id="current-job-content"></div>
-            </div>
-        </div>
-        
-        <!-- Recent Activity -->
-        <div class="card">
-            <h3 style="margin-bottom: 12px; color: #1f2937;">Recent activity & checks</h3>
-            <p style="margin-bottom: 12px; color: #4b5563; font-size: 0.95em;">
-                See the latest runs, then open Results for the full narrative. Each entry includes a quick summary of the checks that were performed.
-            </p>
-            <div id="history-loading" class="alert alert-info">
-                <span class="spinner"></span> Loading recent activity...
-            </div>
-            <div id="history-container" class="hidden">
-                <div class="history-list" id="history-list"></div>
             </div>
         </div>
 
@@ -1402,10 +1339,7 @@
         let refreshPreviewStreams = [];
         let refreshPreviewMeta = null;
         let refreshJobId = null;
-        let lastTerminalJobId = null;
         const terminalStatuses = ['completed', 'failed', 'cancelled'];
-        let pendingHistoryHighlightJobId = null;
-        const lastRenderedStatuses = {};
         let jobTickerInterval = null;
         let jobTickerState = null;
         let backgroundRunnerEnabled = false;
@@ -1485,7 +1419,6 @@
         document.addEventListener('DOMContentLoaded', function() {
             loadBackgroundOptimisationScope();
             loadGroups();
-            loadJobHistory();
             loadBackgroundRunnerState();
             loadBackgroundOptimisationStatus();
             const backgroundRunnerButton = document.getElementById('background-runner-toggle');
@@ -2804,7 +2737,6 @@
 
                 if (data.success) {
                     currentJobId = data.job_id;
-                    lastTerminalJobId = null;
 
                     // Show current job card
                     document.getElementById('current-job-card').classList.remove('hidden');
@@ -2914,22 +2846,6 @@
             return job;
         }
 
-        function handleJobStatusChange(job) {
-            if (!job || !job.job_id) return;
-
-            const previousStatus = lastRenderedStatuses[job.job_id];
-            lastRenderedStatuses[job.job_id] = job.status;
-
-            const becameTerminal = !terminalStatuses.includes(previousStatus)
-                && terminalStatuses.includes(job.status);
-
-            if (becameTerminal && lastTerminalJobId !== job.job_id) {
-                lastTerminalJobId = job.job_id;
-                pendingHistoryHighlightJobId = job.job_id;
-                loadJobHistory();
-            }
-        }
-
         // Check job status
         async function checkJob(jobId) {
             try {
@@ -2943,7 +2859,6 @@
 
                     renderCurrentJob(reconciledJob);
                     updateRefreshProgress(reconciledJob);
-                    handleJobStatusChange(job);
                     maybeAutoScrollToCurrentJob(job.job_id);
 
                     // If completed, stop checking
@@ -3402,7 +3317,6 @@
                         const reconciledJob = reconcileJobForRender(normalizedJob);
                         renderCurrentJob(reconciledJob);
                         updateRefreshProgress(reconciledJob);
-                        handleJobStatusChange(normalizedJob);
 
                         if (terminalStatuses.includes(normalizedJob.status)) {
                             resetActionButtons();
@@ -3425,36 +3339,6 @@
             }
         }
         
-        // Load recent activity
-        async function loadJobHistory() {
-            const loading = document.getElementById('history-loading');
-            const container = document.getElementById('history-container');
-            const list = document.getElementById('history-list');
-
-            try {
-                if (list) list.innerHTML = '';
-
-                const response = await fetch('/api/job-history', { cache: 'no-store' });
-                const data = await response.json();
-
-                if (data.success) {
-                    renderJobHistory(data.history);
-                } else if (list) {
-                    const msg = escapeHtml(data.error || 'Unable to load recent activity.');
-                    list.innerHTML = `<div class="alert alert-error">${msg}</div>`;
-                }
-            } catch (error) {
-                console.error('Failed to load history:', error);
-                if (list) {
-                    const msg = escapeHtml(error?.message || String(error));
-                    list.innerHTML = `<div class="alert alert-error">Unable to load recent activity: ${msg}</div>`;
-                }
-            } finally {
-                if (loading) loading.classList.add('hidden');
-                if (container) container.classList.remove('hidden');
-            }
-        }
-
         function escapeHtml(value) {
             const str = String(value ?? '');
             return str.replace(/[&<>"']/g, (ch) => ({
@@ -3466,125 +3350,11 @@
             }[ch]));
         }
 
-        // Render recent activity
-        function renderJobHistory(history) {
-            const list = document.getElementById('history-list');
-            
-            if (history.length === 0) {
-                list.innerHTML = '<div class="alert alert-info">No recent activity yet</div>';
-                return;
-            }
-            
-            list.innerHTML = history.map(job => {
-                const statusClass = {
-                    'completed': 'status-completed',
-                    'failed': 'status-failed',
-                    'cancelled': 'status-cancelled'
-                }[job.status] || '';
-                
-                const date = new Date(job.started_at);
-                const timeStr = date.toLocaleString();
-                
-                let typeLabel = {
-                    'refresh_optimize': 'Refresh',
-                    'pattern_refresh_full_cleanup': 'Saved Job (Refresh + Optimize Streams)',
-                    'full_cleanup_plan': 'Optimize Streams (No changes)',
-                    'full_cleanup': 'Optimize Streams',
-                    'full': 'Full Job',
-                    'fetch': 'Fetch',
-                    'analyze': 'Review',
-                    'score': 'Rank',
-                    'reorder': 'Reorder',
-                    'cleanup': 'Reorder'
-                }[job.job_type] || job.job_type;
-                
-                // Build context line: Group > Channel
-                let context = job.group_names || 'Unknown';
-                if (job.channel_names && job.channel_names !== 'No channels selected') {
-                    context += ` > ${job.channel_names}`;
-                }
-                
-                // Get stream count from result summary
-                let streamInfo = '';
-                if (job.result_summary) {
-                    if (job.result_summary.job_type === 'refresh') {
-                        streamInfo = `${job.result_summary.new_count || 0} streams`;
-                    } else if (job.result_summary.total) {
-                        // For analysis jobs, show how many were analyzed
-                        streamInfo = `${job.result_summary.total} reviewed`;
-                    }
-                }
-
-                let statusText = streamInfo || job.status;
-                if (['full_cleanup', 'full_cleanup_plan', 'pattern_refresh_full_cleanup'].includes(job.job_type)) {
-                    if (job.status === 'completed') {
-                        statusText = job.job_type === 'full_cleanup_plan'
-                            ? 'Optimization results ready'
-                            : 'Streams reordered';
-                    } else if (job.status === 'failed') {
-                        statusText = 'Optimization failed';
-                    } else if (job.status === 'cancelled') {
-                        statusText = 'Optimization stopped';
-                    }
-                }
-                
-                const isHighlighted = pendingHistoryHighlightJobId && pendingHistoryHighlightJobId === job.job_id;
-                let checksSummary = 'Checks: Not applicable';
-                if (job.result_summary && Number.isFinite(job.result_summary.total)) {
-                    const successRate = Number.isFinite(job.result_summary.success_rate)
-                        ? `${job.result_summary.success_rate}% success`
-                        : 'Success rate unavailable';
-                    checksSummary = `Checks: ${job.result_summary.total.toLocaleString()} reviewed · ${successRate}`;
-                } else if (Number.isFinite(job.stream_checklist_total) && job.stream_checklist_total > 0) {
-                    const processed = Number.isFinite(job.stream_checklist_processed)
-                        ? job.stream_checklist_processed
-                        : job.stream_checklist_total;
-                    checksSummary = `Checks: ${processed.toLocaleString()} of ${job.stream_checklist_total.toLocaleString()} completed`;
-                }
-
-                return `
-                    <div class="history-item clickable ${isHighlighted ? 'history-item--new' : ''}" data-job-id="${job.job_id}" onclick="viewJobResults('${job.job_id}')">
-                        <div class="history-info">
-                            <div class="history-type">${typeLabel}</div>
-                            <div class="history-time" style="font-size: 0.85em; color: #718096;">${context}</div>
-                            <div class="history-time" style="font-size: 0.75em; color: #a0aec0;">${timeStr}</div>
-                            <div class="history-time" style="font-size: 0.8em; color: #4a5568;">${checksSummary}</div>
-                        </div>
-                        <div class="history-meta">
-                            <span class="history-status ${statusClass}">
-                                ${statusText}
-                            </span>
-                            <button class="text-btn" onclick="viewJobResults('${job.job_id}'); event.stopPropagation();">
-                                View Results
-                            </button>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-
-            if (pendingHistoryHighlightJobId) {
-                const highlighted = list.querySelector(`[data-job-id="${pendingHistoryHighlightJobId}"]`);
-                if (highlighted) {
-                    setTimeout(() => {
-                        highlighted.classList.remove('history-item--new');
-                    }, 2500);
-                }
-                pendingHistoryHighlightJobId = null;
-            }
-        }
-        
         // Show error
         function showError(elementId, message) {
             const el = document.getElementById(elementId);
             el.textContent = message;
             el.classList.remove('hidden');
-        }
-
-        function viewJobResults(jobId) {
-            if (!jobId) {
-                return;
-            }
-            window.location.href = `/results?job_id=${encodeURIComponent(jobId)}`;
         }
     </script>
 </body>
