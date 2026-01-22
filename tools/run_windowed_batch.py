@@ -279,6 +279,7 @@ def run_windowed_batch():
         provider_cooldown_applied = False
         slot1_selected = None
         no_playable = False
+        original_csv_root = config.csv_root
 
         try:
             streams = api.fetch_channel_streams(channel_id)
@@ -403,6 +404,8 @@ def run_windowed_batch():
         except Exception as exc:
             logging.exception("Channel %s failed: %s", channel_id, exc)
             result_status = "error"
+        finally:
+            config.set_csv_root(original_csv_root)
 
         duration_seconds = int(time.time() - start_time)
         next_eligible_at = int(time.time()) + 60

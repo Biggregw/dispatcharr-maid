@@ -970,6 +970,7 @@ def _run_background_optimization_channel(
         return {"completed": completed, "action": action_taken, "channel_id": channel_id}
 
     logging.info("Background optimisation starting channel %s", channel_id)
+    original_csv_root = config.csv_root
     base_csv_root = Path(config.resolve_path("csv"))
     base_csv_root.mkdir(parents=True, exist_ok=True)
 
@@ -1157,6 +1158,8 @@ def _run_background_optimization_channel(
         reason = f"error:{exc}"
         action_taken = "skipped"
         completed = True
+    finally:
+        config.set_csv_root(original_csv_root)
 
     if stop_requested:
         _cleanup_background_workspace(channel_workspace, channel_id, reason)
