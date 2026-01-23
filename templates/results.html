@@ -132,6 +132,7 @@
                             <th>Resolution</th>
                             <th>Codec</th>
                             <th>Bitrate</th>
+                            <th>Score</th>
                             <th>Validation</th>
                         </tr>
                     </thead>
@@ -151,6 +152,7 @@
                             <th>Service Provider</th>
                             <th>Resolution</th>
                             <th>Bitrate</th>
+                            <th>Score</th>
                             <th>Reason</th>
                         </tr>
                     </thead>
@@ -486,6 +488,7 @@
                             <td>${escapeHtml(row?.resolution || '—')}</td>
                             <td>${escapeHtml(row?.video_codec || '—')}</td>
                             <td>${fmtBitrate(row?.bitrate_kbps)}</td>
+                            <td class="mono">${formatScoreWithPrevious(row)}</td>
                             <td>${validation}</td>
                         </tr>
                     `;
@@ -493,7 +496,7 @@
                     console.warn('Failed to render final order row:', err, row);
                     return `
                         <tr>
-                            <td colspan="8" class="muted">Unable to render a final-order row for this stream.</td>
+                            <td colspan="9" class="muted">Unable to render a final-order row for this stream.</td>
                         </tr>
                     `;
                 }
@@ -522,6 +525,7 @@
                             <td>${serviceProvider}</td>
                             <td>${escapeHtml(row?.resolution || '—')}</td>
                             <td>${fmtBitrate(row?.bitrate_kbps)}</td>
+                            <td class="mono">${formatScoreWithPrevious(row)}</td>
                             <td>${escapeHtml(row?.reason || '—')}</td>
                         </tr>
                     `;
@@ -529,7 +533,7 @@
                     console.warn('Failed to render excluded row:', err, row);
                     return `
                         <tr>
-                            <td colspan="8" class="muted">Unable to render an excluded stream row.</td>
+                            <td colspan="9" class="muted">Unable to render an excluded stream row.</td>
                         </tr>
                     `;
                 }
@@ -576,6 +580,16 @@
             const num = Number(score);
             if (Number.isNaN(num)) return escapeHtml(String(score));
             return num.toFixed(1);
+        }
+
+        function formatScoreWithPrevious(row) {
+            const current = formatScore(row?.final_score);
+            const previousRaw = row?.previous_score;
+            if (previousRaw === null || previousRaw === undefined || previousRaw === 'N/A') {
+                return `${current} (no prior)`;
+            }
+            const previous = formatScore(previousRaw);
+            return `${current} (prev ${previous})`;
         }
 
         function humanizeValidationDetail(detail) {
