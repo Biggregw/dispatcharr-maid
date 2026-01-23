@@ -600,6 +600,344 @@ def _parse_background_reorder_timestamp(value):
         return None
 
 
+def _background_run_summary_path():
+    return Path("logs") / "background_run_summaries.json"
+
+
+def _background_run_outcome_path():
+    return Path("logs") / "background_run_outcomes.json"
+
+
+@contextmanager
+def _background_run_cache_lock():
+    lock_path = _background_run_summary_path().with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _background_run_cache_signature(entries):
+    last_timestamp = None
+    for entry in reversed(entries):
+        if isinstance(entry, dict) and entry.get("timestamp"):
+            last_timestamp = entry.get("timestamp")
+            break
+    return {
+        "log_entry_count": len(entries),
+        "last_entry_timestamp": last_timestamp,
+    }
+
+
+def _load_background_run_cache():
+    summary_path = _background_run_summary_path()
+    outcome_path = _background_run_outcome_path()
+    if not summary_path.exists() or not outcome_path.exists():
+        return None
+    try:
+        with summary_path.open("r", encoding="utf-8") as handle:
+            summary_payload = json.load(handle)
+        with outcome_path.open("r", encoding="utf-8") as handle:
+            outcome_payload = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.warning("Failed reading background run cache: %s", exc)
+        return None
+    if not isinstance(summary_payload, dict) or not isinstance(outcome_payload, dict):
+        return None
+    summaries = summary_payload.get("runs")
+    outcomes_by_run = outcome_payload.get("outcomes_by_run")
+    signature = summary_payload.get("signature")
+    if not isinstance(summaries, list) or not isinstance(outcomes_by_run, dict):
+        return None
+    if signature != outcome_payload.get("signature"):
+        return None
+    return {
+        "runs": summaries,
+        "outcomes_by_run": outcomes_by_run,
+        "signature": signature,
+    }
+
+
+def _save_background_run_cache(signature, runs, outcomes_by_run):
+    summary_path = _background_run_summary_path()
+    outcome_path = _background_run_outcome_path()
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_tmp = summary_path.with_suffix(".tmp")
+    outcome_tmp = outcome_path.with_suffix(".tmp")
+    generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    summary_payload = {
+        "generated_at": generated_at,
+        "signature": signature,
+        "runs": runs,
+    }
+    outcome_payload = {
+        "generated_at": generated_at,
+        "signature": signature,
+        "outcomes_by_run": outcomes_by_run,
+    }
+    with _background_run_cache_lock():
+        with summary_tmp.open("w", encoding="utf-8") as handle:
+            json.dump(summary_payload, handle, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        with outcome_tmp.open("w", encoding="utf-8") as handle:
+            json.dump(outcome_payload, handle, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(summary_tmp, summary_path)
+        os.replace(outcome_tmp, outcome_path)
+
+
+def _normalize_stream_order(value):
+    if not isinstance(value, list):
+        return []
+    normalized = []
+    for item in value:
+        if item is None:
+            continue
+        normalized.append(str(item))
+    return normalized
+
+
+def _is_background_not_evaluable(action_taken, reason):
+    if action_taken != "skipped":
+        return False
+    if not isinstance(reason, str):
+        return False
+    if reason.startswith("error:"):
+        return True
+    not_evaluable_reasons = {
+        "missing_channel_id",
+        "channel_missing",
+        "inactive_channel",
+        "no_streams",
+        "no_scored_streams",
+        "no_ordered_streams",
+    }
+    return reason in not_evaluable_reasons
+
+
+def _map_background_action(action_taken, reason):
+    if action_taken == "reordered":
+        return "reordered"
+    if action_taken == "unchanged":
+        return "unchanged"
+    if _is_background_not_evaluable(action_taken, reason):
+        return "not_evaluable"
+    return "unchanged"
+
+
+def _infer_background_run_trigger(start_ts, schedule):
+    if not schedule or not schedule.get("enabled"):
+        return "manual"
+    start_dt = _parse_background_reorder_timestamp(start_ts)
+    if start_dt is None:
+        return "manual"
+    start_minutes = start_dt.hour * 60 + start_dt.minute
+    if _schedule_window_active(schedule.get("start"), schedule.get("end"), start_minutes):
+        return "schedule"
+    return "manual"
+
+
+def _resolve_channel_name(channel_name_by_id, channel_id):
+    channel_name = channel_name_by_id.get(channel_id)
+    if channel_name is None and isinstance(channel_id, str):
+        try:
+            channel_name = channel_name_by_id.get(int(channel_id))
+        except (TypeError, ValueError):
+            channel_name = None
+    return channel_name
+
+
+def _derive_background_runs(entries, channel_name_by_id=None):
+    runs = []
+    outcomes_by_run = {}
+    if channel_name_by_id is None:
+        channel_name_by_id = {}
+    schedule_config = _get_background_schedule_config()
+    current = None
+    run_index = 0
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        entry_cycles = _safe_int(entry.get("cycles_completed"))
+        entry_ts = entry.get("timestamp")
+        parsed_ts = _parse_background_reorder_timestamp(entry_ts)
+        if current is None:
+            current = {
+                "entries": [],
+                "outcomes": {},
+                "cycles_completed": entry_cycles,
+                "start_ts": entry_ts,
+                "start_dt": parsed_ts,
+                "end_ts": entry_ts,
+                "end_dt": parsed_ts,
+                "last_dt": parsed_ts,
+                "last_index": index,
+                "end_after_entry": False,
+            }
+        elif (
+            current["end_after_entry"]
+            or (entry_cycles is not None and current["cycles_completed"] is not None and entry_cycles != current["cycles_completed"])
+            or (parsed_ts is not None and current["last_dt"] is not None and parsed_ts < current["last_dt"])
+        ):
+            run_index += 1
+            run_id, summary, outcomes = _finalize_background_run(
+                current,
+                run_index,
+                schedule_config,
+            )
+            runs.append(summary)
+            outcomes_by_run[run_id] = outcomes
+            current = {
+                "entries": [],
+                "outcomes": {},
+                "cycles_completed": entry_cycles,
+                "start_ts": entry_ts,
+                "start_dt": parsed_ts,
+                "end_ts": entry_ts,
+                "end_dt": parsed_ts,
+                "last_dt": parsed_ts,
+                "last_index": index,
+                "end_after_entry": False,
+            }
+
+        current["entries"].append(entry)
+        if parsed_ts is not None:
+            current["last_dt"] = parsed_ts
+        current["last_index"] = index
+        current["end_ts"] = entry_ts
+        current["end_dt"] = parsed_ts or current["end_dt"]
+
+        channel_id = entry.get("channel_id")
+        channel_key = str(channel_id)
+        action_taken = entry.get("action_taken")
+        reason = entry.get("reason")
+        mapped_action = _map_background_action(action_taken, reason)
+        entry_info = {
+            "channel_id": channel_id,
+            "channel_name": _resolve_channel_name(channel_name_by_id, channel_id),
+            "action": mapped_action,
+            "reason_code": reason if isinstance(reason, str) else None,
+            "before_order": _normalize_stream_order(entry.get("old_stream_order")),
+            "after_order": _normalize_stream_order(entry.get("new_stream_order")),
+            "_timestamp": entry_ts,
+            "_parsed_ts": parsed_ts,
+            "_index": index,
+        }
+        existing = current["outcomes"].get(channel_key)
+        if existing is None:
+            current["outcomes"][channel_key] = entry_info
+        else:
+            existing_ts = existing.get("_parsed_ts")
+            existing_index = existing.get("_index", -1)
+            replace = False
+            if parsed_ts is not None:
+                if existing_ts is None or parsed_ts > existing_ts:
+                    replace = True
+                elif parsed_ts == existing_ts and index > existing_index:
+                    replace = True
+            elif existing_ts is None and index > existing_index:
+                replace = True
+            if replace:
+                current["outcomes"][channel_key] = entry_info
+
+        if reason == "stopped":
+            current["end_after_entry"] = True
+
+    if current is not None and current["entries"]:
+        run_index += 1
+        run_id, summary, outcomes = _finalize_background_run(
+            current,
+            run_index,
+            schedule_config,
+        )
+        runs.append(summary)
+        outcomes_by_run[run_id] = outcomes
+
+    return {
+        "runs": runs,
+        "outcomes_by_run": outcomes_by_run,
+    }
+
+
+def _finalize_background_run(run_state, run_index, schedule_config):
+    start_ts = run_state.get("start_ts")
+    end_ts = run_state.get("end_ts")
+    start_dt = run_state.get("start_dt")
+    end_dt = run_state.get("end_dt")
+    if start_dt is None:
+        start_dt = _parse_background_reorder_timestamp(start_ts)
+    if end_dt is None:
+        end_dt = _parse_background_reorder_timestamp(end_ts)
+    duration_ms = 0
+    if start_dt is not None and end_dt is not None:
+        delta = end_dt - start_dt
+        duration_ms = max(0, int(delta.total_seconds() * 1000))
+    run_id = _make_background_run_id(start_dt, start_ts, end_ts, run_index)
+    outcomes = []
+    summary_counts = {"reordered": 0, "unchanged": 0, "not_evaluable": 0}
+    for outcome in run_state.get("outcomes", {}).values():
+        action = outcome.get("action")
+        if action in summary_counts:
+            summary_counts[action] += 1
+        channel_id = _safe_int(outcome.get("channel_id"))
+        outcomes.append(
+            {
+                "run_id": run_id,
+                "channel_id": channel_id,
+                "channel_name": outcome.get("channel_name"),
+                "action": action,
+                "reason_code": outcome.get("reason_code"),
+                "before_order": outcome.get("before_order"),
+                "after_order": outcome.get("after_order"),
+            }
+        )
+    summary = {
+        "run_id": run_id,
+        "started_at": start_ts,
+        "finished_at": end_ts,
+        "trigger": _infer_background_run_trigger(start_ts, schedule_config),
+        "strict_mode": True,
+        "channel_count": len(outcomes),
+        "summary": summary_counts,
+        "duration_ms": duration_ms,
+    }
+    return run_id, summary, outcomes
+
+
+def _make_background_run_id(start_dt, start_ts, end_ts, run_index):
+    if start_dt is not None:
+        start_label = start_dt.strftime("%Y%m%dT%H%M%S")
+    else:
+        start_label = "unknown"
+    base = f"{start_ts}|{end_ts}|{run_index}"
+    digest = hashlib.sha1(base.encode("utf-8")).hexdigest()[:10]
+    return f"bg-run-{start_label}-{digest}"
+
+
+def _get_background_run_cache(channel_name_by_id=None):
+    entries = _load_background_reorder_log_entries(limit=None)
+    if not isinstance(entries, list):
+        entries = []
+    signature = _background_run_cache_signature(entries)
+    cached = _load_background_run_cache()
+    if cached and cached.get("signature") == signature:
+        return cached
+    derived = _derive_background_runs(entries, channel_name_by_id=channel_name_by_id)
+    _save_background_run_cache(signature, derived["runs"], derived["outcomes_by_run"])
+    return {
+        "runs": derived["runs"],
+        "outcomes_by_run": derived["outcomes_by_run"],
+        "signature": signature,
+    }
+
+
 def _normalize_background_scope_selection(data):
     raw_ids = data.get("selected_channel_ids")
     if raw_ids is None:
@@ -3839,6 +4177,48 @@ def api_background_optimisation_channel_summary():
         summary.pop("_last_score_delta_index", None)
 
     return jsonify({"success": True, "channels": summaries})
+
+
+def _load_channel_name_lookup():
+    channel_name_by_id = {}
+    try:
+        api = DispatcharrAPI()
+        if not api.token:
+            api.login()
+        channels = api.fetch_channels() or []
+        for channel in channels:
+            if not isinstance(channel, dict):
+                continue
+            channel_id = channel.get("id")
+            if channel_id is None:
+                continue
+            channel_name_by_id[channel_id] = channel.get("name")
+    except Exception:
+        return {}
+    return channel_name_by_id
+
+
+@app.route('/api/background-optimisation/runs', methods=['GET'])
+@login_required
+def api_background_optimisation_runs():
+    channel_name_by_id = _load_channel_name_lookup()
+    cache = _get_background_run_cache(channel_name_by_id=channel_name_by_id)
+    runs = cache.get("runs", [])
+    runs.sort(
+        key=lambda item: _parse_background_reorder_timestamp(item.get("started_at"))
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return jsonify({"success": True, "runs": runs})
+
+
+@app.route('/api/background-optimisation/runs/<run_id>', methods=['GET'])
+@login_required
+def api_background_optimisation_run_outcomes(run_id):
+    channel_name_by_id = _load_channel_name_lookup()
+    cache = _get_background_run_cache(channel_name_by_id=channel_name_by_id)
+    outcomes = cache.get("outcomes_by_run", {}).get(run_id, [])
+    return jsonify({"success": True, "run_id": run_id, "outcomes": outcomes})
 
 
 @app.route('/api/background-optimisation/schedule', methods=['GET', 'POST'])
