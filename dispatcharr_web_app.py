@@ -4191,6 +4191,308 @@ def generate_job_summary(config, specific_channel_ids=None):
         return None
 
 
+def _is_missing_value(series):
+    if series is None:
+        return None
+    if not isinstance(series, pd.Series):
+        series = pd.Series(series)
+    text = series.astype(str).str.strip()
+    return series.isna() | (text == '') | (text.str.lower() == 'nan')
+
+
+def _build_stream_key_series(df):
+    if df is None or df.empty:
+        return pd.Series([], dtype=object)
+
+    stream_id = None
+    if 'stream_id' in df.columns:
+        raw_id = df['stream_id']
+        numeric_id = pd.to_numeric(raw_id, errors='coerce')
+        stream_id = numeric_id.apply(
+            lambda x: str(int(x)) if pd.notna(x) and float(x).is_integer() else (str(x) if pd.notna(x) else None)
+        )
+        raw_id_text = raw_id.astype(str).str.strip()
+        raw_id_text = raw_id_text.where(~_is_missing_value(raw_id_text), None)
+        stream_id = stream_id.where(stream_id.notna(), raw_id_text)
+
+    stream_url = None
+    if 'stream_url' in df.columns:
+        stream_url = df['stream_url'].astype(str).str.strip()
+        stream_url = stream_url.where(~_is_missing_value(stream_url), None)
+
+    if stream_id is None:
+        stream_id = pd.Series([None] * len(df), index=df.index, dtype=object)
+    if stream_url is None:
+        stream_url = pd.Series([None] * len(df), index=df.index, dtype=object)
+
+    stream_key = stream_id.apply(lambda x: f"id:{x}" if x not in (None, '') else None)
+    url_key = stream_url.apply(lambda x: f"url:{x}" if x not in (None, '') else None)
+    stream_key = stream_key.where(stream_key.notna(), url_key)
+    return stream_key
+
+
+def _build_channel_key_series(df):
+    if df is None or df.empty:
+        return pd.Series([], dtype=object)
+
+    channel_key = None
+    if 'channel_id' in df.columns:
+        raw_channel = df['channel_id']
+        numeric_channel = pd.to_numeric(raw_channel, errors='coerce')
+        channel_key = numeric_channel.apply(
+            lambda x: str(int(x)) if pd.notna(x) and float(x).is_integer() else (str(x) if pd.notna(x) else None)
+        )
+        raw_channel_text = raw_channel.astype(str).str.strip()
+        raw_channel_text = raw_channel_text.where(~_is_missing_value(raw_channel_text), None)
+        channel_key = channel_key.where(channel_key.notna(), raw_channel_text)
+
+    if 'channel_number' in df.columns:
+        channel_number = df['channel_number'].astype(str).str.strip()
+        channel_number = channel_number.where(~_is_missing_value(channel_number), None)
+        if channel_key is None:
+            channel_key = channel_number
+        else:
+            channel_key = channel_key.where(channel_key.notna(), channel_number)
+
+    if channel_key is None:
+        channel_key = pd.Series(['unknown'] * len(df), index=df.index, dtype=object)
+
+    channel_key = channel_key.fillna('unknown').astype(str)
+    return channel_key
+
+
+def _count_validation_results(series):
+    if series is None or len(series) == 0:
+        return None
+    values = series.astype(str).str.strip().str.lower()
+    missing = _is_missing_value(series)
+    pass_mask = values.str.contains('pass', na=False)
+    fail_mask = values.str.contains('fail', na=False)
+    unknown_mask = missing | (~pass_mask & ~fail_mask)
+    return {
+        'pass': int(pass_mask.sum()),
+        'fail': int(fail_mask.sum()),
+        'unknown': int(unknown_mask.sum()),
+    }
+
+
+def _count_measurement_status(series):
+    if series is None or len(series) == 0:
+        return None
+    values = series.astype(str).str.strip().str.lower()
+    missing = _is_missing_value(series)
+    ok_mask = values == 'ok'
+    timeout_mask = values.str.contains('timeout', na=False)
+    unknown_mask = missing
+    error_mask = ~(ok_mask | timeout_mask | unknown_mask)
+    return {
+        'ok': int(ok_mask.sum()),
+        'timeout': int(timeout_mask.sum()),
+        'error': int(error_mask.sum()),
+        'unknown': int(unknown_mask.sum()),
+    }
+
+
+def _build_evaluability_debug(config, job_meta=None):
+    if config is None:
+        return None
+
+    notes = []
+    csv_root = Path(config.resolve_path("csv"))
+    grouped_path = csv_root / "02_grouped_channel_streams.csv"
+    measurements_path = csv_root / "03_iptv_stream_measurements.csv"
+    scored_path = csv_root / "05_iptv_streams_scored_sorted.csv"
+
+    if not grouped_path.exists():
+        return {
+            'error': 'Missing csv/02_grouped_channel_streams.csv; evaluability breakdown unavailable.',
+        }
+
+    grouped_df = pd.read_csv(grouped_path)
+    measurements_df = pd.read_csv(measurements_path) if measurements_path.exists() else pd.DataFrame()
+    scored_df = pd.read_csv(scored_path) if scored_path.exists() else pd.DataFrame()
+
+    started_at = None
+    if job_meta and isinstance(job_meta, dict):
+        started_at = job_meta.get('started_at')
+
+    measured_df = measurements_df
+    measured_scope = 'all_rows'
+    measured_since = None
+    if not measurements_df.empty and 'timestamp' in measurements_df.columns and started_at:
+        started_at_dt = pd.to_datetime(started_at, errors='coerce')
+        if pd.notna(started_at_dt):
+            measurements_df = measurements_df.copy()
+            measurements_df['_timestamp_dt'] = pd.to_datetime(measurements_df['timestamp'], errors='coerce')
+            measured_df = measurements_df[measurements_df['_timestamp_dt'] >= started_at_dt]
+            measured_scope = 'timestamp_gte_started_at'
+            measured_since = started_at_dt.isoformat()
+        else:
+            notes.append('started_at could not be parsed; using all measurement rows.')
+
+    grouped_df = grouped_df.copy()
+    grouped_df['_channel_key'] = _build_channel_key_series(grouped_df)
+    grouped_df['_stream_key'] = _build_stream_key_series(grouped_df)
+
+    if not measurements_df.empty:
+        measurements_df = measurements_df.copy()
+        measurements_df['_channel_key'] = _build_channel_key_series(measurements_df)
+        measurements_df['_stream_key'] = _build_stream_key_series(measurements_df)
+
+    if not measured_df.empty:
+        measured_df = measured_df.copy()
+        measured_df['_channel_key'] = _build_channel_key_series(measured_df)
+        measured_df['_stream_key'] = _build_stream_key_series(measured_df)
+
+    if not scored_df.empty:
+        scored_df = scored_df.copy()
+        scored_df['_channel_key'] = _build_channel_key_series(scored_df)
+        scored_df['_stream_key'] = _build_stream_key_series(scored_df)
+
+    recent_urls = set()
+    filters = config.get('filters') or {}
+    try:
+        days_to_keep = int(filters.get('stream_last_measured_days', 7))
+    except (TypeError, ValueError):
+        days_to_keep = 7
+    if (
+        days_to_keep > 0
+        and not measurements_df.empty
+        and 'timestamp' in measurements_df.columns
+        and 'stream_url' in measurements_df.columns
+    ):
+        measurements_df = measurements_df.copy()
+        measurements_df['_timestamp_dt'] = pd.to_datetime(measurements_df['timestamp'], errors='coerce')
+        cutoff = datetime.now() - timedelta(days=days_to_keep)
+        recent_urls = set(
+            measurements_df.loc[
+                measurements_df['_timestamp_dt'] > cutoff, 'stream_url'
+            ]
+            .dropna()
+            .astype(str)
+        )
+    elif days_to_keep > 0:
+        notes.append('Recent-analysis pruning could not be evaluated (missing timestamp or stream_url).')
+
+    measured_keys = set()
+    if not measured_df.empty:
+        measured_keys = set(measured_df['_stream_key'].dropna())
+
+    measurements_keys = set()
+    if not measurements_df.empty:
+        measurements_keys = set(measurements_df['_stream_key'].dropna())
+
+    scored_keys = set()
+    if not scored_df.empty:
+        scored_keys = set(scored_df['_stream_key'].dropna())
+
+    channels = sorted(grouped_df['_channel_key'].unique())
+
+    channels_payload = {}
+    overall_missing_reasons = {
+        'missing_stream_url': 0,
+        'recent_analysis_pruning': 0,
+        'checkpoint_skipped': 0,
+        'unknown': 0,
+    }
+
+    for channel_key in channels:
+        grouped_channel = grouped_df[grouped_df['_channel_key'] == channel_key]
+        measured_channel = measured_df[measured_df['_channel_key'] == channel_key] if not measured_df.empty else pd.DataFrame()
+        scored_channel = scored_df[scored_df['_channel_key'] == channel_key] if not scored_df.empty else pd.DataFrame()
+
+        scored_channel_keys = set(scored_channel['_stream_key'].dropna())
+
+        missing_mask = ~grouped_channel['_stream_key'].isin(scored_channel_keys)
+        missing_rows = grouped_channel[missing_mask]
+
+        missing_stream_url_mask = False
+        if 'stream_url' in grouped_channel.columns:
+            missing_stream_url_mask = _is_missing_value(missing_rows['stream_url'])
+
+        recent_pruning_mask = False
+        if recent_urls and 'stream_url' in missing_rows.columns:
+            urls = missing_rows['stream_url'].astype(str)
+            recent_pruning_mask = urls.isin(recent_urls)
+
+        checkpoint_mask = False
+        if measured_scope == 'timestamp_gte_started_at' and measurements_keys:
+            checkpoint_mask = missing_rows['_stream_key'].isin(measurements_keys) & ~missing_rows['_stream_key'].isin(measured_keys)
+
+        missing_reasons = {
+            'missing_stream_url': int(missing_stream_url_mask.sum()) if hasattr(missing_stream_url_mask, 'sum') else 0,
+            'recent_analysis_pruning': int(
+                (recent_pruning_mask & ~missing_stream_url_mask).sum()
+            ) if hasattr(recent_pruning_mask, 'sum') else 0,
+            'checkpoint_skipped': int(
+                (checkpoint_mask & ~missing_stream_url_mask & ~recent_pruning_mask).sum()
+            ) if hasattr(checkpoint_mask, 'sum') else 0,
+        }
+        accounted = sum(missing_reasons.values())
+        missing_reasons['unknown'] = int(len(missing_rows) - accounted)
+
+        for key, value in missing_reasons.items():
+            overall_missing_reasons[key] += int(value)
+
+        evaluable_count = None
+        validation_counts = None
+        if not scored_channel.empty:
+            if 'final_score' in scored_channel.columns:
+                final_score = pd.to_numeric(scored_channel['final_score'], errors='coerce')
+                evaluable_count = int(final_score.notna().sum())
+            else:
+                notes.append('final_score column missing from scored CSV; evaluable counts unavailable.')
+
+            if 'validation_result' in scored_channel.columns:
+                validation_counts = _count_validation_results(scored_channel['validation_result'])
+
+        measurement_status = None
+        if not measured_channel.empty and 'status' in measured_channel.columns:
+            measurement_status = _count_measurement_status(measured_channel['status'])
+
+        channels_payload[str(channel_key)] = {
+            'intended': int(len(grouped_channel)),
+            'measured': int(len(measured_channel)),
+            'scored': int(len(scored_channel)),
+            'evaluable': evaluable_count,
+            'missing_in_scored': int(len(missing_rows)),
+            'missing_reasons': missing_reasons,
+            'validation_result': validation_counts,
+            'measurement_status': measurement_status,
+        }
+
+    overall = {
+        'intended': int(len(grouped_df)),
+        'measured': int(len(measured_df)),
+        'scored': int(len(scored_df)),
+        'evaluable': None,
+        'missing_in_scored': int(len(grouped_df) - len(grouped_df[grouped_df['_stream_key'].isin(scored_keys)])),
+        'missing_reasons': overall_missing_reasons,
+        'validation_result': None,
+        'measurement_status': None,
+    }
+
+    if not scored_df.empty and 'final_score' in scored_df.columns:
+        final_score = pd.to_numeric(scored_df['final_score'], errors='coerce')
+        overall['evaluable'] = int(final_score.notna().sum())
+    if not scored_df.empty and 'validation_result' in scored_df.columns:
+        overall['validation_result'] = _count_validation_results(scored_df['validation_result'])
+    if not measured_df.empty and 'status' in measured_df.columns:
+        overall['measurement_status'] = _count_measurement_status(measured_df['status'])
+
+    return {
+        'counts': {
+            'overall': overall,
+        },
+        'channels': channels_payload,
+        'measurement_scope': {
+            'mode': measured_scope,
+            'since': measured_since,
+        },
+        'notes': list(dict.fromkeys(notes)),
+    }
+
+
 def _build_config_from_history_job(history_job):
     """Create a Config instance scoped to a historical job entry dict."""
     try:
@@ -5082,6 +5384,9 @@ def api_job_results(job_id):
         )
         if ordering_visibility:
             payload['ordering_visibility'] = ordering_visibility
+        evaluability_debug = _build_evaluability_debug(config, job_meta=job_meta)
+        if evaluability_debug is not None:
+            payload['evaluability_debug'] = evaluability_debug
         payload = _make_json_safe(payload)
         return jsonify(payload)
     except Exception as e:
