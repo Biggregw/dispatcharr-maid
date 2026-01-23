@@ -972,27 +972,56 @@
             height: 16px;
         }
 
-        .background-activity-table {
+        .background-history {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .background-history__header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .background-history__toggle {
+            text-decoration: none;
+            font-size: 0.95em;
+        }
+
+        .background-history__table-wrapper {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .background-history--collapsed .background-history__table-wrapper {
+            max-height: 240px;
+            overflow-y: auto;
+        }
+
+        .background-history-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 0.95em;
         }
 
-        .background-activity-table th,
-        .background-activity-table td {
+        .background-history-table th,
+        .background-history-table td {
             padding: 10px 12px;
             border-bottom: 1px solid #e5e7eb;
             text-align: left;
             vertical-align: top;
         }
 
-        .background-activity-table th {
+        .background-history-table th {
             background: #f3f4f6;
             color: #374151;
             font-weight: 700;
         }
 
-        .background-activity-empty {
+        .background-history-empty {
             text-align: center;
             color: #6b7280;
         }
@@ -1206,26 +1235,32 @@
                     <strong>Analysis depth:</strong> Background optimisation always runs in deep, probe-complete mode.
                 </div>
             </div>
-            <div>
-                <h3 style="margin-bottom: 12px; color: #1f2937;">Recent activity</h3>
-                <p style="margin-bottom: 12px; color: #4b5563; font-size: 0.95em;">
-                    Each entry reflects a real background decision. "Action" and "Reason" explain why a channel was reordered, skipped, or left unchanged.
+            <div class="background-history background-history--collapsed" id="channel-history-section">
+                <div class="background-history__header">
+                    <h3 style="margin-bottom: 0; color: #1f2937;">Channel history</h3>
+                    <button type="button" class="text-btn background-history__toggle" id="channel-history-toggle" aria-expanded="false">
+                        ▸ Expand
+                    </button>
+                </div>
+                <p style="margin-bottom: 4px; color: #4b5563; font-size: 0.95em;">
+                    A calm summary of recent background checks by channel.
                 </p>
-                <div style="overflow-x: auto;">
-                    <table class="background-activity-table">
+                <div class="background-history__table-wrapper" style="overflow-x: auto;">
+                    <table class="background-history-table">
                         <thead>
                             <tr>
-                                <th>Timestamp</th>
                                 <th>Channel</th>
-                                <th>Action</th>
-                                <th>Reason</th>
-                                <th>Score delta</th>
-                                <th>Cycles completed</th>
+                                <th>Last checked</th>
+                                <th>Last action</th>
+                                <th>Total checks</th>
+                                <th>Reordered</th>
+                                <th>Skipped</th>
+                                <th>Unchanged</th>
                             </tr>
                         </thead>
-                        <tbody id="background-optimisation-activity">
+                        <tbody id="background-optimisation-channel-history">
                             <tr>
-                                <td colspan="6" class="background-activity-empty">No recent activity recorded.</td>
+                                <td colspan="7" class="background-history-empty">No channels checked yet.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1345,7 +1380,7 @@
         let backgroundRunnerEnabled = false;
         let backgroundRunnerPaused = false;
         let backgroundRunnerBusy = false;
-        let backgroundOptimisationActivityEntries = [];
+        let backgroundChannelSummaryEntries = [];
         let backgroundScheduleBusy = false;
         let backgroundScheduleState = {
             enabled: false,
@@ -1361,6 +1396,7 @@
         let backgroundScopeSaveTimeout = null;
         const backgroundScopeAppliedGroups = new Set();
         const channelNameLookup = new Map();
+        let channelHistoryExpanded = false;
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
@@ -1429,6 +1465,10 @@
             if (scheduleSaveButton) {
                 scheduleSaveButton.addEventListener('click', saveBackgroundSchedule);
             }
+            const channelHistoryToggle = document.getElementById('channel-history-toggle');
+            if (channelHistoryToggle) {
+                channelHistoryToggle.addEventListener('click', toggleChannelHistory);
+            }
 
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
@@ -1453,9 +1493,6 @@
                     renderGroups();
                     document.getElementById('group-loading').classList.add('hidden');
                     document.getElementById('group-container').classList.remove('hidden');
-                    if (Array.isArray(backgroundOptimisationActivityEntries) && backgroundOptimisationActivityEntries.length) {
-                        renderBackgroundOptimisationActivity(backgroundOptimisationActivityEntries);
-                    }
                 } else {
                     showError('group-error', data.error);
                 }
@@ -1691,9 +1728,6 @@
                         renderGroupChannels(id);
                     }
                 });
-                if (Array.isArray(backgroundOptimisationActivityEntries) && backgroundOptimisationActivityEntries.length) {
-                    renderBackgroundOptimisationActivity(backgroundOptimisationActivityEntries);
-                }
                 updateSelectionState();
             }
         }
@@ -2053,6 +2087,27 @@
             element.textContent = value;
         }
 
+        function setChannelHistoryExpanded(isExpanded) {
+            channelHistoryExpanded = Boolean(isExpanded);
+            const section = document.getElementById('channel-history-section');
+            const toggle = document.getElementById('channel-history-toggle');
+            if (section) {
+                section.classList.toggle('background-history--collapsed', !channelHistoryExpanded);
+            }
+            if (toggle) {
+                toggle.setAttribute('aria-expanded', String(channelHistoryExpanded));
+                toggle.textContent = channelHistoryExpanded ? '▾ Collapse' : '▸ Expand';
+            }
+        }
+
+        function toggleChannelHistory(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            setChannelHistoryExpanded(!channelHistoryExpanded);
+        }
+
         function formatActivityTimestamp(value) {
             if (value === null || value === undefined || value === '') {
                 return '—';
@@ -2107,6 +2162,10 @@
                     }
                 });
             });
+
+            if (Array.isArray(backgroundChannelSummaryEntries) && backgroundChannelSummaryEntries.length) {
+                renderBackgroundChannelSummary(backgroundChannelSummaryEntries);
+            }
         }
 
         function getChannelNameById(channelId) {
@@ -2125,62 +2184,85 @@
                 : 'Unknown channel';
         }
 
-        function formatScoreDelta(value) {
+        function normalizeHistoryCell(value) {
             if (value === null || value === undefined || value === '') {
                 return '—';
             }
-            const numericValue = Number(value);
-            if (!Number.isFinite(numericValue)) {
-                return '—';
-            }
-            const formatted = Math.abs(numericValue).toFixed(2);
-            if (numericValue === 0) {
-                return formatted;
-            }
-            return `${numericValue > 0 ? '+' : '-'}${formatted}`;
+            return value;
         }
 
-        function renderBackgroundOptimisationActivity(entries) {
-            const body = document.getElementById('background-optimisation-activity');
+        function sortChannelSummary(entries) {
+            return entries.slice().sort((a, b) => {
+                const aTs = Date.parse(a?.last_checked_at ?? '');
+                const bTs = Date.parse(b?.last_checked_at ?? '');
+                const aValid = !Number.isNaN(aTs);
+                const bValid = !Number.isNaN(bTs);
+                if (aValid && bValid) {
+                    return bTs - aTs;
+                }
+                if (aValid !== bValid) {
+                    return aValid ? -1 : 1;
+                }
+                return 0;
+            });
+        }
+
+        function renderBackgroundChannelSummary(entries) {
+            const body = document.getElementById('background-optimisation-channel-history');
             if (!body) return;
             body.innerHTML = '';
 
             if (!Array.isArray(entries) || entries.length === 0) {
                 const row = document.createElement('tr');
                 const cell = document.createElement('td');
-                cell.colSpan = 6;
-                cell.className = 'background-activity-empty';
-                cell.textContent = 'No recent activity recorded.';
+                cell.colSpan = 7;
+                cell.className = 'background-history-empty';
+                cell.textContent = 'No channels checked yet.';
                 row.appendChild(cell);
                 body.appendChild(row);
                 return;
             }
 
-            const rows = entries.slice().reverse();
+            const rows = sortChannelSummary(entries);
             rows.forEach(entry => {
                 const row = document.createElement('tr');
-                const timestamp = formatActivityTimestamp(entry?.timestamp);
                 const channelId = entry?.channel_id ?? '';
                 const channelLabel = formatChannelLabel(channelId, entry?.channel_name);
-                const actionTaken = entry?.action_taken ?? '';
-                const reason = entry?.reason ?? '';
-                const scoreDelta = formatScoreDelta(entry?.score_delta);
-                const cyclesCompleted = entry?.cycles_completed ?? '';
+                const lastChecked = formatActivityTimestamp(entry?.last_checked_at);
+                const lastAction = normalizeHistoryCell(entry?.last_action);
+                const totalChecks = normalizeHistoryCell(entry?.total_checks);
+                const counts = entry?.counts || {};
+                const reordered = normalizeHistoryCell(counts?.reordered ?? 0);
+                const skipped = normalizeHistoryCell(counts?.skipped ?? 0);
+                const unchanged = normalizeHistoryCell(counts?.unchanged ?? 0);
 
                 row.dataset.channelId = channelId;
 
-                [timestamp, channelLabel, actionTaken, reason, scoreDelta, cyclesCompleted].forEach(value => {
+                [channelLabel, lastChecked, lastAction, totalChecks, reordered, skipped, unchanged].forEach(value => {
                     const cell = document.createElement('td');
-                    if (value === null || value === undefined || value === '') {
-                        cell.textContent = '—';
-                    } else {
-                        cell.textContent = value;
-                    }
+                    cell.textContent = value;
                     row.appendChild(cell);
                 });
 
                 body.appendChild(row);
             });
+        }
+
+        async function loadBackgroundChannelSummary() {
+            try {
+                const response = await fetch('/api/background-optimisation/channel-summary', { cache: 'no-store' });
+                const data = await response.json();
+                if (data.success) {
+                    const channels = Array.isArray(data.channels) ? data.channels : [];
+                    backgroundChannelSummaryEntries = channels;
+                    renderBackgroundChannelSummary(channels);
+                    return;
+                }
+            } catch (error) {
+                // Best-effort only.
+            }
+            backgroundChannelSummaryEntries = [];
+            renderBackgroundChannelSummary([]);
         }
 
         function formatBackgroundOutcomes(entries) {
@@ -2371,7 +2453,6 @@
                 const scheduleEnabled = Boolean(schedule?.enabled);
                 const scheduleActive = Boolean(schedule?.active);
                 const lastEntry = activity.length ? activity[activity.length - 1] : null;
-                backgroundOptimisationActivityEntries = activity;
                 const currentChannelId = state.current_channel_id ?? '';
                 const currentChannelLabel = formatChannelLabel(
                     currentChannelId,
@@ -2390,20 +2471,19 @@
                 setBackgroundOptimisationValue('background-optimisation-updated-at', formatTimeSince(state.updated_at));
                 renderBackgroundOptimisationOutcomes(formatBackgroundOutcomes(activity));
                 setBackgroundOptimisationValue('background-optimisation-last-decision', formatBackgroundDecision(lastEntry));
-                renderBackgroundOptimisationActivity(activity);
                 updateBackgroundScheduleDisplay(schedule);
                 updateBackgroundSummaryActive();
             } catch (error) {
-                backgroundOptimisationActivityEntries = [];
                 backgroundRunnerPaused = false;
                 setBackgroundOptimisationValue('background-optimisation-running', '—');
                 renderBackgroundOptimisationOutcomes([]);
                 setBackgroundOptimisationValue('background-optimisation-last-decision', '—');
-                renderBackgroundOptimisationActivity([]);
                 updateBackgroundScheduleDisplay(null);
                 backgroundCurrentChannelLabel = '—';
                 backgroundStatusUpdatedAt = null;
                 updateBackgroundSummaryActive();
+            } finally {
+                await loadBackgroundChannelSummary();
             }
         }
 
