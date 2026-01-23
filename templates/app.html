@@ -1389,37 +1389,6 @@
                     <div class="background-summary-meta">Based on managed channel set</div>
                 </div>
             </div>
-            <div class="background-history background-history--collapsed" id="run-history-section">
-                <div class="background-history__header">
-                    <h3 style="margin-bottom: 0; color: #1f2937;">Run history</h3>
-                    <button type="button" class="text-btn background-history__toggle" id="run-history-toggle" aria-expanded="false">
-                        ▸ Expand
-                    </button>
-                </div>
-                <p style="margin-bottom: 4px; color: #4b5563; font-size: 0.95em;">
-                    A run-first view of background optimisation outcomes.
-                </p>
-                <div class="background-history__table-wrapper" style="overflow-x: auto;">
-                    <table class="background-history-table">
-                        <thead>
-                            <tr>
-                                <th>Run start</th>
-                                <th>Trigger</th>
-                                <th>Channels checked</th>
-                                <th>reordered</th>
-                                <th>unchanged</th>
-                                <th>not_evaluable</th>
-                                <th>Duration</th>
-                            </tr>
-                        </thead>
-                        <tbody id="background-optimisation-run-history">
-                            <tr>
-                                <td colspan="7" class="background-history-empty">No runs recorded yet.</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
         </div>
 
         <!-- Scope Selection -->
@@ -1452,6 +1421,38 @@
                     <span class="summary-value summary-value--emphasis" id="selected-channels-summary">None yet</span>
                 </div>
                 <div class="summary-helper">Checked channels define the managed channel set for background optimisation.</div>
+            </div>
+        </div>
+
+        <div class="background-history background-history--collapsed" id="run-history-section">
+            <div class="background-history__header">
+                <h3 style="margin-bottom: 0; color: #1f2937;">Historical run history</h3>
+                <button type="button" class="text-btn background-history__toggle" id="run-history-toggle" aria-expanded="false">
+                    ▸ Expand
+                </button>
+            </div>
+            <p style="margin-bottom: 4px; color: #4b5563; font-size: 0.95em;">
+                Historical outcomes from completed background optimisation runs (not live status).
+            </p>
+            <div class="background-history__table-wrapper" style="overflow-x: auto;">
+                <table class="background-history-table">
+                    <thead>
+                        <tr>
+                            <th>Run start</th>
+                            <th>Trigger</th>
+                            <th>Channels checked</th>
+                            <th>reordered</th>
+                            <th>unchanged</th>
+                            <th>not_evaluable</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody id="background-optimisation-run-history">
+                        <tr>
+                            <td colspan="7" class="background-history-empty">No runs recorded yet.</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
         
