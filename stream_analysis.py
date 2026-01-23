@@ -2340,6 +2340,15 @@ def _score_streams_proxy_first(
         ascending=[True, False, False, True, True],
     )
 
+    if 'ordering_score' in df_sorted.columns:
+        ordering_series = df_sorted['ordering_score']
+        missing_mask = pd.isna(ordering_series)
+        if ordering_series.dtype == object:
+            missing_mask |= ordering_series.isin(['', 'N/A'])
+        df_sorted['final_score'] = ordering_series.where(~missing_mask, '')
+    else:
+        df_sorted['final_score'] = ''
+
     final_columns = [
         'stream_id', 'channel_number', 'channel_id', 'channel_group_id', 'stream_name',
         'stream_url', 'm3u_account',
@@ -2466,6 +2475,15 @@ def _score_streams_legacy(
         by=['channel_number', 'final_score', 'base_score', 'provider_sort_key', 'stream_id'],
         ascending=[True, False, False, True, True],
     )
+
+    if 'ordering_score' in df_sorted.columns:
+        ordering_series = df_sorted['ordering_score']
+        missing_mask = pd.isna(ordering_series)
+        if ordering_series.dtype == object:
+            missing_mask |= ordering_series.isin(['', 'N/A'])
+        df_sorted['final_score'] = ordering_series.where(~missing_mask, '')
+    else:
+        df_sorted['final_score'] = ''
 
     final_columns = [
         'stream_id', 'channel_number', 'channel_id', 'channel_group_id', 'stream_name',
