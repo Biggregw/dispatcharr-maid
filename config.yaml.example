@@ -28,6 +28,8 @@ ordering:
   resilience_mode: false
   fallback_depth: 3
   similar_score_delta: 5
+  # Reorder strictness: low, medium, high (default medium keeps current behavior)
+  strictness: medium
   # Enable reliability-first ordering (uses cached historical outcomes; default is unchanged)
   reliability_sort: false
   # Background optimization toggles (optional; enable only if you supply history/playback metadata)
