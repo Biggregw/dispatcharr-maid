@@ -724,11 +724,14 @@ def _extract_background_entry_order(entry):
     return _normalize_stream_order(entry.get("old_stream_order"))
 
 
-def _load_scored_stream_lookup_for_channel(channel_id):
+def _load_scored_stream_lookup_for_channel(channel_id, config=None):
     channel_id_int = _safe_int(channel_id)
     if channel_id_int is None:
         return {}
-    scored_path = Path("csv") / "05_iptv_streams_scored_sorted.csv"
+    if config:
+        scored_path = Path(config.resolve_path("csv/05_iptv_streams_scored_sorted.csv"))
+    else:
+        scored_path = Path("csv") / "05_iptv_streams_scored_sorted.csv"
     if not scored_path.exists():
         return {}
     try:
@@ -757,12 +760,45 @@ def _load_scored_stream_lookup_for_channel(channel_id):
     return lookup
 
 
+def _find_latest_analysis_job():
+    history = get_job_history()
+    if not isinstance(history, list):
+        return None
+
+    latest_entry = None
+    latest_dt = None
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("status") != "completed":
+            continue
+        if not _job_ran_analysis(entry.get("job_type")):
+            continue
+        completed_dt = _parse_iso_datetime(entry.get("completed_at") or entry.get("started_at"))
+        if completed_dt is None:
+            if latest_entry is None:
+                latest_entry = entry
+            continue
+        if latest_dt is None or completed_dt > latest_dt:
+            latest_entry = entry
+            latest_dt = completed_dt
+    return latest_entry
+
+
 def _build_channel_insight(channel_id):
     entries = _load_background_reorder_log_entries(limit=None)
     if not isinstance(entries, list):
         entries = []
     channel_name_by_id = _load_channel_name_lookup()
+    latest_job = _find_latest_analysis_job()
+    config = _build_config_from_history_job(latest_job) if latest_job else None
+    channel_lookup = _load_channel_lookup(config) if config else {}
+    channel_key = _safe_int(channel_id) if channel_id is not None else None
+    channel_meta = channel_lookup.get(channel_key) if channel_key is not None else None
     channel_name = _resolve_channel_name(channel_name_by_id, channel_id)
+    if not channel_name and isinstance(channel_meta, dict):
+        channel_name = channel_meta.get("channel_name")
+    channel_number = channel_meta.get("channel_number") if isinstance(channel_meta, dict) else None
     filtered = []
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
@@ -817,7 +853,29 @@ def _build_channel_insight(channel_id):
     )
     current_order = _extract_background_entry_order(latest_entry)
 
-    scored_lookup = _load_scored_stream_lookup_for_channel(channel_id)
+    scored_lookup = _load_scored_stream_lookup_for_channel(channel_id, config=config)
+    previous_scores, previous_score_key = _load_previous_score_lookup(
+        job_id=latest_job.get("job_id") if isinstance(latest_job, dict) else None,
+        started_at=latest_job.get("started_at") if isinstance(latest_job, dict) else None,
+    )
+
+    def _lookup_previous_score(stream_id):
+        if not previous_scores:
+            return None
+        stream_key = _normalize_previous_score_id(stream_id)
+        if previous_score_key == "channel_number":
+            channel_key = _normalize_previous_score_id(channel_number)
+            return previous_scores.get((channel_key, stream_key))
+        if previous_score_key == "channel_id":
+            channel_key = _normalize_previous_score_id(channel_id)
+            return previous_scores.get((channel_key, stream_key))
+        channel_key = _normalize_previous_score_id(channel_id)
+        score = previous_scores.get((channel_key, stream_key))
+        if score is None and channel_number is not None:
+            channel_key = _normalize_previous_score_id(channel_number)
+            score = previous_scores.get((channel_key, stream_key))
+        return score
+
     streams = []
     for idx, stream_id in enumerate(current_order):
         try:
@@ -825,12 +883,15 @@ def _build_channel_insight(channel_id):
         except Exception:
             sid_key = stream_id
         record = scored_lookup.get(sid_key) if isinstance(scored_lookup, dict) else None
+        current_score = _ordering_score_from_record(record) if record else None
         streams.append(
             {
                 "stream_id": stream_id,
                 "stream_name": record.get("stream_name") if isinstance(record, dict) else None,
                 # Derived score: last recorded ordering score from existing scored CSV only.
-                "score": _ordering_score_from_record(record) if record else None,
+                "score": current_score,
+                "current_score": current_score,
+                "previous_score": _lookup_previous_score(stream_id),
                 "order": idx + 1,
                 "is_slot1": idx == 0,
             }
