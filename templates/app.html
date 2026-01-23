@@ -227,6 +227,51 @@
             color: #4338ca;
         }
 
+        .scope-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+
+        .scope-controls__actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .scope-controls__commit {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            align-items: flex-end;
+            margin-left: auto;
+        }
+
+        .scope-controls__commit .action-btn {
+            width: auto;
+            padding: 10px 18px;
+            font-size: 0.95em;
+        }
+
+        .scope-status {
+            font-size: 0.9em;
+            color: #6b7280;
+            text-align: right;
+        }
+
+        .scope-status.scope-status--dirty {
+            color: #b45309;
+            font-weight: 600;
+        }
+
+        .scope-status.scope-status--saved {
+            color: #16a34a;
+            font-weight: 600;
+        }
+
         .channel-empty {
             margin-top: 8px;
             font-size: 0.9em;
@@ -1274,6 +1319,16 @@
             <p style="margin-bottom: 12px; color: #4b5563; font-size: 0.95em;">
                 Choose the channels that should be eligible for background optimisation.
             </p>
+            <div class="scope-controls">
+                <div class="scope-controls__actions">
+                    <button type="button" class="text-btn" id="background-scope-select-all">Select all channels</button>
+                    <button type="button" class="text-btn" id="background-scope-deselect-all">Deselect all channels</button>
+                </div>
+                <div class="scope-controls__commit">
+                    <button type="button" class="action-btn primary" id="background-scope-save">Apply background optimisation scope</button>
+                    <div class="scope-status" id="background-scope-status">Scope up to date.</div>
+                </div>
+            </div>
 
             <div id="group-loading" class="alert alert-info">
                 <span class="spinner"></span> Loading channel groups...
@@ -1394,6 +1449,8 @@
         let backgroundScopeTouched = false;
         let backgroundScopeSelectionIds = new Set();
         let backgroundScopeSaveTimeout = null;
+        let backgroundScopeSaving = false;
+        let backgroundScopeLastSavedAt = null;
         const backgroundScopeAppliedGroups = new Set();
         const channelNameLookup = new Map();
         let channelHistoryExpanded = false;
@@ -1468,6 +1525,24 @@
             const channelHistoryToggle = document.getElementById('channel-history-toggle');
             if (channelHistoryToggle) {
                 channelHistoryToggle.addEventListener('click', toggleChannelHistory);
+            }
+            const scopeSelectAllButton = document.getElementById('background-scope-select-all');
+            if (scopeSelectAllButton) {
+                scopeSelectAllButton.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    toggleAllChannelsGlobal(true);
+                });
+            }
+            const scopeDeselectAllButton = document.getElementById('background-scope-deselect-all');
+            if (scopeDeselectAllButton) {
+                scopeDeselectAllButton.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    toggleAllChannelsGlobal(false);
+                });
+            }
+            const scopeSaveButton = document.getElementById('background-scope-save');
+            if (scopeSaveButton) {
+                scopeSaveButton.addEventListener('click', saveBackgroundOptimisationScope);
             }
 
             // Check for active jobs periodically
@@ -1798,7 +1873,7 @@
             } else {
                 selections.delete(channelId);
             }
-            backgroundScopeTouched = true;
+            markBackgroundScopeDirty();
             updateSelectionState();
         }
 
@@ -1828,9 +1903,43 @@
                 loadDerivedRefreshFilters(selectedChannels[0]);
             }
 
-            if (backgroundScopeTouched) {
-                scheduleBackgroundScopeSave();
+            updateScopeSaveUi();
+        }
+
+        function markBackgroundScopeDirty() {
+            backgroundScopeTouched = true;
+            updateScopeSaveUi();
+        }
+
+        function formatScopeSavedLabel(timestamp) {
+            if (!timestamp) {
+                return 'Scope up to date.';
             }
+            return `Scope saved ${formatActivityTimestamp(timestamp)}`;
+        }
+
+        function updateScopeSaveUi() {
+            const button = document.getElementById('background-scope-save');
+            const status = document.getElementById('background-scope-status');
+            if (!button || !status) return;
+            status.classList.remove('scope-status--dirty', 'scope-status--saved');
+            if (backgroundScopeSaving) {
+                button.disabled = true;
+                button.textContent = 'Saving scope...';
+                status.textContent = 'Saving managed channel set...';
+                return;
+            }
+            if (backgroundScopeTouched) {
+                button.disabled = false;
+                button.textContent = 'Apply background optimisation scope';
+                status.textContent = 'Changes pending — apply to save the managed channel set.';
+                status.classList.add('scope-status--dirty');
+                return;
+            }
+            button.disabled = true;
+            button.textContent = 'Scope up to date';
+            status.textContent = formatScopeSavedLabel(backgroundScopeLastSavedAt);
+            status.classList.add('scope-status--saved');
         }
 
         function scheduleBackgroundScopeSave() {
@@ -1852,6 +1961,8 @@
             const payload = {
                 selected_channel_ids: getSelectedChannelIds()
             };
+            backgroundScopeSaving = true;
+            updateScopeSaveUi();
             try {
                 const response = await fetch('/api/background-optimisation/scope', {
                     method: 'POST',
@@ -1861,9 +1972,13 @@
                 const data = await response.json();
                 if (data.success) {
                     backgroundScopeTouched = false;
+                    backgroundScopeLastSavedAt = new Date();
                 }
             } catch (error) {
                 // Best-effort only.
+            } finally {
+                backgroundScopeSaving = false;
+                updateScopeSaveUi();
             }
         }
 
@@ -2487,11 +2602,35 @@
             }
         }
 
+        async function toggleAllChannelsGlobal(shouldSelect) {
+            const groupIds = Array.isArray(allGroups)
+                ? allGroups.map(group => group.id)
+                : [];
+            if (!groupIds.length) {
+                return;
+            }
+            if (shouldSelect) {
+                await ensureChannelsLoaded(groupIds);
+            }
+            groupIds.forEach(groupId => {
+                const selections = getGroupChannelSelections(groupId);
+                if (!shouldSelect) {
+                    selections.clear();
+                    return;
+                }
+                const channels = allChannels[groupId] || [];
+                channels.forEach(ch => selections.add(ch.id));
+            });
+            markBackgroundScopeDirty();
+            renderGroups();
+            updateSelectionState();
+        }
+
         function toggleAllChannels(groupId, shouldSelect) {
             const selections = getGroupChannelSelections(groupId);
             if (!shouldSelect) {
                 selections.clear();
-                backgroundScopeTouched = true;
+                markBackgroundScopeDirty();
                 renderGroups();
                 updateSelectionState();
                 return;
@@ -2499,7 +2638,7 @@
 
             const channels = allChannels[groupId] || [];
             channels.forEach(ch => selections.add(ch.id));
-            backgroundScopeTouched = true;
+            markBackgroundScopeDirty();
             renderGroups();
             updateSelectionState();
         }
