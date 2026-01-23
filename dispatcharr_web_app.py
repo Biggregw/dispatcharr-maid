@@ -511,7 +511,6 @@ def _save_background_reorder_state(
     channel_id=None,
     pass_count=None,
     schedule=None,
-    selected_channel_ids=None,
 ):
     state_path = _background_reorder_state_path()
     state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -533,9 +532,6 @@ def _save_background_reorder_state(
             payload["pass_count"] = pass_count
         if schedule is not None:
             payload["schedule"] = schedule
-        if selected_channel_ids is not None:
-            # Legacy scope storage (superseded by managed channel set in sqlite).
-            payload["selected_channel_ids"] = selected_channel_ids
         payload["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         with tmp_path.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False)
@@ -588,22 +584,6 @@ def _normalize_background_scope_selection(data):
             return None, f"Invalid channel id: {value}"
         normalized.append(channel_id)
     return normalized, None
-
-
-def _selected_background_channel_ids(state):
-    # Legacy JSON scope selection (superseded by managed channel set in sqlite).
-    if not isinstance(state, dict):
-        return None
-    raw_ids = state.get("selected_channel_ids")
-    if not isinstance(raw_ids, list):
-        return None
-    normalized = set()
-    for value in raw_ids:
-        channel_id = _safe_int(value)
-        if channel_id is None:
-            continue
-        normalized.add(str(channel_id))
-    return normalized
 
 
 def _safe_channel_workspace_component(channel_id):
@@ -729,23 +709,6 @@ def _is_active_channel(channel):
     if status in ("inactive", "disabled"):
         return False
     return True
-
-
-def _sorted_background_channels(channels):
-    def _safe_int(value):
-        try:
-            return int(value)
-        except Exception:
-            return None
-
-    def _sort_key(channel):
-        channel_number = _safe_int(channel.get("channel_number"))
-        if channel_number is None:
-            channel_number = float("inf")
-        channel_id = _safe_int(channel.get("id"))
-        return (channel_number, channel_id if channel_id is not None else 0)
-
-    return sorted(channels, key=_sort_key)
 
 
 def _next_background_start_index(channels, last_channel_id):
