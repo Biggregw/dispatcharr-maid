@@ -262,7 +262,6 @@ class Config:
                 'resilience_mode': False,
                 'fallback_depth': 3,
                 'similar_score_delta': 5,
-                'strictness': 'medium',
             },
             'dispatcharr': {
                 'm3u_accounts_endpoint': '/api/channels/m3u-accounts/',
@@ -2557,10 +2556,10 @@ def score_streams(api, config, input_csv=None,
 
     include_provider_name = 'm3u_account_name' in df.columns
     proxy_first = bool(scoring_cfg.get('proxy_first', scoring_cfg.get('proxy_startup_bias', False)))
-    historical_penalties = _historical_stream_penalties()
+    historical_penalties = {}
     provider_metadata = _load_provider_metadata(config)
     provider_capacity_biases = _build_provider_capacity_biases(df, provider_metadata)
-    playback_summary = _summarize_playback_history()
+    playback_summary = {}
 
     if proxy_first:
         _score_streams_proxy_first(
@@ -3104,6 +3103,7 @@ def order_streams_for_channel(
         }
 
     ordering_cfg = _normalize_ordering_config(ordering_config)
+    ordering_cfg["strictness"] = None
     if ordering_cfg["background_optimize"]:
         ordering_cfg["sequence_optimize"] = True
         ordering_cfg["diversity_top_n"] = max(ordering_cfg["diversity_top_n"], 5)
@@ -3119,18 +3119,10 @@ def order_streams_for_channel(
             ordering_cfg["recent_failure_penalty"] = 0.12
         if ordering_cfg["stability_weight"] <= 0:
             ordering_cfg["stability_weight"] = 0.05
-
-    strictness = ordering_cfg["strictness"]
-    if strictness == "low":
-        ordering_cfg["stability_weight"] = 0.0
-        ordering_cfg["playback_weight"] = 0.0
-        ordering_cfg["recent_failure_minutes"] = 0
-        ordering_cfg["recent_failure_penalty"] = 0.0
-    elif strictness == "high":
-        ordering_cfg["stability_weight"] = max(ordering_cfg["stability_weight"], 0.08)
-        ordering_cfg["playback_weight"] = max(ordering_cfg["playback_weight"], 0.2)
-        ordering_cfg["recent_failure_minutes"] = max(ordering_cfg["recent_failure_minutes"], 120)
-        ordering_cfg["recent_failure_penalty"] = max(ordering_cfg["recent_failure_penalty"], 0.2)
+    ordering_cfg["stability_weight"] = 0.0
+    ordering_cfg["playback_weight"] = 0.0
+    ordering_cfg["recent_failure_minutes"] = 0
+    ordering_cfg["recent_failure_penalty"] = 0.0
 
     def _is_buffering(record):
         # Buffering detection is conservative and based on timeout signals only;
@@ -3477,6 +3469,13 @@ def order_streams_for_channel(
         adaptive_frames = max(adaptive_frames, 10)
 
     for record in records:
+        base_score = _safe_float(record.get('base_score'))
+        if base_score is not None:
+            provider_bias = _safe_float(record.get('provider_capacity_bias')) or 0.0
+            record['history_adjustment'] = 0.0
+            record['historical_penalty'] = 0.0
+            record['final_score'] = base_score + provider_bias
+            record['ordering_score'] = record['final_score']
         ordering_score = _safe_float(record.get('ordering_score'))
         score = _safe_float(record.get('score'))
         final_score = _safe_float(record.get('final_score'))
@@ -3737,13 +3736,6 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
     scoring_cfg = config.get('scoring') or {}
     _ignored_resilience_mode = ordering_cfg.get('resilience_mode')
     _ignored_reliability_sort = ordering_cfg.get('reliability_sort')
-    strictness_value = ordering_cfg.get("strictness")
-    if strictness_value is None:
-        strictness = None
-    else:
-        strictness = str(strictness_value).strip().lower()
-        if strictness not in ("low", "medium", "high"):
-            strictness = None
     try:
         fallback_depth = int(ordering_cfg.get('fallback_depth', 3) or 3)
     except (ValueError, TypeError):
@@ -3790,14 +3782,7 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
 
     summary = {'channels': []} if collect_summary else None
     any_final_streams = False if collect_summary else None
-    recent_hours = RELIABILITY_RECENT_HOURS
-    if strictness == "high":
-        recent_hours = max(recent_hours, RELIABILITY_RECENT_HOURS * 2)
-    recent_reorder_channels = (
-        set()
-        if strictness == "low"
-        else _recent_reordered_channels(Path("logs"), recent_hours)
-    )
+    recent_reorder_channels = set()
 
     channel_lookup = {}
     if collect_summary:
@@ -3924,10 +3909,9 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                 score_values = list(score_by_stream_id.values())
                 score_range = max(score_values) - min(score_values) if len(score_values) > 1 else 0.0
                 min_delta = score_range * 0.1
-                candidate_penalty = _safe_float(candidate_record.get('historical_penalty')) or 0.0
                 channel_key = str(channel_id)
-                allow_penalty = candidate_penalty >= 0 or strictness == "low"
-                allow_cooldown = channel_key not in recent_reorder_channels or strictness == "low"
+                allow_penalty = True
+                allow_cooldown = channel_key not in recent_reorder_channels
 
                 if (
                     candidate_score is not None
