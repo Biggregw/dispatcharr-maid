@@ -1418,8 +1418,7 @@
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
-            loadBackgroundOptimisationScope();
-            loadGroups();
+            initializeBackgroundScope();
             loadBackgroundRunnerState();
             loadBackgroundOptimisationStatus();
             const backgroundRunnerButton = document.getElementById('background-runner-toggle');
@@ -1435,6 +1434,11 @@
             setInterval(checkActiveJobs, 2000);
         });
 
+        async function initializeBackgroundScope() {
+            await loadBackgroundOptimisationScope();
+            await loadGroups();
+        }
+
         // Load channel groups
         async function loadGroups() {
             try {
@@ -1445,6 +1449,7 @@
                     allGroups = data.groups;
                     orderedGroups = getOrderedGroups(allGroups);
                     refreshChannelNameLookup();
+                    await hydrateBackgroundScopeSelections();
                     renderGroups();
                     document.getElementById('group-loading').classList.add('hidden');
                     document.getElementById('group-container').classList.remove('hidden');
@@ -1463,20 +1468,41 @@
             try {
                 const response = await fetch('/api/background-optimisation/scope', { cache: 'no-store' });
                 const data = await response.json();
-                if (data.success && Array.isArray(data.selected_channel_ids)) {
+                const managedIds = data?.managed_channel_set?.channel_ids;
+                if (data.success && Array.isArray(managedIds) && managedIds.length) {
+                    backgroundScopeSelectionIds = new Set(
+                        managedIds.map(id => String(id))
+                    );
+                } else if (data.success && Array.isArray(data.selected_channel_ids)) {
                     backgroundScopeSelectionIds = new Set(
                         data.selected_channel_ids.map(id => String(id))
                     );
+                } else {
+                    backgroundScopeSelectionIds = new Set();
                 }
             } catch (error) {
                 // Best-effort only.
             } finally {
                 backgroundScopeLoaded = true;
-                Object.keys(allChannels).forEach(groupId => {
-                    applyBackgroundScopeSelections(groupId);
-                });
-                updateSelectionState();
             }
+        }
+
+        async function hydrateBackgroundScopeSelections() {
+            if (!backgroundScopeLoaded) {
+                return;
+            }
+            if (!backgroundScopeSelectionIds.size) {
+                updateSelectionState();
+                return;
+            }
+            const groupIds = Array.isArray(allGroups)
+                ? allGroups.map(group => group.id)
+                : [];
+            if (!groupIds.length) {
+                updateSelectionState();
+                return;
+            }
+            await ensureChannelsLoaded(groupIds);
         }
 
         function applyBackgroundScopeSelections(groupId) {
