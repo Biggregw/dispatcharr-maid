@@ -4,7 +4,7 @@ import logging
 import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urljoin, urlparse
@@ -104,6 +104,7 @@ class WindowedRunnerState:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_provider_failures_key_time ON provider_failures(provider_key, failed_at)"
             )
+
 
     def ensure_channel(self, channel_id: int, group_id: Optional[int], priority_boost_flags: Optional[str] = None):
         with self._connect() as conn:
@@ -270,6 +271,115 @@ class WindowedRunnerState:
                 )
                 return True
         return False
+
+
+@dataclass
+class ManagedChannelSet:
+    id: int
+    channel_ids: List[int]
+    created_at: str
+    updated_at: str
+    source: str
+
+
+class ManagedChannelSetStore:
+    _SINGLETON_ID = 1
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self._memory_conn = None
+        if self.db_path == ":memory:":
+            self._memory_conn = sqlite3.connect(":memory:")
+        else:
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_tables()
+
+    def _connect(self):
+        if self.db_path == ":memory:":
+            return self._memory_conn
+        return sqlite3.connect(self.db_path)
+
+    def _ensure_tables(self):
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS managed_channel_set (
+                    id INTEGER PRIMARY KEY,
+                    channel_ids TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    source TEXT NOT NULL
+                )
+                """
+            )
+
+    def get(self) -> Optional[ManagedChannelSet]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, channel_ids, created_at, updated_at, source
+                FROM managed_channel_set
+                WHERE id = ?
+                """,
+                (self._SINGLETON_ID,),
+            ).fetchone()
+        if not row:
+            return None
+        return self._row_to_model(row)
+
+    def replace(self, channel_ids: Sequence[int], source: str) -> ManagedChannelSet:
+        normalized = []
+        for value in channel_ids:
+            normalized.append(int(value))
+        cleaned_source = str(source or "").strip() or "unknown"
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        payload = json.dumps(normalized)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO managed_channel_set (id, channel_ids, created_at, updated_at, source)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    channel_ids = excluded.channel_ids,
+                    updated_at = excluded.updated_at,
+                    source = excluded.source
+                """,
+                (self._SINGLETON_ID, payload, now, now, cleaned_source),
+            )
+            row = conn.execute(
+                """
+                SELECT id, channel_ids, created_at, updated_at, source
+                FROM managed_channel_set
+                WHERE id = ?
+                """,
+                (self._SINGLETON_ID,),
+            ).fetchone()
+        if not row:
+            raise RuntimeError("Managed channel set update failed")
+        return self._row_to_model(row)
+
+    @staticmethod
+    def _row_to_model(row: Sequence) -> ManagedChannelSet:
+        raw_ids = row[1]
+        channel_ids = []
+        if raw_ids:
+            try:
+                decoded = json.loads(raw_ids)
+            except json.JSONDecodeError:
+                decoded = []
+            if isinstance(decoded, list):
+                for value in decoded:
+                    try:
+                        channel_ids.append(int(value))
+                    except (TypeError, ValueError):
+                        continue
+        return ManagedChannelSet(
+            id=row[0],
+            channel_ids=channel_ids,
+            created_at=row[2],
+            updated_at=row[3],
+            source=row[4],
+        )
 
 
 class ChannelSelector:
