@@ -112,6 +112,7 @@ BACKGROUND_OPTIMIZATION_CHANNEL_SLEEP_SECONDS = 2
 BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS = 15
 
 _background_runner_enabled = False
+_background_runner_manual_enabled = False
 _background_runner_lock = threading.Lock()
 _background_runner_enabled_event = threading.Event()
 _background_runner_thread = None
@@ -120,6 +121,17 @@ _background_runner_thread = None
 def _get_background_runner_enabled():
     with _background_runner_lock:
         return _background_runner_enabled
+
+
+def _get_background_runner_manual_enabled():
+    with _background_runner_lock:
+        return _background_runner_manual_enabled
+
+
+def _set_background_runner_manual_enabled(enabled):
+    global _background_runner_manual_enabled
+    with _background_runner_lock:
+        _background_runner_manual_enabled = bool(enabled)
 
 
 def _set_background_runner_enabled(enabled):
@@ -863,13 +875,51 @@ def _build_background_schedule_status(state=None):
     }
 
 
+def _compute_background_runner_active(manual_enabled, schedule_enabled, within_schedule_window):
+    """Compute runner_active from manual_enabled and schedule window status.
+
+    manual_enabled: user manually toggled background optimisation on.
+    schedule_enabled: schedule checkbox enabled.
+    within_schedule_window: current time is inside the configured window.
+    runner_active: whether background optimisation should currently be running.
+    """
+    return manual_enabled or (schedule_enabled and within_schedule_window)
+
+
+def _sync_background_runner_state(schedule=None):
+    if schedule is None:
+        schedule = _get_background_schedule_config()
+    manual_enabled = _get_background_runner_manual_enabled()
+    schedule_enabled = bool(schedule.get("enabled"))
+    within_schedule_window = False
+    if schedule_enabled:
+        within_schedule_window = _schedule_window_active(schedule.get("start"), schedule.get("end"))
+    runner_active = _compute_background_runner_active(
+        manual_enabled,
+        schedule_enabled,
+        within_schedule_window,
+    )
+    _set_background_runner_enabled(runner_active)
+    return {
+        "manual_enabled": manual_enabled,
+        "schedule_enabled": schedule_enabled,
+        "within_schedule_window": within_schedule_window,
+        "runner_active": runner_active,
+    }
+
+
 def _apply_background_schedule():
     schedule = _get_background_schedule_config()
-    if not schedule["enabled"]:
-        return schedule
-    is_active = _schedule_window_active(schedule["start"], schedule["end"])
-    schedule["active"] = is_active
+    status = _sync_background_runner_state(schedule)
+    schedule["active"] = status["within_schedule_window"]
     return schedule
+
+
+def _initialize_background_runner():
+    schedule = _get_background_schedule_config()
+    if schedule.get("enabled"):
+        _ensure_background_runner_thread()
+    _apply_background_schedule()
 
 
 def _build_background_schedule_update(data):
@@ -1311,10 +1361,7 @@ def _background_runner_loop():
                     )
 
             while _background_runner_enabled_event.is_set():
-                schedule = _apply_background_schedule()
-                if schedule.get("enabled") and not schedule.get("active"):
-                    _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
-                    continue
+                _apply_background_schedule()
                 if not managed_ids:
                     _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
                     continue
@@ -3529,7 +3576,15 @@ def _build_config_from_history_job(history_job):
 @app.route('/api/background-runner', methods=['GET'])
 @login_required
 def api_background_runner_status():
-    return jsonify({'success': True, 'enabled': _get_background_runner_enabled()})
+    status = _sync_background_runner_state()
+    return jsonify(
+        {
+            'success': True,
+            'enabled': status["manual_enabled"],
+            'runner_active': status["runner_active"],
+            'manual_enabled': status["manual_enabled"],
+        }
+    )
 
 
 @app.route('/api/background-runner', methods=['POST'])
@@ -3537,13 +3592,20 @@ def api_background_runner_status():
 def api_background_runner_toggle():
     data = request.get_json(silent=True) or {}
     if 'enabled' in data:
-        enabled = bool(data.get('enabled'))
+        manual_enabled = bool(data.get('enabled'))
     else:
-        enabled = not _get_background_runner_enabled()
-    if enabled:
-        _ensure_background_runner_thread()
-    _set_background_runner_enabled(enabled)
-    return jsonify({'success': True, 'enabled': enabled})
+        manual_enabled = not _get_background_runner_manual_enabled()
+    _set_background_runner_manual_enabled(manual_enabled)
+    _ensure_background_runner_thread()
+    status = _sync_background_runner_state()
+    return jsonify(
+        {
+            'success': True,
+            'enabled': status["manual_enabled"],
+            'runner_active': status["runner_active"],
+            'manual_enabled': status["manual_enabled"],
+        }
+    )
 
 
 @app.route('/api/background-runner/progress', methods=['GET'])
@@ -3574,6 +3636,7 @@ def api_background_runner_progress():
         {
             "success": True,
             "enabled": _get_background_runner_enabled(),
+            "manual_enabled": _get_background_runner_manual_enabled(),
             "completed_channels": completed_channels,
             "total_channels": total_channels,
             "current_channel_id": current_channel_id,
@@ -3646,12 +3709,19 @@ def api_background_optimisation_status():
         enriched_entry = dict(entry)
         enriched_entry["channel_name"] = channel_name
         enriched_activity.append(enriched_entry)
+    schedule_status = _apply_background_schedule()
+    runner_status = {
+        "runner_active": _get_background_runner_enabled(),
+        "manual_enabled": _get_background_runner_manual_enabled(),
+    }
     return jsonify(
         {
-            "enabled": _get_background_runner_enabled(),
+            "enabled": runner_status["runner_active"],
+            "runner_active": runner_status["runner_active"],
+            "manual_enabled": runner_status["manual_enabled"],
             "state": state,
             "recent_activity": enriched_activity,
-            "schedule": _build_background_schedule_status(state),
+            "schedule": schedule_status,
         }
     )
 
@@ -3782,6 +3852,7 @@ def api_background_optimisation_schedule():
     if error:
         return jsonify({"success": False, "error": error}), 400
     _save_background_reorder_state(schedule=schedule)
+    _ensure_background_runner_thread()
     _apply_background_schedule()
     state = _load_background_reorder_state()
     return jsonify({"success": True, "schedule": _build_background_schedule_status(state)})
@@ -5080,6 +5151,9 @@ def api_update_config():
         return jsonify({'success': True, 'message': 'Configuration updated'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+_initialize_background_runner()
 
 
 if __name__ == '__main__':
