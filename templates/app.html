@@ -1070,6 +1070,47 @@
             text-align: center;
             color: #6b7280;
         }
+
+        .background-history-row {
+            cursor: pointer;
+        }
+
+        .background-history-detail {
+            background: #f9fafb;
+        }
+
+        .background-history-detail.hidden {
+            display: none;
+        }
+
+        .background-history-detail__content {
+            padding: 12px 16px;
+        }
+
+        .background-history-detail__status {
+            color: #6b7280;
+            font-size: 0.95em;
+        }
+
+        .background-history-detail-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9em;
+        }
+
+        .background-history-detail-table th,
+        .background-history-detail-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .background-history-detail-table th {
+            background: #eef2ff;
+            color: #374151;
+            font-weight: 600;
+        }
         
         /* Alerts */
         .alert {
@@ -1280,32 +1321,32 @@
                     <strong>Analysis depth:</strong> Background optimisation always runs in deep, probe-complete mode.
                 </div>
             </div>
-            <div class="background-history background-history--collapsed" id="channel-history-section">
+            <div class="background-history background-history--collapsed" id="run-history-section">
                 <div class="background-history__header">
-                    <h3 style="margin-bottom: 0; color: #1f2937;">Channel history</h3>
-                    <button type="button" class="text-btn background-history__toggle" id="channel-history-toggle" aria-expanded="false">
+                    <h3 style="margin-bottom: 0; color: #1f2937;">Run history</h3>
+                    <button type="button" class="text-btn background-history__toggle" id="run-history-toggle" aria-expanded="false">
                         ▸ Expand
                     </button>
                 </div>
                 <p style="margin-bottom: 4px; color: #4b5563; font-size: 0.95em;">
-                    A calm summary of recent background checks by channel.
+                    A run-first view of background optimisation outcomes.
                 </p>
                 <div class="background-history__table-wrapper" style="overflow-x: auto;">
                     <table class="background-history-table">
                         <thead>
                             <tr>
-                                <th>Channel</th>
-                                <th>Last checked</th>
-                                <th>Last action</th>
-                                <th>Total checks</th>
-                                <th>Reordered</th>
-                                <th>Skipped</th>
-                                <th>Unchanged</th>
+                                <th>Run start</th>
+                                <th>Trigger</th>
+                                <th>Channels checked</th>
+                                <th>reordered</th>
+                                <th>unchanged</th>
+                                <th>not_evaluable</th>
+                                <th>Duration</th>
                             </tr>
                         </thead>
-                        <tbody id="background-optimisation-channel-history">
+                        <tbody id="background-optimisation-run-history">
                             <tr>
-                                <td colspan="7" class="background-history-empty">No channels checked yet.</td>
+                                <td colspan="7" class="background-history-empty">No runs recorded yet.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1436,7 +1477,9 @@
         let backgroundRunnerActive = false;
         let backgroundRunnerPaused = false;
         let backgroundRunnerBusy = false;
-        let backgroundChannelSummaryEntries = [];
+        let backgroundRunHistoryEntries = [];
+        const backgroundRunDetailCache = new Map();
+        const backgroundRunDetailLoading = new Set();
         let backgroundScheduleBusy = false;
         let backgroundScheduleState = {
             enabled: false,
@@ -1454,7 +1497,7 @@
         let backgroundScopeLastSavedAt = null;
         const backgroundScopeAppliedGroups = new Set();
         const channelNameLookup = new Map();
-        let channelHistoryExpanded = false;
+        let runHistoryExpanded = false;
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
@@ -1523,9 +1566,13 @@
             if (scheduleSaveButton) {
                 scheduleSaveButton.addEventListener('click', saveBackgroundSchedule);
             }
-            const channelHistoryToggle = document.getElementById('channel-history-toggle');
-            if (channelHistoryToggle) {
-                channelHistoryToggle.addEventListener('click', toggleChannelHistory);
+            const runHistoryToggle = document.getElementById('run-history-toggle');
+            if (runHistoryToggle) {
+                runHistoryToggle.addEventListener('click', toggleRunHistory);
+            }
+            const runHistoryBody = document.getElementById('background-optimisation-run-history');
+            if (runHistoryBody) {
+                runHistoryBody.addEventListener('click', handleRunHistoryClick);
             }
             const scopeSelectAllButton = document.getElementById('background-scope-select-all');
             if (scopeSelectAllButton) {
@@ -2217,25 +2264,25 @@
             element.textContent = value;
         }
 
-        function setChannelHistoryExpanded(isExpanded) {
-            channelHistoryExpanded = Boolean(isExpanded);
-            const section = document.getElementById('channel-history-section');
-            const toggle = document.getElementById('channel-history-toggle');
+        function setRunHistoryExpanded(isExpanded) {
+            runHistoryExpanded = Boolean(isExpanded);
+            const section = document.getElementById('run-history-section');
+            const toggle = document.getElementById('run-history-toggle');
             if (section) {
-                section.classList.toggle('background-history--collapsed', !channelHistoryExpanded);
+                section.classList.toggle('background-history--collapsed', !runHistoryExpanded);
             }
             if (toggle) {
-                toggle.setAttribute('aria-expanded', String(channelHistoryExpanded));
-                toggle.textContent = channelHistoryExpanded ? '▾ Collapse' : '▸ Expand';
+                toggle.setAttribute('aria-expanded', String(runHistoryExpanded));
+                toggle.textContent = runHistoryExpanded ? '▾ Collapse' : '▸ Expand';
             }
         }
 
-        function toggleChannelHistory(event) {
+        function toggleRunHistory(event) {
             if (event) {
                 event.preventDefault();
                 event.stopPropagation();
             }
-            setChannelHistoryExpanded(!channelHistoryExpanded);
+            setRunHistoryExpanded(!runHistoryExpanded);
         }
 
         function formatActivityTimestamp(value) {
@@ -2293,9 +2340,6 @@
                 });
             });
 
-            if (Array.isArray(backgroundChannelSummaryEntries) && backgroundChannelSummaryEntries.length) {
-                renderBackgroundChannelSummary(backgroundChannelSummaryEntries);
-            }
         }
 
         function getChannelNameById(channelId) {
@@ -2321,10 +2365,37 @@
             return value;
         }
 
-        function sortChannelSummary(entries) {
+        function formatRunTrigger(triggerValue) {
+            if (!triggerValue) return '—';
+            const normalized = String(triggerValue).toLowerCase();
+            if (normalized === 'manual' || normalized === 'schedule') {
+                return normalized;
+            }
+            return normalized;
+        }
+
+        function formatDurationMs(durationMs) {
+            const ms = Number(durationMs);
+            if (!Number.isFinite(ms) || ms <= 0) {
+                return '0s';
+            }
+            const totalSeconds = Math.floor(ms / 1000);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            if (hours > 0) {
+                return `${hours}h ${minutes}m ${seconds}s`;
+            }
+            if (minutes > 0) {
+                return `${minutes}m ${seconds}s`;
+            }
+            return `${seconds}s`;
+        }
+
+        function sortRunHistory(entries) {
             return entries.slice().sort((a, b) => {
-                const aTs = Date.parse(a?.last_checked_at ?? '');
-                const bTs = Date.parse(b?.last_checked_at ?? '');
+                const aTs = Date.parse(a?.started_at ?? '');
+                const bTs = Date.parse(b?.started_at ?? '');
                 const aValid = !Number.isNaN(aTs);
                 const bValid = !Number.isNaN(bTs);
                 if (aValid && bValid) {
@@ -2337,8 +2408,8 @@
             });
         }
 
-        function renderBackgroundChannelSummary(entries) {
-            const body = document.getElementById('background-optimisation-channel-history');
+        function renderBackgroundRunHistory(entries) {
+            const body = document.getElementById('background-optimisation-run-history');
             if (!body) return;
             body.innerHTML = '';
 
@@ -2347,52 +2418,243 @@
                 const cell = document.createElement('td');
                 cell.colSpan = 7;
                 cell.className = 'background-history-empty';
-                cell.textContent = 'No channels checked yet.';
+                cell.textContent = 'No runs recorded yet.';
                 row.appendChild(cell);
                 body.appendChild(row);
                 return;
             }
 
-            const rows = sortChannelSummary(entries);
+            const rows = sortRunHistory(entries);
             rows.forEach(entry => {
                 const row = document.createElement('tr');
-                const channelId = entry?.channel_id ?? '';
-                const channelLabel = formatChannelLabel(channelId, entry?.channel_name);
-                const lastChecked = formatActivityTimestamp(entry?.last_checked_at);
-                const lastAction = normalizeHistoryCell(entry?.last_action);
-                const totalChecks = normalizeHistoryCell(entry?.total_checks);
-                const counts = entry?.counts || {};
-                const reordered = normalizeHistoryCell(counts?.reordered ?? 0);
-                const skipped = normalizeHistoryCell(counts?.skipped ?? 0);
-                const unchanged = normalizeHistoryCell(counts?.unchanged ?? 0);
+                row.className = 'background-history-row';
+                const runId = entry?.run_id ?? '';
+                const startedAt = formatActivityTimestamp(entry?.started_at);
+                const trigger = normalizeHistoryCell(formatRunTrigger(entry?.trigger));
+                const channelCount = normalizeHistoryCell(entry?.channel_count ?? 0);
+                const summary = entry?.summary || {};
+                const reordered = normalizeHistoryCell(summary?.reordered ?? 0);
+                const unchanged = normalizeHistoryCell(summary?.unchanged ?? 0);
+                const notEvaluable = normalizeHistoryCell(summary?.not_evaluable ?? 0);
+                const duration = formatDurationMs(entry?.duration_ms);
 
-                row.dataset.channelId = channelId;
+                row.dataset.runId = runId;
 
-                [channelLabel, lastChecked, lastAction, totalChecks, reordered, skipped, unchanged].forEach(value => {
+                [startedAt, trigger, channelCount, reordered, unchanged, notEvaluable, duration].forEach(value => {
                     const cell = document.createElement('td');
                     cell.textContent = value;
                     row.appendChild(cell);
                 });
 
+                const detailRow = document.createElement('tr');
+                detailRow.className = 'background-history-detail hidden';
+                detailRow.dataset.runId = runId;
+                const detailCell = document.createElement('td');
+                detailCell.colSpan = 7;
+                const detailContent = document.createElement('div');
+                detailContent.className = 'background-history-detail__content';
+                const detailStatus = document.createElement('div');
+                detailStatus.className = 'background-history-detail__status';
+                detailStatus.textContent = 'Select a run to see channel outcomes.';
+                detailContent.appendChild(detailStatus);
+                detailCell.appendChild(detailContent);
+                detailRow.appendChild(detailCell);
+
                 body.appendChild(row);
+                body.appendChild(detailRow);
             });
         }
 
-        async function loadBackgroundChannelSummary() {
+        function formatStreamOrder(orderValue) {
+            if (Array.isArray(orderValue) && orderValue.length) {
+                return orderValue.join(', ');
+            }
+            if (orderValue === null || orderValue === undefined || orderValue === '') {
+                return '—';
+            }
+            return String(orderValue);
+        }
+
+        function renderRunDetailTable(outcomes) {
+            const table = document.createElement('table');
+            table.className = 'background-history-detail-table';
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            ['Channel', 'Action', 'Reason', 'Before order', 'After order'].forEach(label => {
+                const th = document.createElement('th');
+                th.textContent = label;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+            const tbody = document.createElement('tbody');
+            if (!Array.isArray(outcomes) || outcomes.length === 0) {
+                const emptyRow = document.createElement('tr');
+                const emptyCell = document.createElement('td');
+                emptyCell.colSpan = 5;
+                emptyCell.className = 'background-history-empty';
+                emptyCell.textContent = 'No channel outcomes recorded for this run.';
+                emptyRow.appendChild(emptyCell);
+                tbody.appendChild(emptyRow);
+            } else {
+                const rows = outcomes.slice().sort((a, b) => {
+                    const aLabel = formatChannelLabel(a?.channel_id, a?.channel_name).toLowerCase();
+                    const bLabel = formatChannelLabel(b?.channel_id, b?.channel_name).toLowerCase();
+                    if (aLabel < bLabel) return -1;
+                    if (aLabel > bLabel) return 1;
+                    return 0;
+                });
+                rows.forEach(outcome => {
+                    const channelLabel = formatChannelLabel(outcome?.channel_id, outcome?.channel_name);
+                    const action = normalizeHistoryCell(outcome?.action);
+                    const reason = normalizeHistoryCell(outcome?.reason_code);
+                    const beforeOrder = outcome?.action === 'reordered'
+                        ? formatStreamOrder(outcome?.before_order)
+                        : '—';
+                    const afterOrder = outcome?.action === 'reordered'
+                        ? formatStreamOrder(outcome?.after_order)
+                        : '—';
+
+                    const row = document.createElement('tr');
+                    [channelLabel, action, reason, beforeOrder, afterOrder].forEach(value => {
+                        const cell = document.createElement('td');
+                        cell.textContent = value;
+                        row.appendChild(cell);
+                    });
+                    tbody.appendChild(row);
+                });
+            }
+            table.appendChild(tbody);
+            return table;
+        }
+
+        function updateRunDetailRow(detailRow, contentNode) {
+            if (!detailRow) return;
+            const cell = detailRow.querySelector('td');
+            if (!cell) return;
+            cell.innerHTML = '';
+            cell.appendChild(contentNode);
+        }
+
+        function showRunDetailStatus(detailRow, message) {
+            const content = document.createElement('div');
+            content.className = 'background-history-detail__content';
+            const status = document.createElement('div');
+            status.className = 'background-history-detail__status';
+            status.textContent = message;
+            content.appendChild(status);
+            updateRunDetailRow(detailRow, content);
+        }
+
+        async function loadBackgroundRunDetail(runId, detailRow) {
+            if (!runId) return;
+            if (backgroundRunDetailCache.has(runId)) {
+                const cached = backgroundRunDetailCache.get(runId);
+                const content = document.createElement('div');
+                content.className = 'background-history-detail__content';
+                content.appendChild(renderRunDetailTable(cached));
+                updateRunDetailRow(detailRow, content);
+                return;
+            }
+            if (backgroundRunDetailLoading.has(runId)) {
+                return;
+            }
+            backgroundRunDetailLoading.add(runId);
+            showRunDetailStatus(detailRow, 'Loading channel outcomes…');
             try {
-                const response = await fetch('/api/background-optimisation/channel-summary', { cache: 'no-store' });
+                const response = await fetch(`/api/background-optimisation/runs/${encodeURIComponent(runId)}`, { cache: 'no-store' });
+                const data = await response.json();
+                if (data?.success) {
+                    const outcomes = Array.isArray(data?.outcomes) ? data.outcomes : [];
+                    backgroundRunDetailCache.set(runId, outcomes);
+                    const content = document.createElement('div');
+                    content.className = 'background-history-detail__content';
+                    content.appendChild(renderRunDetailTable(outcomes));
+                    updateRunDetailRow(detailRow, content);
+                } else {
+                    showRunDetailStatus(detailRow, 'Run details unavailable.');
+                }
+            } catch (error) {
+                showRunDetailStatus(detailRow, 'Run details unavailable.');
+            } finally {
+                backgroundRunDetailLoading.delete(runId);
+            }
+        }
+
+        function handleRunHistoryClick(event) {
+            const targetRow = event.target.closest('tr');
+            if (!targetRow) return;
+            if (targetRow.classList.contains('background-history-detail')) return;
+            const runId = targetRow.dataset.runId;
+            if (!runId) return;
+            const body = document.getElementById('background-optimisation-run-history');
+            if (!body) return;
+            const detailRow = body.querySelector(`tr.background-history-detail[data-run-id="${runId}"]`);
+            if (!detailRow) return;
+            const isHidden = detailRow.classList.contains('hidden');
+            detailRow.classList.toggle('hidden', !isHidden);
+            if (isHidden) {
+                loadBackgroundRunDetail(runId, detailRow);
+            }
+        }
+
+        async function loadBackgroundRunHistory() {
+            try {
+                const response = await fetch('/api/background-optimisation/runs', { cache: 'no-store' });
                 const data = await response.json();
                 if (data.success) {
-                    const channels = Array.isArray(data.channels) ? data.channels : [];
-                    backgroundChannelSummaryEntries = channels;
-                    renderBackgroundChannelSummary(channels);
+                    const runs = Array.isArray(data.runs) ? data.runs : [];
+                    backgroundRunHistoryEntries = runs;
+                    renderBackgroundRunHistory(runs);
                     return;
                 }
             } catch (error) {
                 // Best-effort only.
             }
-            backgroundChannelSummaryEntries = [];
-            renderBackgroundChannelSummary([]);
+            backgroundRunHistoryEntries = [];
+            renderBackgroundRunHistory([]);
+        }
+
+        function mapBackgroundAction(actionTaken, reason) {
+            const action = String(actionTaken || '').toLowerCase();
+            const reasonCode = String(reason || '').toLowerCase();
+            if (action === 'reordered') {
+                return 'reordered';
+            }
+            if (action === 'unchanged') {
+                return 'unchanged';
+            }
+            if (action === 'not_evaluable') {
+                return 'not_evaluable';
+            }
+            if (action === 'skipped') {
+                return 'not_evaluable';
+            }
+            const notEvaluableReasons = new Set([
+                'no_candidates',
+                'no_valid_candidates',
+                'no_valid_candidates_after_filter',
+                'no_previous_order',
+                'no_previous_sources',
+                'no_sources',
+                'no_sources_after_filter',
+                'no_streams',
+                'no_streams_after_filter',
+                'no_streams_available',
+                'no_streams_found',
+                'no_streams_in_order',
+                'no_streams_remaining',
+                'no_streams_sorted',
+                'no_streams_to_reorder',
+                'no_streams_to_sort',
+                'no_streams_valid',
+                'no_valid_streams',
+                'no_ordered_streams'
+            ]);
+            if (notEvaluableReasons.has(reasonCode)) {
+                return 'not_evaluable';
+            }
+            return 'unchanged';
         }
 
         function formatBackgroundOutcomes(entries) {
@@ -2401,26 +2663,20 @@
             }
             const counts = {
                 reordered: 0,
-                skipped: 0,
                 unchanged: 0,
-                other: 0
+                not_evaluable: 0
             };
             entries.forEach(entry => {
-                const action = String(entry?.action_taken || '').toLowerCase();
+                const action = mapBackgroundAction(entry?.action_taken, entry?.reason);
                 if (action in counts) {
                     counts[action] += 1;
-                } else {
-                    counts.other += 1;
                 }
             });
             const parts = [
-                { label: 'Reordered', value: counts.reordered },
-                { label: 'Skipped', value: counts.skipped },
-                { label: 'Unchanged', value: counts.unchanged }
+                { label: 'reordered', value: counts.reordered },
+                { label: 'unchanged', value: counts.unchanged },
+                { label: 'not_evaluable', value: counts.not_evaluable }
             ];
-            if (counts.other > 0) {
-                parts.push({ label: 'Other', value: counts.other });
-            }
             return parts;
         }
 
@@ -2452,7 +2708,7 @@
 
         function formatBackgroundDecision(entry) {
             if (!entry) return '—';
-            const action = entry?.action_taken ?? '—';
+            const action = mapBackgroundAction(entry?.action_taken, entry?.reason);
             const reason = entry?.reason ?? '—';
             const channelId = entry?.channel_id ?? null;
             const channelLabel = formatChannelLabel(channelId, entry?.channel_name);
@@ -2616,7 +2872,7 @@
                 backgroundStatusUpdatedAt = null;
                 updateBackgroundSummaryActive();
             } finally {
-                await loadBackgroundChannelSummary();
+                await loadBackgroundRunHistory();
             }
         }
 
