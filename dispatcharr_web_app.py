@@ -704,6 +704,175 @@ def _normalize_stream_order(value):
     return normalized
 
 
+def _channel_id_matches(entry_channel_id, target_channel_id):
+    if entry_channel_id is None or target_channel_id is None:
+        return False
+    if str(entry_channel_id) == str(target_channel_id):
+        return True
+    try:
+        return int(entry_channel_id) == int(target_channel_id)
+    except (TypeError, ValueError):
+        return False
+
+
+def _extract_background_entry_order(entry):
+    if not isinstance(entry, dict):
+        return []
+    new_order = _normalize_stream_order(entry.get("new_stream_order"))
+    if new_order:
+        return new_order
+    return _normalize_stream_order(entry.get("old_stream_order"))
+
+
+def _load_scored_stream_lookup_for_channel(channel_id):
+    channel_id_int = _safe_int(channel_id)
+    if channel_id_int is None:
+        return {}
+    scored_path = Path("csv") / "05_iptv_streams_scored_sorted.csv"
+    if not scored_path.exists():
+        return {}
+    try:
+        scored_df = pd.read_csv(scored_path)
+    except Exception:
+        logging.debug("Failed reading scored streams for channel insight", exc_info=True)
+        return {}
+    if "channel_id" not in scored_df.columns:
+        return {}
+    scored_df["channel_id"] = pd.to_numeric(scored_df["channel_id"], errors="coerce")
+    scored_df = scored_df[scored_df["channel_id"] == channel_id_int]
+    if scored_df.empty:
+        return {}
+    scored_df["stream_id"] = pd.to_numeric(scored_df["stream_id"], errors="coerce")
+    scored_df.dropna(subset=["stream_id"], inplace=True)
+    lookup = {}
+    for record in scored_df.to_dict("records"):
+        sid = record.get("stream_id")
+        if sid in (None, "N/A"):
+            continue
+        try:
+            sid_key = int(sid)
+        except Exception:
+            sid_key = sid
+        lookup[sid_key] = record
+    return lookup
+
+
+def _build_channel_insight(channel_id):
+    entries = _load_background_reorder_log_entries(limit=None)
+    if not isinstance(entries, list):
+        entries = []
+    channel_name_by_id = _load_channel_name_lookup()
+    channel_name = _resolve_channel_name(channel_name_by_id, channel_id)
+    filtered = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        if not _channel_id_matches(entry.get("channel_id"), channel_id):
+            continue
+        entry_copy = dict(entry)
+        entry_copy["_index"] = index
+        filtered.append(entry_copy)
+
+    if not filtered:
+        return {
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "last_outcome": None,
+            "current_stream_order": [],
+            "streams": [],
+            # Derived stability metrics from historical optimisation logs only.
+            "stability": {
+                "reorders": 0,
+                "unchanged": 0,
+                "slot1_churn": 0,
+                "evaluability_rate": None,
+                "total_runs": 0,
+            },
+        }
+
+    latest_entry = None
+    latest_ts = None
+    latest_index = -1
+    for entry in filtered:
+        entry_ts = entry.get("timestamp")
+        parsed_ts = _parse_background_reorder_timestamp(entry_ts)
+        entry_index = entry.get("_index", -1)
+        replace = False
+        if parsed_ts is not None:
+            if latest_ts is None or parsed_ts > latest_ts:
+                replace = True
+            elif parsed_ts == latest_ts and entry_index > latest_index:
+                replace = True
+        elif latest_ts is None and entry_index > latest_index:
+            replace = True
+        if replace:
+            latest_entry = entry
+            latest_ts = parsed_ts
+            latest_index = entry_index
+
+    latest_entry = latest_entry or filtered[-1]
+    last_outcome = _map_background_action(
+        latest_entry.get("action_taken"),
+        latest_entry.get("reason"),
+    )
+    current_order = _extract_background_entry_order(latest_entry)
+
+    scored_lookup = _load_scored_stream_lookup_for_channel(channel_id)
+    streams = []
+    for idx, stream_id in enumerate(current_order):
+        try:
+            sid_key = int(stream_id)
+        except Exception:
+            sid_key = stream_id
+        record = scored_lookup.get(sid_key) if isinstance(scored_lookup, dict) else None
+        streams.append(
+            {
+                "stream_id": stream_id,
+                "stream_name": record.get("stream_name") if isinstance(record, dict) else None,
+                # Derived score: last recorded ordering score from existing scored CSV only.
+                "score": _ordering_score_from_record(record) if record else None,
+                "order": idx + 1,
+                "is_slot1": idx == 0,
+            }
+        )
+
+    recent_limit = 10
+    recent_entries = filtered[-recent_limit:]
+    stability_counts = {"reordered": 0, "unchanged": 0, "not_evaluable": 0}
+    slot1_churn = 0
+    prev_slot1 = None
+    for entry in recent_entries:
+        action = _map_background_action(entry.get("action_taken"), entry.get("reason"))
+        if action in stability_counts:
+            stability_counts[action] += 1
+        order = _extract_background_entry_order(entry)
+        slot1 = order[0] if order else None
+        if slot1 is not None and prev_slot1 is not None and slot1 != prev_slot1:
+            slot1_churn += 1
+        if slot1 is not None:
+            prev_slot1 = slot1
+    total_runs = len(recent_entries)
+    evaluable = total_runs - stability_counts["not_evaluable"]
+    evaluability_rate = (evaluable / total_runs) if total_runs else None
+
+    return {
+        "channel_id": channel_id,
+        "channel_name": channel_name,
+        "last_outcome": last_outcome,
+        # Derived from historical optimisation log entries only.
+        "current_stream_order": current_order,
+        "streams": streams,
+        "stability": {
+            "reorders": stability_counts["reordered"],
+            "unchanged": stability_counts["unchanged"],
+            "slot1_churn": slot1_churn,
+            # Derived rate from recent historical outcomes only.
+            "evaluability_rate": evaluability_rate,
+            "total_runs": total_runs,
+        },
+    }
+
+
 def _is_background_not_evaluable(action_taken, reason):
     if action_taken != "skipped":
         return False
@@ -4177,6 +4346,16 @@ def api_background_optimisation_channel_summary():
         summary.pop("_last_score_delta_index", None)
 
     return jsonify({"success": True, "channels": summaries})
+
+
+@app.route('/api/background-optimisation/channel-insight', methods=['GET'])
+@login_required
+def api_background_optimisation_channel_insight():
+    channel_id = request.args.get("channel_id")
+    if channel_id is None or str(channel_id).strip() == "":
+        return jsonify({"success": False, "error": "channel_id is required"}), 400
+    insight = _build_channel_insight(channel_id)
+    return jsonify({"success": True, "insight": insight})
 
 
 def _load_channel_name_lookup():

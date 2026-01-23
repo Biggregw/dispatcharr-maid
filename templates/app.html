@@ -921,6 +921,98 @@
             align-self: flex-start;
         }
 
+        .background-insight-panel {
+            margin-top: 18px;
+            padding: 16px;
+            border-radius: 14px;
+            border: 1px solid #e2e8f0;
+            background: #ffffff;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+        }
+
+        .background-insight-header {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .background-insight-select {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-size: 0.9em;
+            color: #475569;
+        }
+
+        .background-insight-select select {
+            min-width: 220px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid #cbd5f5;
+            background: #f8fafc;
+            color: #1f2937;
+        }
+
+        .background-insight-grid {
+            display: grid;
+            gap: 10px;
+        }
+
+        .background-insight-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 0.95em;
+        }
+
+        .background-insight-label {
+            font-weight: 600;
+            color: #475569;
+        }
+
+        .background-insight-value {
+            color: #1f2937;
+            font-weight: 600;
+        }
+
+        .background-insight-order {
+            margin-top: 10px;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+            padding: 10px;
+        }
+
+        .background-insight-order-item {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 6px 0;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 0.9em;
+        }
+
+        .background-insight-order-item:last-child {
+            border-bottom: none;
+        }
+
+        .background-insight-slot1 {
+            background: #6366f1;
+            color: #fff;
+            border-radius: 10px;
+            padding: 2px 8px;
+            font-size: 0.75em;
+            font-weight: 700;
+        }
+
+        .background-insight-empty {
+            font-size: 0.9em;
+            color: #6b7280;
+        }
+
         .background-status-panel {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -1404,6 +1496,51 @@
                     <div class="background-summary-meta">Based on managed channel set</div>
                 </div>
             </div>
+            <div class="background-insight-panel" id="background-insight-panel">
+                <div class="background-insight-header">
+                    <h3 style="margin: 0; color: #1f2937;">Channel insight</h3>
+                    <label class="background-insight-select" for="background-insight-channel">
+                        Channel
+                        <select id="background-insight-channel" aria-label="Select channel for insight"></select>
+                    </label>
+                </div>
+                <div class="background-insight-body">
+                    <div class="background-insight-empty" id="background-insight-empty">
+                        Select a channel to view insight.
+                    </div>
+                    <div class="background-insight-content hidden" id="background-insight-content">
+                        <div class="background-insight-grid">
+                            <div class="background-insight-row">
+                                <span class="background-insight-label">Channel</span>
+                                <span class="background-insight-value" id="background-insight-name">—</span>
+                            </div>
+                            <div class="background-insight-row">
+                                <span class="background-insight-label">Last outcome</span>
+                                <span class="background-insight-value" id="background-insight-outcome">—</span>
+                            </div>
+                        </div>
+                        <div class="background-insight-order" id="background-insight-order"></div>
+                        <div class="background-insight-grid" style="margin-top: 12px;">
+                            <div class="background-insight-row">
+                                <span class="background-insight-label">Reorders (recent)</span>
+                                <span class="background-insight-value" id="background-insight-reorders">—</span>
+                            </div>
+                            <div class="background-insight-row">
+                                <span class="background-insight-label">Unchanged (recent)</span>
+                                <span class="background-insight-value" id="background-insight-unchanged">—</span>
+                            </div>
+                            <div class="background-insight-row">
+                                <span class="background-insight-label">Slot 1 churn (recent)</span>
+                                <span class="background-insight-value" id="background-insight-slot1-churn">—</span>
+                            </div>
+                            <div class="background-insight-row">
+                                <span class="background-insight-label">Evaluability rate</span>
+                                <span class="background-insight-value" id="background-insight-evaluability">—</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Scope Selection -->
@@ -1647,6 +1784,10 @@
             if (runHistoryBody) {
                 runHistoryBody.addEventListener('click', handleRunHistoryClick);
             }
+            const insightSelect = document.getElementById('background-insight-channel');
+            if (insightSelect) {
+                insightSelect.addEventListener('change', handleBackgroundInsightSelection);
+            }
             const lastRunButton = document.getElementById('background-last-run-view');
             if (lastRunButton) {
                 lastRunButton.addEventListener('click', viewLatestBackgroundRunDetails);
@@ -1669,6 +1810,8 @@
             if (scopeSaveButton) {
                 scopeSaveButton.addEventListener('click', saveBackgroundOptimisationScope);
             }
+
+            loadBackgroundInsightOptions();
 
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
@@ -2871,6 +3014,146 @@
             return `${channelLabel} · ${action} · ${reason}`;
         }
 
+        function setBackgroundInsightValue(id, value) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = value === null || value === undefined || value === '' ? '—' : value;
+        }
+
+        function formatInsightScore(value) {
+            if (value === null || value === undefined || value === '') return '—';
+            const num = Number(value);
+            if (!Number.isFinite(num)) return '—';
+            return num.toFixed(2);
+        }
+
+        function renderBackgroundInsightOrder(streams) {
+            const container = document.getElementById('background-insight-order');
+            if (!container) return;
+            container.innerHTML = '';
+            const title = document.createElement('div');
+            title.className = 'background-insight-label';
+            title.textContent = 'Current stream order (slot 1 highlighted)';
+            container.appendChild(title);
+            if (!Array.isArray(streams) || streams.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'background-insight-empty';
+                empty.textContent = 'No order history recorded yet.';
+                container.appendChild(empty);
+                return;
+            }
+            streams.forEach(stream => {
+                const item = document.createElement('div');
+                item.className = 'background-insight-order-item';
+                const left = document.createElement('div');
+                const label = stream?.stream_name
+                    ? `${stream.order}. ${stream.stream_name} (ID ${stream.stream_id})`
+                    : `${stream.order}. Stream ${stream.stream_id}`;
+                left.textContent = label;
+                const right = document.createElement('div');
+                right.style.display = 'flex';
+                right.style.alignItems = 'center';
+                right.style.gap = '8px';
+                const score = document.createElement('span');
+                score.textContent = `Score: ${formatInsightScore(stream?.score)}`;
+                right.appendChild(score);
+                if (stream?.is_slot1) {
+                    const badge = document.createElement('span');
+                    badge.className = 'background-insight-slot1';
+                    badge.textContent = 'Slot 1';
+                    right.appendChild(badge);
+                }
+                item.appendChild(left);
+                item.appendChild(right);
+                container.appendChild(item);
+            });
+        }
+
+        function renderBackgroundInsight(insight) {
+            const content = document.getElementById('background-insight-content');
+            const empty = document.getElementById('background-insight-empty');
+            if (!content || !empty) return;
+            if (!insight) {
+                content.classList.add('hidden');
+                empty.classList.remove('hidden');
+                empty.textContent = 'Select a channel to view insight.';
+                return;
+            }
+            empty.classList.add('hidden');
+            content.classList.remove('hidden');
+            setBackgroundInsightValue('background-insight-name', formatChannelLabel(insight?.channel_id, insight?.channel_name));
+            setBackgroundInsightValue('background-insight-outcome', insight?.last_outcome || '—');
+            renderBackgroundInsightOrder(insight?.streams || []);
+            const stability = insight?.stability || {};
+            setBackgroundInsightValue('background-insight-reorders', stability?.reorders ?? '—');
+            setBackgroundInsightValue('background-insight-unchanged', stability?.unchanged ?? '—');
+            setBackgroundInsightValue('background-insight-slot1-churn', stability?.slot1_churn ?? '—');
+            const totalRuns = Number(stability?.total_runs ?? 0);
+            const evaluableCount = Number(stability?.reorders ?? 0) + Number(stability?.unchanged ?? 0);
+            if (Number.isFinite(stability?.evaluability_rate) && totalRuns > 0) {
+                const rate = Math.round(stability.evaluability_rate * 100);
+                setBackgroundInsightValue(
+                    'background-insight-evaluability',
+                    `${rate}% (${evaluableCount}/${totalRuns})`
+                );
+            } else {
+                setBackgroundInsightValue('background-insight-evaluability', '—');
+            }
+        }
+
+        async function loadBackgroundInsightOptions() {
+            const select = document.getElementById('background-insight-channel');
+            if (!select) return;
+            const previousValue = select.value;
+            select.innerHTML = '<option value="">Loading channels...</option>';
+            select.disabled = true;
+            try {
+                const response = await fetch('/api/background-optimisation/channel-summary', { cache: 'no-store' });
+                const data = await response.json();
+                const channels = Array.isArray(data?.channels) ? data.channels : [];
+                select.innerHTML = '';
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = channels.length ? 'Select channel' : 'No channel history available';
+                select.appendChild(placeholder);
+                channels.forEach(channel => {
+                    const option = document.createElement('option');
+                    option.value = channel?.channel_id ?? '';
+                    option.textContent = formatChannelLabel(channel?.channel_id, channel?.channel_name);
+                    select.appendChild(option);
+                });
+                select.disabled = channels.length === 0;
+                if (previousValue) {
+                    select.value = previousValue;
+                }
+            } catch (error) {
+                select.innerHTML = '<option value="">Failed to load channels</option>';
+                select.disabled = true;
+            }
+        }
+
+        async function handleBackgroundInsightSelection(event) {
+            const channelId = event?.target?.value;
+            if (!channelId) {
+                renderBackgroundInsight(null);
+                return;
+            }
+            try {
+                const response = await fetch(
+                    `/api/background-optimisation/channel-insight?channel_id=${encodeURIComponent(channelId)}`,
+                    { cache: 'no-store' }
+                );
+                const data = await response.json();
+                if (!data?.success) {
+                    renderBackgroundInsight(null);
+                    return;
+                }
+                renderBackgroundInsight(data?.insight || null);
+            } catch (error) {
+                renderBackgroundInsight(null);
+            }
+        }
+
         function formatTimeSince(isoValue) {
             if (!isoValue) return '—';
             const timestamp = Date.parse(isoValue);
@@ -3026,6 +3309,7 @@
                 updateBackgroundSummaryActive();
             } finally {
                 await loadBackgroundRunHistory();
+                await loadBackgroundInsightOptions();
             }
         }
 
