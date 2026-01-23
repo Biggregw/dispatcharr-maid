@@ -1433,6 +1433,7 @@
         let jobTickerInterval = null;
         let jobTickerState = null;
         let backgroundRunnerEnabled = false;
+        let backgroundRunnerActive = false;
         let backgroundRunnerPaused = false;
         let backgroundRunnerBusy = false;
         let backgroundChannelSummaryEntries = [];
@@ -2052,7 +2053,12 @@
                 const response = await fetch('/api/background-runner', { cache: 'no-store' });
                 const data = await response.json();
                 if (data.success) {
-                    backgroundRunnerEnabled = Boolean(data.enabled);
+                    backgroundRunnerEnabled = Boolean(data.manual_enabled ?? data.enabled);
+                    backgroundRunnerActive = Boolean(data.runner_active ?? backgroundRunnerEnabled);
+                    backgroundRunnerPaused = !backgroundRunnerActive
+                        && !backgroundRunnerEnabled
+                        && backgroundScheduleState.enabled
+                        && !backgroundScheduleState.active;
                     updateBackgroundRunnerToggle(backgroundRunnerEnabled);
                 }
             } catch (error) {
@@ -2077,7 +2083,12 @@
                 });
                 const data = await response.json();
                 if (data.success) {
-                    backgroundRunnerEnabled = Boolean(data.enabled);
+                    backgroundRunnerEnabled = Boolean(data.manual_enabled ?? data.enabled);
+                    backgroundRunnerActive = Boolean(data.runner_active ?? backgroundRunnerEnabled);
+                    backgroundRunnerPaused = !backgroundRunnerActive
+                        && !backgroundRunnerEnabled
+                        && backgroundScheduleState.enabled
+                        && !backgroundScheduleState.active;
                     updateBackgroundRunnerToggle(backgroundRunnerEnabled);
                 }
             } catch (error) {
@@ -2124,6 +2135,10 @@
                     active: Boolean(schedule.active)
                 };
             }
+            backgroundRunnerPaused = !backgroundRunnerActive
+                && !backgroundRunnerEnabled
+                && backgroundScheduleState.enabled
+                && !backgroundScheduleState.active;
             const windowValue = formatScheduleWindow(backgroundScheduleState);
             setBackgroundOptimisationValue('background-optimisation-schedule-window', windowValue);
             setBackgroundOptimisationValue(
@@ -2547,9 +2562,9 @@
         }
 
         function updateBackgroundSummaryActive() {
-            const activeLabel = backgroundRunnerEnabled
-                ? (backgroundRunnerPaused ? 'Paused (outside window)' : `Checking ${backgroundCurrentChannelLabel}`)
-                : 'Disabled';
+            const activeLabel = backgroundRunnerActive
+                ? `Checking ${backgroundCurrentChannelLabel}`
+                : (backgroundRunnerPaused ? 'Paused (outside window)' : 'Disabled');
             const updateLabel = backgroundStatusUpdatedAt
                 ? `Last update ${formatTimeSince(backgroundStatusUpdatedAt)}`
                 : 'Last update —';
@@ -2562,7 +2577,8 @@
                 const response = await fetch('/api/background-optimisation/status', { cache: 'no-store' });
                 const data = await response.json();
                 const state = data?.state || {};
-                const enabled = Boolean(data?.enabled);
+                const manualEnabled = Boolean(data?.manual_enabled ?? data?.enabled);
+                const runnerActive = Boolean(data?.runner_active ?? data?.enabled);
                 const activity = Array.isArray(data?.recent_activity) ? data.recent_activity : [];
                 const schedule = data?.schedule || null;
                 const scheduleEnabled = Boolean(schedule?.enabled);
@@ -2575,11 +2591,12 @@
                 );
                 backgroundCurrentChannelLabel = currentChannelLabel;
                 backgroundStatusUpdatedAt = state.updated_at || null;
-                backgroundRunnerEnabled = enabled;
-                backgroundRunnerPaused = enabled && scheduleEnabled && !scheduleActive;
-                const runningLabel = enabled
-                    ? (backgroundRunnerPaused ? 'Paused (outside window)' : 'Running')
-                    : 'Disabled';
+                backgroundRunnerEnabled = manualEnabled;
+                backgroundRunnerActive = runnerActive;
+                backgroundRunnerPaused = !runnerActive && !manualEnabled && scheduleEnabled && !scheduleActive;
+                const runningLabel = runnerActive
+                    ? 'Running'
+                    : (backgroundRunnerPaused ? 'Paused (outside window)' : 'Disabled');
                 setBackgroundOptimisationValue('background-optimisation-running', runningLabel);
                 setBackgroundOptimisationValue('background-optimisation-pass', state.cycles_completed);
                 setBackgroundOptimisationValue('background-optimisation-last-channel', currentChannelLabel);
@@ -2590,6 +2607,7 @@
                 updateBackgroundSummaryActive();
             } catch (error) {
                 backgroundRunnerPaused = false;
+                backgroundRunnerActive = false;
                 setBackgroundOptimisationValue('background-optimisation-running', '—');
                 renderBackgroundOptimisationOutcomes([]);
                 setBackgroundOptimisationValue('background-optimisation-last-decision', '—');
