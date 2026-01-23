@@ -554,7 +554,7 @@ def _load_background_reorder_log_entries(limit=50):
     log_path = _background_reorder_log_path()
     if not log_path.exists():
         return []
-    entries = deque(maxlen=limit)
+    entries = deque(maxlen=limit) if limit is not None else []
     try:
         with log_path.open("r", encoding="utf-8") as handle:
             for line in handle:
@@ -570,7 +570,22 @@ def _load_background_reorder_log_entries(limit=50):
     except OSError as exc:
         logging.warning("Failed reading background reorder log: %s", exc)
         return []
-    return list(entries)
+    return list(entries) if isinstance(entries, deque) else entries
+
+
+def _parse_background_reorder_timestamp(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    stamp = value.strip()
+    if stamp.endswith("Z"):
+        stamp = f"{stamp[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(stamp)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except ValueError:
+        return None
 
 
 def _normalize_background_scope_selection(data):
@@ -3639,6 +3654,121 @@ def api_background_optimisation_status():
             "schedule": _build_background_schedule_status(state),
         }
     )
+
+
+@app.route('/api/background-optimisation/channel-summary', methods=['GET'])
+@login_required
+def api_background_optimisation_channel_summary():
+    entries = _load_background_reorder_log_entries(limit=None)
+    if not isinstance(entries, list):
+        entries = []
+    if not entries:
+        return jsonify({"success": True, "channels": []})
+
+    channel_name_by_id = {}
+    try:
+        api = DispatcharrAPI()
+        if not api.token:
+            api.login()
+        channels = api.fetch_channels() or []
+        for channel in channels:
+            if not isinstance(channel, dict):
+                continue
+            channel_id = channel.get("id")
+            if channel_id is None:
+                continue
+            channel_name_by_id[channel_id] = channel.get("name")
+    except Exception:
+        channel_name_by_id = {}
+
+    summary_by_channel = {}
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        channel_id = entry.get("channel_id")
+        if channel_id is None:
+            continue
+        action_taken = entry.get("action_taken")
+        timestamp = entry.get("timestamp")
+        parsed_ts = _parse_background_reorder_timestamp(timestamp)
+
+        summary = summary_by_channel.get(channel_id)
+        if summary is None:
+            summary = {
+                "channel_id": channel_id,
+                "last_checked_at": None,
+                "last_action": None,
+                "total_checks": 0,
+                "counts": {"reordered": 0, "skipped": 0, "unchanged": 0},
+                "last_score_delta": None,
+                "_last_checked_at_ts": None,
+                "_last_checked_at_index": -1,
+                "_last_score_delta_ts": None,
+                "_last_score_delta_index": -1,
+            }
+            summary_by_channel[channel_id] = summary
+
+        summary["total_checks"] += 1
+        if action_taken in summary["counts"]:
+            summary["counts"][action_taken] += 1
+
+        last_checked_ts = summary["_last_checked_at_ts"]
+        last_checked_index = summary["_last_checked_at_index"]
+        is_newer_check = False
+        if parsed_ts is not None:
+            if last_checked_ts is None or parsed_ts > last_checked_ts:
+                is_newer_check = True
+            elif parsed_ts == last_checked_ts and index > last_checked_index:
+                is_newer_check = True
+        elif last_checked_ts is None and index > last_checked_index:
+            is_newer_check = True
+
+        if is_newer_check:
+            summary["last_checked_at"] = timestamp
+            summary["last_action"] = action_taken
+            summary["_last_checked_at_ts"] = parsed_ts
+            summary["_last_checked_at_index"] = index
+
+        score_delta = entry.get("score_delta")
+        if score_delta is not None:
+            last_score_delta_ts = summary["_last_score_delta_ts"]
+            last_score_delta_index = summary["_last_score_delta_index"]
+            is_newer_delta = False
+            if parsed_ts is not None:
+                if last_score_delta_ts is None or parsed_ts > last_score_delta_ts:
+                    is_newer_delta = True
+                elif parsed_ts == last_score_delta_ts and index > last_score_delta_index:
+                    is_newer_delta = True
+            elif last_score_delta_ts is None and index > last_score_delta_index:
+                is_newer_delta = True
+            if is_newer_delta:
+                summary["last_score_delta"] = score_delta
+                summary["_last_score_delta_ts"] = parsed_ts
+                summary["_last_score_delta_index"] = index
+
+    summaries = []
+    for channel_id, summary in summary_by_channel.items():
+        channel_name = channel_name_by_id.get(channel_id)
+        if channel_name is None and isinstance(channel_id, str):
+            try:
+                channel_name = channel_name_by_id.get(int(channel_id))
+            except (TypeError, ValueError):
+                channel_name = None
+        summary["channel_name"] = channel_name
+        summaries.append(summary)
+
+    summaries.sort(
+        key=lambda item: item["_last_checked_at_ts"] or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+
+    for summary in summaries:
+        summary.pop("_last_checked_at_ts", None)
+        summary.pop("_last_checked_at_index", None)
+        summary.pop("_last_score_delta_ts", None)
+        summary.pop("_last_score_delta_index", None)
+
+    return jsonify({"success": True, "channels": summaries})
 
 
 @app.route('/api/background-optimisation/schedule', methods=['GET', 'POST'])
