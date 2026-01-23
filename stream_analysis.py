@@ -262,6 +262,7 @@ class Config:
                 'resilience_mode': False,
                 'fallback_depth': 3,
                 'similar_score_delta': 5,
+                'strictness': 'medium',
             },
             'dispatcharr': {
                 'm3u_accounts_endpoint': '/api/channels/m3u-accounts/',
@@ -3073,7 +3074,16 @@ def order_streams_for_channel(
                 return value / 100.0
             return max(min(value, 1.0), 0.0)
 
+        strictness_value = config.get("strictness")
+        if strictness_value is None:
+            strictness = None
+        else:
+            strictness = str(strictness_value).strip().lower()
+            if strictness not in ("low", "medium", "high"):
+                strictness = None
+
         return {
+            "strictness": strictness,
             "background_optimize": _bool("background_optimize", False),
             "sequence_optimize": _bool("sequence_optimize", False),
             "sequence_candidate_pool": _int("sequence_candidate_pool", 0),
@@ -3109,6 +3119,18 @@ def order_streams_for_channel(
             ordering_cfg["recent_failure_penalty"] = 0.12
         if ordering_cfg["stability_weight"] <= 0:
             ordering_cfg["stability_weight"] = 0.05
+
+    strictness = ordering_cfg["strictness"]
+    if strictness == "low":
+        ordering_cfg["stability_weight"] = 0.0
+        ordering_cfg["playback_weight"] = 0.0
+        ordering_cfg["recent_failure_minutes"] = 0
+        ordering_cfg["recent_failure_penalty"] = 0.0
+    elif strictness == "high":
+        ordering_cfg["stability_weight"] = max(ordering_cfg["stability_weight"], 0.08)
+        ordering_cfg["playback_weight"] = max(ordering_cfg["playback_weight"], 0.2)
+        ordering_cfg["recent_failure_minutes"] = max(ordering_cfg["recent_failure_minutes"], 120)
+        ordering_cfg["recent_failure_penalty"] = max(ordering_cfg["recent_failure_penalty"], 0.2)
 
     def _is_buffering(record):
         # Buffering detection is conservative and based on timeout signals only;
@@ -3715,6 +3737,13 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
     scoring_cfg = config.get('scoring') or {}
     _ignored_resilience_mode = ordering_cfg.get('resilience_mode')
     _ignored_reliability_sort = ordering_cfg.get('reliability_sort')
+    strictness_value = ordering_cfg.get("strictness")
+    if strictness_value is None:
+        strictness = None
+    else:
+        strictness = str(strictness_value).strip().lower()
+        if strictness not in ("low", "medium", "high"):
+            strictness = None
     try:
         fallback_depth = int(ordering_cfg.get('fallback_depth', 3) or 3)
     except (ValueError, TypeError):
@@ -3761,7 +3790,14 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
 
     summary = {'channels': []} if collect_summary else None
     any_final_streams = False if collect_summary else None
-    recent_reorder_channels = _recent_reordered_channels(Path("logs"), RELIABILITY_RECENT_HOURS)
+    recent_hours = RELIABILITY_RECENT_HOURS
+    if strictness == "high":
+        recent_hours = max(recent_hours, RELIABILITY_RECENT_HOURS * 2)
+    recent_reorder_channels = (
+        set()
+        if strictness == "low"
+        else _recent_reordered_channels(Path("logs"), recent_hours)
+    )
 
     channel_lookup = {}
     if collect_summary:
@@ -3890,6 +3926,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                 min_delta = score_range * 0.1
                 candidate_penalty = _safe_float(candidate_record.get('historical_penalty')) or 0.0
                 channel_key = str(channel_id)
+                allow_penalty = candidate_penalty >= 0 or strictness == "low"
+                allow_cooldown = channel_key not in recent_reorder_channels or strictness == "low"
 
                 if (
                     candidate_score is not None
@@ -3897,8 +3935,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                     and candidate_score > baseline_score
                     and min_delta > 0
                     and (candidate_score - baseline_score) > min_delta
-                    and candidate_penalty >= 0
-                    and channel_key not in recent_reorder_channels
+                    and allow_penalty
+                    and allow_cooldown
                 ):
                     final_ids = [
                         candidate_id,
