@@ -1112,7 +1112,7 @@
                 <div class="background-summary-card">
                     <div class="background-summary-title">Will check</div>
                     <div class="background-summary-value" id="background-summary-scope">—</div>
-                    <div class="background-summary-meta">Based on selected channels</div>
+                    <div class="background-summary-meta">Based on managed channel set</div>
                 </div>
             </div>
             <div>
@@ -1252,7 +1252,7 @@
                     <span class="summary-label">Channels selected:</span>
                     <span class="summary-value summary-value--emphasis" id="selected-channels-summary">None yet</span>
                 </div>
-                <div class="summary-helper">Only checked channels are eligible for background optimisation.</div>
+                <div class="summary-helper">Checked channels define the managed channel set for background optimisation.</div>
             </div>
         </div>
         
@@ -1757,7 +1757,7 @@
         }
 
         async function updateSelectionState() {
-            // Explicit selection model: only checked channels define the scope.
+            // Checked channels define the managed channel set for background optimisation.
             selectedChannels = getSelectedChannelIds();
 
             updateScopeSummary();
