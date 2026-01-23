@@ -70,6 +70,7 @@ from stream_analysis import (
 from job_workspace import create_job_workspace
 from windowed_runner import (
     is_status_failure,
+    ManagedChannelSetStore,
 )
 
 # Ensure logs always show up in Docker logs/stdout, even if something else
@@ -480,6 +481,32 @@ def _load_background_reorder_state():
     return data if isinstance(data, dict) else {}
 
 
+def _managed_channel_set_db_path():
+    return Path("data") / "windowed_runner.sqlite"
+
+
+def _load_managed_channel_set():
+    store = ManagedChannelSetStore(str(_managed_channel_set_db_path()))
+    return store.get()
+
+
+def _replace_managed_channel_set(channel_ids, source):
+    store = ManagedChannelSetStore(str(_managed_channel_set_db_path()))
+    return store.replace(channel_ids, source)
+
+
+def _log_managed_channel_set_summary():
+    managed_set = _load_managed_channel_set()
+    if managed_set is None:
+        logging.info("Managed channel set: not configured.")
+        return
+    logging.info(
+        "Managed channel set: %s channels (source=%s).",
+        len(managed_set.channel_ids),
+        managed_set.source,
+    )
+
+
 def _save_background_reorder_state(
     channel_id=None,
     pass_count=None,
@@ -507,6 +534,7 @@ def _save_background_reorder_state(
         if schedule is not None:
             payload["schedule"] = schedule
         if selected_channel_ids is not None:
+            # Legacy scope storage (superseded by managed channel set in sqlite).
             payload["selected_channel_ids"] = selected_channel_ids
         payload["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         with tmp_path.open("w", encoding="utf-8") as handle:
@@ -563,6 +591,7 @@ def _normalize_background_scope_selection(data):
 
 
 def _selected_background_channel_ids(state):
+    # Legacy JSON scope selection (superseded by managed channel set in sqlite).
     if not isinstance(state, dict):
         return None
     raw_ids = state.get("selected_channel_ids")
@@ -1218,6 +1247,15 @@ def _run_background_optimization_channel(
 
 def _background_runner_loop():
     logging.info("Background optimisation loop entered")
+    managed_set = _load_managed_channel_set()
+    if managed_set is None:
+        logging.info("Managed channel set not configured (background scope unavailable).")
+    else:
+        logging.info(
+            "Managed channel set loaded with %s channels (source=%s).",
+            len(managed_set.channel_ids),
+            managed_set.source,
+        )
     run_id = None
     while True:
         try:
@@ -1239,21 +1277,34 @@ def _background_runner_loop():
                     break
                 channels = api.fetch_channels() or []
                 state = _load_background_reorder_state()
-                active_channels = [
-                    ch for ch in channels if _is_active_channel(ch)
-                ]
-                selected_channel_ids = _selected_background_channel_ids(state)
-                if selected_channel_ids is not None:
-                    active_channels = [
-                        ch for ch in active_channels
-                        if str(ch.get("id")) in selected_channel_ids
-                    ]
-                if not active_channels:
-                    logging.info("Background optimisation idle, no active channels")
+                managed_set = _load_managed_channel_set()
+                if managed_set is None:
+                    logging.warning(
+                        "Background optimisation paused: no managed channel set configured."
+                    )
                     _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
                     continue
-
-                ordered_channels = _sorted_background_channels(active_channels)
+                managed_ids = managed_set.channel_ids
+                if not managed_ids:
+                    logging.info("Background optimisation idle, managed channel set empty")
+                    _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
+                    continue
+                active_lookup = {
+                    str(ch.get("id")): ch
+                    for ch in channels
+                    if _is_active_channel(ch)
+                }
+                ordered_channels = [
+                    active_lookup.get(str(channel_id))
+                    for channel_id in managed_ids
+                    if str(channel_id) in active_lookup
+                ]
+                if not ordered_channels:
+                    logging.info(
+                        "Background optimisation idle, no active channels in managed set"
+                    )
+                    _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
+                    continue
                 last_channel_id = state.get("last_channel_id")
                 try:
                     pass_count = int(state.get("pass_count") or 0)
@@ -3553,17 +3604,40 @@ def api_background_optimisation_schedule():
 @login_required
 def api_background_optimisation_scope():
     if request.method == 'GET':
-        state = _load_background_reorder_state()
-        selected_ids = state.get("selected_channel_ids") if isinstance(state, dict) else None
-        if not isinstance(selected_ids, list):
-            selected_ids = None
-        return jsonify({"success": True, "selected_channel_ids": selected_ids})
+        managed_set = _load_managed_channel_set()
+        selected_ids = managed_set.channel_ids if managed_set else []
+        payload = {"success": True, "selected_channel_ids": selected_ids}
+        payload["managed_channel_set"] = (
+            {
+                "id": managed_set.id,
+                "channel_ids": managed_set.channel_ids,
+                "created_at": managed_set.created_at,
+                "updated_at": managed_set.updated_at,
+                "source": managed_set.source,
+            }
+            if managed_set
+            else None
+        )
+        return jsonify(payload)
     data = request.get_json(silent=True) or {}
     selected_ids, error = _normalize_background_scope_selection(data)
     if error:
         return jsonify({"success": False, "error": error}), 400
-    _save_background_reorder_state(selected_channel_ids=selected_ids)
-    return jsonify({"success": True, "selected_channel_ids": selected_ids})
+    source = str(data.get("source") or "manual").strip() or "manual"
+    managed_set = _replace_managed_channel_set(selected_ids, source)
+    return jsonify(
+        {
+            "success": True,
+            "selected_channel_ids": managed_set.channel_ids,
+            "managed_channel_set": {
+                "id": managed_set.id,
+                "channel_ids": managed_set.channel_ids,
+                "created_at": managed_set.created_at,
+                "updated_at": managed_set.updated_at,
+                "source": managed_set.source,
+            },
+        }
+    )
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -4845,6 +4919,8 @@ if __name__ == '__main__':
     print("   • Monitor progress in real-time")
     print("\nPress Ctrl+C to stop")
     print("="*70 + "\n")
-    
+
+    _log_managed_channel_set_summary()
+
     # Run on all interfaces
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
