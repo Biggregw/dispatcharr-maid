@@ -1155,101 +1155,6 @@
             height: 16px;
         }
 
-        .background-history {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .background-history__header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-        }
-
-        .background-history__toggle {
-            text-decoration: none;
-            font-size: 0.95em;
-        }
-
-        .background-history__table-wrapper {
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            overflow: hidden;
-        }
-
-        .background-history--collapsed .background-history__table-wrapper {
-            max-height: 240px;
-            overflow-y: auto;
-        }
-
-        .background-history-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.95em;
-        }
-
-        .background-history-table th,
-        .background-history-table td {
-            padding: 10px 12px;
-            border-bottom: 1px solid #e5e7eb;
-            text-align: left;
-            vertical-align: top;
-        }
-
-        .background-history-table th {
-            background: #f3f4f6;
-            color: #374151;
-            font-weight: 700;
-        }
-
-        .background-history-empty {
-            text-align: center;
-            color: #6b7280;
-        }
-
-        .background-history-row {
-            cursor: pointer;
-        }
-
-        .background-history-detail {
-            background: #f9fafb;
-        }
-
-        .background-history-detail.hidden {
-            display: none;
-        }
-
-        .background-history-detail__content {
-            padding: 12px 16px;
-        }
-
-        .background-history-detail__status {
-            color: #6b7280;
-            font-size: 0.95em;
-        }
-
-        .background-history-detail-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9em;
-        }
-
-        .background-history-detail-table th,
-        .background-history-detail-table td {
-            padding: 8px 10px;
-            border-bottom: 1px solid #e5e7eb;
-            text-align: left;
-            vertical-align: top;
-        }
-
-        .background-history-detail-table th {
-            background: #eef2ff;
-            color: #374151;
-            font-weight: 600;
-        }
-        
         /* Alerts */
         .alert {
             padding: 15px;
@@ -1481,9 +1386,6 @@
                         </div>
                     </div>
                     <div class="background-run-summary-empty hidden" id="background-last-run-empty">No runs yet.</div>
-                    <button type="button" class="action-btn tertiary background-run-summary-action" id="background-last-run-view">
-                        View details
-                    </button>
                 </div>
                 <div class="background-summary-card">
                     <div class="background-summary-title">Schedule</div>
@@ -1576,38 +1478,6 @@
             </div>
         </div>
 
-        <div class="background-history background-history--collapsed" id="run-history-section">
-            <div class="background-history__header">
-                <h3 style="margin-bottom: 0; color: #1f2937;">Historical run history</h3>
-                <button type="button" class="text-btn background-history__toggle" id="run-history-toggle" aria-expanded="false">
-                    ▸ Expand
-                </button>
-            </div>
-            <p style="margin-bottom: 4px; color: #4b5563; font-size: 0.95em;">
-                Historical outcomes from completed background optimisation runs (not live status).
-            </p>
-            <div class="background-history__table-wrapper" style="overflow-x: auto;">
-                <table class="background-history-table">
-                    <thead>
-                        <tr>
-                            <th>Run start</th>
-                            <th>Trigger</th>
-                            <th>Channels checked</th>
-                            <th>reordered</th>
-                            <th>unchanged</th>
-                            <th>not_evaluable</th>
-                            <th>Duration</th>
-                        </tr>
-                    </thead>
-                    <tbody id="background-optimisation-run-history">
-                        <tr>
-                            <td colspan="7" class="background-history-empty">No runs recorded yet.</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        
     </div>
 
     <div id="refresh-preview-modal" class="modal-overlay hidden">
@@ -1686,9 +1556,6 @@
         let backgroundRunnerActive = false;
         let backgroundRunnerPaused = false;
         let backgroundRunnerBusy = false;
-        let backgroundRunHistoryEntries = [];
-        const backgroundRunDetailCache = new Map();
-        const backgroundRunDetailLoading = new Set();
         let backgroundScheduleBusy = false;
         let backgroundScheduleState = {
             enabled: false,
@@ -1706,8 +1573,6 @@
         let backgroundScopeLastSavedAt = null;
         const backgroundScopeAppliedGroups = new Set();
         const channelNameLookup = new Map();
-        let runHistoryExpanded = false;
-        let latestBackgroundRunId = null;
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
@@ -1776,21 +1641,9 @@
             if (scheduleSaveButton) {
                 scheduleSaveButton.addEventListener('click', saveBackgroundSchedule);
             }
-            const runHistoryToggle = document.getElementById('run-history-toggle');
-            if (runHistoryToggle) {
-                runHistoryToggle.addEventListener('click', toggleRunHistory);
-            }
-            const runHistoryBody = document.getElementById('background-optimisation-run-history');
-            if (runHistoryBody) {
-                runHistoryBody.addEventListener('click', handleRunHistoryClick);
-            }
             const insightSelect = document.getElementById('background-insight-channel');
             if (insightSelect) {
                 insightSelect.addEventListener('change', handleBackgroundInsightSelection);
-            }
-            const lastRunButton = document.getElementById('background-last-run-view');
-            if (lastRunButton) {
-                lastRunButton.addEventListener('click', viewLatestBackgroundRunDetails);
             }
             const scopeSelectAllButton = document.getElementById('background-scope-select-all');
             if (scopeSelectAllButton) {
@@ -2484,27 +2337,6 @@
             element.textContent = value;
         }
 
-        function setRunHistoryExpanded(isExpanded) {
-            runHistoryExpanded = Boolean(isExpanded);
-            const section = document.getElementById('run-history-section');
-            const toggle = document.getElementById('run-history-toggle');
-            if (section) {
-                section.classList.toggle('background-history--collapsed', !runHistoryExpanded);
-            }
-            if (toggle) {
-                toggle.setAttribute('aria-expanded', String(runHistoryExpanded));
-                toggle.textContent = runHistoryExpanded ? '▾ Collapse' : '▸ Expand';
-            }
-        }
-
-        function toggleRunHistory(event) {
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
-            setRunHistoryExpanded(!runHistoryExpanded);
-        }
-
         function formatActivityTimestamp(value) {
             if (value === null || value === undefined || value === '') {
                 return '—';
@@ -2585,15 +2417,6 @@
             return value;
         }
 
-        function formatRunTrigger(triggerValue) {
-            if (!triggerValue) return '—';
-            const normalized = String(triggerValue).toLowerCase();
-            if (normalized === 'manual' || normalized === 'schedule') {
-                return normalized;
-            }
-            return normalized;
-        }
-
         function formatRunTriggerLabel(triggerValue) {
             if (!triggerValue) return '—';
             const normalized = String(triggerValue).toLowerCase();
@@ -2633,21 +2456,17 @@
         function renderLastBackgroundRunSummary(entries) {
             const detailList = document.getElementById('background-last-run-details');
             const emptyState = document.getElementById('background-last-run-empty');
-            const viewButton = document.getElementById('background-last-run-view');
-            if (!detailList || !emptyState || !viewButton) {
+            if (!detailList || !emptyState) {
                 return;
             }
 
             if (!Array.isArray(entries) || entries.length === 0) {
-                latestBackgroundRunId = null;
                 detailList.classList.add('hidden');
                 emptyState.classList.remove('hidden');
-                viewButton.disabled = true;
                 return;
             }
 
             const latestRun = sortRunHistory(entries)[0];
-            latestBackgroundRunId = latestRun?.run_id ?? null;
             const summary = latestRun?.summary || {};
 
             setLastRunValue('background-last-run-start', formatActivityTimestamp(latestRun?.started_at));
@@ -2660,30 +2479,6 @@
 
             detailList.classList.remove('hidden');
             emptyState.classList.add('hidden');
-            viewButton.disabled = !latestBackgroundRunId;
-        }
-
-        function viewLatestBackgroundRunDetails(event) {
-            if (event) {
-                event.preventDefault();
-            }
-            if (!latestBackgroundRunId) {
-                return;
-            }
-            setRunHistoryExpanded(true);
-            const body = document.getElementById('background-optimisation-run-history');
-            if (!body) return;
-            const targetRow = body.querySelector(`tr.background-history-row[data-run-id="${latestBackgroundRunId}"]`);
-            const detailRow = body.querySelector(`tr.background-history-detail[data-run-id="${latestBackgroundRunId}"]`);
-            if (detailRow && detailRow.classList.contains('hidden')) {
-                detailRow.classList.remove('hidden');
-                loadBackgroundRunDetail(latestBackgroundRunId, detailRow);
-            }
-            if (targetRow) {
-                scrollElementToViewportCenter(targetRow);
-            } else {
-                scrollElementToViewportCenter(document.getElementById('run-history-section'));
-            }
         }
 
         function sortRunHistory(entries) {
@@ -2702,212 +2497,18 @@
             });
         }
 
-        function renderBackgroundRunHistory(entries) {
-            const body = document.getElementById('background-optimisation-run-history');
-            if (!body) return;
-            body.innerHTML = '';
-
-            if (!Array.isArray(entries) || entries.length === 0) {
-                const row = document.createElement('tr');
-                const cell = document.createElement('td');
-                cell.colSpan = 7;
-                cell.className = 'background-history-empty';
-                cell.textContent = 'No runs recorded yet.';
-                row.appendChild(cell);
-                body.appendChild(row);
-                return;
-            }
-
-            const rows = sortRunHistory(entries);
-            rows.forEach(entry => {
-                const row = document.createElement('tr');
-                row.className = 'background-history-row';
-                const runId = entry?.run_id ?? '';
-                const startedAt = formatActivityTimestamp(entry?.started_at);
-                const trigger = normalizeHistoryCell(formatRunTrigger(entry?.trigger));
-                const channelCount = normalizeHistoryCell(entry?.channel_count ?? 0);
-                const summary = entry?.summary || {};
-                const reordered = normalizeHistoryCell(summary?.reordered ?? 0);
-                const unchanged = normalizeHistoryCell(summary?.unchanged ?? 0);
-                const notEvaluable = normalizeHistoryCell(summary?.not_evaluable ?? 0);
-                const duration = formatDurationMs(entry?.duration_ms);
-
-                row.dataset.runId = runId;
-
-                [startedAt, trigger, channelCount, reordered, unchanged, notEvaluable, duration].forEach(value => {
-                    const cell = document.createElement('td');
-                    cell.textContent = value;
-                    row.appendChild(cell);
-                });
-
-                const detailRow = document.createElement('tr');
-                detailRow.className = 'background-history-detail hidden';
-                detailRow.dataset.runId = runId;
-                const detailCell = document.createElement('td');
-                detailCell.colSpan = 7;
-                const detailContent = document.createElement('div');
-                detailContent.className = 'background-history-detail__content';
-                const detailStatus = document.createElement('div');
-                detailStatus.className = 'background-history-detail__status';
-                detailStatus.textContent = 'Select a run to see channel outcomes.';
-                detailContent.appendChild(detailStatus);
-                detailCell.appendChild(detailContent);
-                detailRow.appendChild(detailCell);
-
-                body.appendChild(row);
-                body.appendChild(detailRow);
-            });
-        }
-
-        function formatStreamOrder(orderValue) {
-            if (Array.isArray(orderValue) && orderValue.length) {
-                return orderValue.join(', ');
-            }
-            if (orderValue === null || orderValue === undefined || orderValue === '') {
-                return '—';
-            }
-            return String(orderValue);
-        }
-
-        function renderRunDetailTable(outcomes) {
-            const table = document.createElement('table');
-            table.className = 'background-history-detail-table';
-            const thead = document.createElement('thead');
-            const headerRow = document.createElement('tr');
-            ['Channel', 'Action', 'Reason', 'Before order', 'After order'].forEach(label => {
-                const th = document.createElement('th');
-                th.textContent = label;
-                headerRow.appendChild(th);
-            });
-            thead.appendChild(headerRow);
-            table.appendChild(thead);
-            const tbody = document.createElement('tbody');
-            if (!Array.isArray(outcomes) || outcomes.length === 0) {
-                const emptyRow = document.createElement('tr');
-                const emptyCell = document.createElement('td');
-                emptyCell.colSpan = 5;
-                emptyCell.className = 'background-history-empty';
-                emptyCell.textContent = 'No channel outcomes recorded for this run.';
-                emptyRow.appendChild(emptyCell);
-                tbody.appendChild(emptyRow);
-            } else {
-                const rows = outcomes.slice().sort((a, b) => {
-                    const aLabel = formatChannelLabel(a?.channel_id, a?.channel_name).toLowerCase();
-                    const bLabel = formatChannelLabel(b?.channel_id, b?.channel_name).toLowerCase();
-                    if (aLabel < bLabel) return -1;
-                    if (aLabel > bLabel) return 1;
-                    return 0;
-                });
-                rows.forEach(outcome => {
-                    const channelLabel = formatChannelLabel(outcome?.channel_id, outcome?.channel_name);
-                    const action = normalizeHistoryCell(outcome?.action);
-                    const reason = normalizeHistoryCell(outcome?.reason_code);
-                    const beforeOrder = outcome?.action === 'reordered'
-                        ? formatStreamOrder(outcome?.before_order)
-                        : '—';
-                    const afterOrder = outcome?.action === 'reordered'
-                        ? formatStreamOrder(outcome?.after_order)
-                        : '—';
-
-                    const row = document.createElement('tr');
-                    [channelLabel, action, reason, beforeOrder, afterOrder].forEach(value => {
-                        const cell = document.createElement('td');
-                        cell.textContent = value;
-                        row.appendChild(cell);
-                    });
-                    tbody.appendChild(row);
-                });
-            }
-            table.appendChild(tbody);
-            return table;
-        }
-
-        function updateRunDetailRow(detailRow, contentNode) {
-            if (!detailRow) return;
-            const cell = detailRow.querySelector('td');
-            if (!cell) return;
-            cell.innerHTML = '';
-            cell.appendChild(contentNode);
-        }
-
-        function showRunDetailStatus(detailRow, message) {
-            const content = document.createElement('div');
-            content.className = 'background-history-detail__content';
-            const status = document.createElement('div');
-            status.className = 'background-history-detail__status';
-            status.textContent = message;
-            content.appendChild(status);
-            updateRunDetailRow(detailRow, content);
-        }
-
-        async function loadBackgroundRunDetail(runId, detailRow) {
-            if (!runId) return;
-            if (backgroundRunDetailCache.has(runId)) {
-                const cached = backgroundRunDetailCache.get(runId);
-                const content = document.createElement('div');
-                content.className = 'background-history-detail__content';
-                content.appendChild(renderRunDetailTable(cached));
-                updateRunDetailRow(detailRow, content);
-                return;
-            }
-            if (backgroundRunDetailLoading.has(runId)) {
-                return;
-            }
-            backgroundRunDetailLoading.add(runId);
-            showRunDetailStatus(detailRow, 'Loading channel outcomes…');
-            try {
-                const response = await fetch(`/api/background-optimisation/runs/${encodeURIComponent(runId)}`, { cache: 'no-store' });
-                const data = await response.json();
-                if (data?.success) {
-                    const outcomes = Array.isArray(data?.outcomes) ? data.outcomes : [];
-                    backgroundRunDetailCache.set(runId, outcomes);
-                    const content = document.createElement('div');
-                    content.className = 'background-history-detail__content';
-                    content.appendChild(renderRunDetailTable(outcomes));
-                    updateRunDetailRow(detailRow, content);
-                } else {
-                    showRunDetailStatus(detailRow, 'Run details unavailable.');
-                }
-            } catch (error) {
-                showRunDetailStatus(detailRow, 'Run details unavailable.');
-            } finally {
-                backgroundRunDetailLoading.delete(runId);
-            }
-        }
-
-        function handleRunHistoryClick(event) {
-            const targetRow = event.target.closest('tr');
-            if (!targetRow) return;
-            if (targetRow.classList.contains('background-history-detail')) return;
-            const runId = targetRow.dataset.runId;
-            if (!runId) return;
-            const body = document.getElementById('background-optimisation-run-history');
-            if (!body) return;
-            const detailRow = body.querySelector(`tr.background-history-detail[data-run-id="${runId}"]`);
-            if (!detailRow) return;
-            const isHidden = detailRow.classList.contains('hidden');
-            detailRow.classList.toggle('hidden', !isHidden);
-            if (isHidden) {
-                loadBackgroundRunDetail(runId, detailRow);
-            }
-        }
-
         async function loadBackgroundRunHistory() {
             try {
                 const response = await fetch('/api/background-optimisation/runs', { cache: 'no-store' });
                 const data = await response.json();
                 if (data.success) {
                     const runs = Array.isArray(data.runs) ? data.runs : [];
-                    backgroundRunHistoryEntries = runs;
-                    renderBackgroundRunHistory(runs);
                     renderLastBackgroundRunSummary(runs);
                     return;
                 }
             } catch (error) {
                 // Best-effort only.
             }
-            backgroundRunHistoryEntries = [];
-            renderBackgroundRunHistory([]);
             renderLastBackgroundRunSummary([]);
         }
 
