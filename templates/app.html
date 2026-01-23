@@ -2656,7 +2656,9 @@
                 right.style.alignItems = 'center';
                 right.style.gap = '8px';
                 const score = document.createElement('span');
-                score.textContent = `Score: ${formatInsightScore(stream?.score)}`;
+                const currentScore = formatInsightScore(stream?.current_score ?? stream?.score);
+                const previousScore = formatInsightScore(stream?.previous_score);
+                score.textContent = `Current: ${currentScore} · Previous: ${previousScore}`;
                 right.appendChild(score);
                 if (stream?.is_slot1) {
                     const badge = document.createElement('span');
