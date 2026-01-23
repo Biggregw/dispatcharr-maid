@@ -884,6 +884,37 @@
             color: #6b7280;
         }
 
+        .background-run-summary-list {
+            display: grid;
+            gap: 8px;
+        }
+
+        .background-run-summary-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            font-size: 0.9em;
+        }
+
+        .background-run-summary-label {
+            font-weight: 600;
+            color: #475569;
+        }
+
+        .background-run-summary-value {
+            color: #1f2937;
+            font-weight: 600;
+        }
+
+        .background-run-summary-empty {
+            font-size: 0.9em;
+            color: #6b7280;
+        }
+
+        .background-run-summary-action {
+            align-self: flex-start;
+        }
+
         .background-status-panel {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -1219,6 +1250,43 @@
                     <div class="background-summary-value" id="background-summary-active">—</div>
                     <div class="background-summary-meta" id="background-summary-active-meta">Last update —</div>
                 </div>
+                <div class="background-summary-card" id="background-last-run-card">
+                    <div class="background-summary-title">Last background optimisation run</div>
+                    <div class="background-run-summary-list" id="background-last-run-details">
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Run start time</span>
+                            <span class="background-run-summary-value" id="background-last-run-start">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Trigger</span>
+                            <span class="background-run-summary-value" id="background-last-run-trigger">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Channels checked</span>
+                            <span class="background-run-summary-value" id="background-last-run-channels">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Reordered</span>
+                            <span class="background-run-summary-value" id="background-last-run-reordered">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Unchanged</span>
+                            <span class="background-run-summary-value" id="background-last-run-unchanged">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Not evaluable</span>
+                            <span class="background-run-summary-value" id="background-last-run-not-evaluable">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Duration</span>
+                            <span class="background-run-summary-value" id="background-last-run-duration">—</span>
+                        </div>
+                    </div>
+                    <div class="background-run-summary-empty hidden" id="background-last-run-empty">No runs yet.</div>
+                    <button type="button" class="action-btn tertiary background-run-summary-action" id="background-last-run-view">
+                        View details
+                    </button>
+                </div>
                 <div class="background-summary-card">
                     <div class="background-summary-title">Schedule</div>
                     <div class="background-summary-value" id="background-summary-schedule">—</div>
@@ -1498,6 +1566,7 @@
         const backgroundScopeAppliedGroups = new Set();
         const channelNameLookup = new Map();
         let runHistoryExpanded = false;
+        let latestBackgroundRunId = null;
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
@@ -1573,6 +1642,10 @@
             const runHistoryBody = document.getElementById('background-optimisation-run-history');
             if (runHistoryBody) {
                 runHistoryBody.addEventListener('click', handleRunHistoryClick);
+            }
+            const lastRunButton = document.getElementById('background-last-run-view');
+            if (lastRunButton) {
+                lastRunButton.addEventListener('click', viewLatestBackgroundRunDetails);
             }
             const scopeSelectAllButton = document.getElementById('background-scope-select-all');
             if (scopeSelectAllButton) {
@@ -2374,6 +2447,18 @@
             return normalized;
         }
 
+        function formatRunTriggerLabel(triggerValue) {
+            if (!triggerValue) return '—';
+            const normalized = String(triggerValue).toLowerCase();
+            if (normalized === 'manual') {
+                return 'Manual';
+            }
+            if (normalized === 'schedule') {
+                return 'Scheduled';
+            }
+            return String(triggerValue);
+        }
+
         function formatDurationMs(durationMs) {
             const ms = Number(durationMs);
             if (!Number.isFinite(ms) || ms <= 0) {
@@ -2390,6 +2475,68 @@
                 return `${minutes}m ${seconds}s`;
             }
             return `${seconds}s`;
+        }
+
+        function setLastRunValue(elementId, value) {
+            const element = document.getElementById(elementId);
+            if (!element) return;
+            element.textContent = normalizeHistoryCell(value);
+        }
+
+        function renderLastBackgroundRunSummary(entries) {
+            const detailList = document.getElementById('background-last-run-details');
+            const emptyState = document.getElementById('background-last-run-empty');
+            const viewButton = document.getElementById('background-last-run-view');
+            if (!detailList || !emptyState || !viewButton) {
+                return;
+            }
+
+            if (!Array.isArray(entries) || entries.length === 0) {
+                latestBackgroundRunId = null;
+                detailList.classList.add('hidden');
+                emptyState.classList.remove('hidden');
+                viewButton.disabled = true;
+                return;
+            }
+
+            const latestRun = sortRunHistory(entries)[0];
+            latestBackgroundRunId = latestRun?.run_id ?? null;
+            const summary = latestRun?.summary || {};
+
+            setLastRunValue('background-last-run-start', formatActivityTimestamp(latestRun?.started_at));
+            setLastRunValue('background-last-run-trigger', formatRunTriggerLabel(latestRun?.trigger));
+            setLastRunValue('background-last-run-channels', latestRun?.channel_count ?? 0);
+            setLastRunValue('background-last-run-reordered', summary?.reordered ?? 0);
+            setLastRunValue('background-last-run-unchanged', summary?.unchanged ?? 0);
+            setLastRunValue('background-last-run-not-evaluable', summary?.not_evaluable ?? 0);
+            setLastRunValue('background-last-run-duration', formatDurationMs(latestRun?.duration_ms));
+
+            detailList.classList.remove('hidden');
+            emptyState.classList.add('hidden');
+            viewButton.disabled = !latestBackgroundRunId;
+        }
+
+        function viewLatestBackgroundRunDetails(event) {
+            if (event) {
+                event.preventDefault();
+            }
+            if (!latestBackgroundRunId) {
+                return;
+            }
+            setRunHistoryExpanded(true);
+            const body = document.getElementById('background-optimisation-run-history');
+            if (!body) return;
+            const targetRow = body.querySelector(`tr.background-history-row[data-run-id="${latestBackgroundRunId}"]`);
+            const detailRow = body.querySelector(`tr.background-history-detail[data-run-id="${latestBackgroundRunId}"]`);
+            if (detailRow && detailRow.classList.contains('hidden')) {
+                detailRow.classList.remove('hidden');
+                loadBackgroundRunDetail(latestBackgroundRunId, detailRow);
+            }
+            if (targetRow) {
+                scrollElementToViewportCenter(targetRow);
+            } else {
+                scrollElementToViewportCenter(document.getElementById('run-history-section'));
+            }
         }
 
         function sortRunHistory(entries) {
@@ -2606,6 +2753,7 @@
                     const runs = Array.isArray(data.runs) ? data.runs : [];
                     backgroundRunHistoryEntries = runs;
                     renderBackgroundRunHistory(runs);
+                    renderLastBackgroundRunSummary(runs);
                     return;
                 }
             } catch (error) {
@@ -2613,6 +2761,7 @@
             }
             backgroundRunHistoryEntries = [];
             renderBackgroundRunHistory([]);
+            renderLastBackgroundRunSummary([]);
         }
 
         function mapBackgroundAction(actionTaken, reason) {
