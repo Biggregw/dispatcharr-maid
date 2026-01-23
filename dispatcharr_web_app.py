@@ -508,8 +508,8 @@ def _log_managed_channel_set_summary():
 
 
 def _save_background_reorder_state(
-    channel_id=None,
-    pass_count=None,
+    current_index=None,
+    cycles_completed=None,
     schedule=None,
 ):
     state_path = _background_reorder_state_path()
@@ -526,10 +526,12 @@ def _save_background_reorder_state(
                 payload = {}
         if not isinstance(payload, dict):
             payload = {}
-        if channel_id is not None:
-            payload["last_channel_id"] = channel_id
-        if pass_count is not None:
-            payload["pass_count"] = pass_count
+        if current_index is not None:
+            payload["current_index"] = current_index
+            payload.pop("last_channel_id", None)
+        if cycles_completed is not None:
+            payload["cycles_completed"] = cycles_completed
+            payload.pop("pass_count", None)
         if schedule is not None:
             payload["schedule"] = schedule
         payload["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -723,6 +725,43 @@ def _next_background_start_index(channels, last_channel_id):
     return 0
 
 
+def _resolve_background_position(state, managed_ids):
+    if not managed_ids:
+        return 0, 0
+    current_index = 0
+    cycles_completed = 0
+    if isinstance(state, dict):
+        try:
+            current_index = int(state.get("current_index") or 0)
+        except (TypeError, ValueError):
+            current_index = 0
+        try:
+            cycles_completed = int(state.get("cycles_completed") or 0)
+        except (TypeError, ValueError):
+            cycles_completed = 0
+        if current_index <= 0 and state.get("current_index") not in (0, "0"):
+            last_channel_id = state.get("last_channel_id")
+            if last_channel_id is not None:
+                for index, channel_id in enumerate(managed_ids):
+                    if str(channel_id) == str(last_channel_id):
+                        current_index = (index + 1) % len(managed_ids)
+                        break
+        if cycles_completed <= 0 and state.get("cycles_completed") in (None, ""):
+            pass_count = state.get("pass_count")
+            if pass_count is not None:
+                try:
+                    cycles_completed = int(pass_count)
+                except (TypeError, ValueError):
+                    cycles_completed = 0
+    if current_index < 0:
+        current_index = 0
+    if current_index >= len(managed_ids):
+        current_index = 0
+    if cycles_completed < 0:
+        cycles_completed = 0
+    return current_index, cycles_completed
+
+
 def _sleep_while_enabled(duration_seconds):
     end_time = time.time() + duration_seconds
     while _background_runner_enabled_event.is_set() and time.time() < end_time:
@@ -814,11 +853,6 @@ def _apply_background_schedule():
     if not schedule["enabled"]:
         return schedule
     is_active = _schedule_window_active(schedule["start"], schedule["end"])
-    if is_active and not _get_background_runner_enabled():
-        _ensure_background_runner_thread()
-        _set_background_runner_enabled(True)
-    elif not is_active and _get_background_runner_enabled():
-        _set_background_runner_enabled(False)
     schedule["active"] = is_active
     return schedule
 
@@ -900,7 +934,7 @@ def _score_delta_from_orders(score_lookup, old_order, new_order):
     return new_score - old_score
 
 
-def _dominant_score_improvement(score_lookup, old_order, new_order, pass_count):
+def _dominant_score_improvement(score_lookup, old_order, new_order, cycles_completed):
     """Return (is_dominant, reason, delta, new_top_record)."""
     if not old_order or not new_order:
         return False, "missing_order", None, None
@@ -930,9 +964,9 @@ def _dominant_score_improvement(score_lookup, old_order, new_order, pass_count):
         else 0.0
     )
 
-    if pass_count <= 0:
+    if cycles_completed <= 0:
         return True, "score_improved", delta, new_record
-    if pass_count == 1:
+    if cycles_completed == 1:
         min_delta = score_range * 0.02
         if min_delta > 0 and delta <= min_delta:
             return False, "score_delta_too_small", delta, new_record
@@ -951,7 +985,7 @@ def _run_background_optimization_channel(
     stream_provider_map,
     recent_reorder_channels,
     run_id,
-    pass_count,
+    cycles_completed,
 ):
     # Background optimisation is intentionally slow and probe-complete.
     # Avoid early exits or impatience logic beyond honoring stop requests.
@@ -976,7 +1010,7 @@ def _run_background_optimization_channel(
                 "old_stream_order": old_stream_order,
                 "new_stream_order": new_stream_order,
                 "score_delta": score_delta,
-                "pass_count": pass_count,
+                "cycles_completed": cycles_completed,
             }
         )
         return {"completed": completed, "action": action_taken, "channel_id": channel_id}
@@ -993,7 +1027,7 @@ def _run_background_optimization_channel(
                 "old_stream_order": old_stream_order,
                 "new_stream_order": new_stream_order,
                 "score_delta": score_delta,
-                "pass_count": pass_count,
+                "cycles_completed": cycles_completed,
             }
         )
         return {"completed": completed, "action": action_taken, "channel_id": channel_id}
@@ -1024,7 +1058,7 @@ def _run_background_optimization_channel(
                     "old_stream_order": old_stream_order,
                     "new_stream_order": new_stream_order,
                     "score_delta": score_delta,
-                    "pass_count": pass_count,
+                    "cycles_completed": cycles_completed,
                 }
             )
             return {"completed": completed, "action": action_taken, "channel_id": channel_id}
@@ -1043,7 +1077,7 @@ def _run_background_optimization_channel(
                     "old_stream_order": old_stream_order,
                     "new_stream_order": new_stream_order,
                     "score_delta": score_delta,
-                    "pass_count": pass_count,
+                    "cycles_completed": cycles_completed,
                 }
             )
             return {"completed": completed, "action": action_taken, "channel_id": channel_id}
@@ -1093,7 +1127,7 @@ def _run_background_optimization_channel(
                             streams,
                             score_lookup,
                         )
-                        # Single ordering computation per channel per pass to avoid preview/apply divergence.
+                        # Single ordering computation per channel per cycle to avoid preview/apply divergence.
                         ordering_details = _order_channel_streams(
                             records_for_ordering,
                             config,
@@ -1113,7 +1147,7 @@ def _run_background_optimization_channel(
                                 reason = "order_already_optimal"
                                 action_taken = "unchanged"
                                 completed = True
-                            elif pass_count == 0:
+                            elif cycles_completed == 0:
                                 api.update_channel_streams(
                                     channel_id,
                                     new_stream_order,
@@ -1134,7 +1168,7 @@ def _run_background_optimization_channel(
                                         score_lookup,
                                         old_stream_order,
                                         new_stream_order,
-                                        pass_count,
+                                        cycles_completed,
                                     )
                                 )
                                 score_delta = delta
@@ -1202,7 +1236,7 @@ def _run_background_optimization_channel(
             "old_stream_order": old_stream_order,
             "new_stream_order": new_stream_order,
             "score_delta": score_delta,
-            "pass_count": pass_count,
+            "cycles_completed": cycles_completed,
         }
     )
     return {"completed": completed, "action": action_taken, "channel_id": channel_id}
@@ -1210,82 +1244,109 @@ def _run_background_optimization_channel(
 
 def _background_runner_loop():
     logging.info("Background optimisation loop entered")
-    managed_set = _load_managed_channel_set()
-    if managed_set is None:
-        logging.info("Managed channel set not configured (background scope unavailable).")
-    else:
-        logging.info(
-            "Managed channel set loaded with %s channels (source=%s).",
-            len(managed_set.channel_ids),
-            managed_set.source,
-        )
     run_id = None
+    managed_ids = None
+    current_index = 0
+    cycles_completed = 0
+    recent_reorder_channels = set()
+    api = None
+    config = None
+    stream_provider_map = None
     while True:
         try:
             _apply_background_schedule()
             _background_runner_enabled_event.wait(timeout=30)
             if not _get_background_runner_enabled():
+                run_id = None
+                managed_ids = None
+                current_index = 0
+                cycles_completed = 0
+                recent_reorder_channels = set()
+                api = None
+                config = None
+                stream_provider_map = None
                 continue
             if run_id is None:
                 run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-            api = DispatcharrAPI()
-            if not api.token:
-                api.login()
-            config = Config("config.yaml")
-            stream_provider_map = api.fetch_stream_provider_map()
-
-            while _background_runner_enabled_event.is_set():
-                _apply_background_schedule()
-                if not _background_runner_enabled_event.is_set():
-                    break
-                channels = api.fetch_channels() or []
-                state = _load_background_reorder_state()
+            if api is None:
+                api = DispatcharrAPI()
+                if not api.token:
+                    api.login()
+            if config is None:
+                config = Config("config.yaml")
+            if stream_provider_map is None:
+                stream_provider_map = api.fetch_stream_provider_map()
+            if managed_ids is None:
                 managed_set = _load_managed_channel_set()
                 if managed_set is None:
                     logging.warning(
                         "Background optimisation paused: no managed channel set configured."
                     )
-                    _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
-                    continue
-                managed_ids = managed_set.channel_ids
-                if not managed_ids:
-                    logging.info("Background optimisation idle, managed channel set empty")
-                    _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
-                    continue
-                active_lookup = {
-                    str(ch.get("id")): ch
-                    for ch in channels
-                    if _is_active_channel(ch)
-                }
-                ordered_channels = [
-                    active_lookup.get(str(channel_id))
-                    for channel_id in managed_ids
-                    if str(channel_id) in active_lookup
-                ]
-                if not ordered_channels:
-                    logging.info(
-                        "Background optimisation idle, no active channels in managed set"
+                    managed_ids = []
+                else:
+                    managed_ids = [str(channel_id) for channel_id in managed_set.channel_ids]
+                    if not managed_ids:
+                        logging.info("Background optimisation idle, managed channel set empty")
+                if managed_ids:
+                    state = _load_background_reorder_state()
+                    current_index, cycles_completed = _resolve_background_position(state, managed_ids)
+                    recent_reorder_channels = _recent_reordered_channels(
+                        Path("logs"),
+                        RELIABILITY_RECENT_HOURS,
                     )
+
+            while _background_runner_enabled_event.is_set():
+                schedule = _apply_background_schedule()
+                if schedule.get("enabled") and not schedule.get("active"):
                     _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
                     continue
-                last_channel_id = state.get("last_channel_id")
-                try:
-                    pass_count = int(state.get("pass_count") or 0)
-                except (TypeError, ValueError):
-                    pass_count = 0
-                # Resume from the next channel after the last fully processed ID.
-                start_index = _next_background_start_index(ordered_channels, last_channel_id)
-                ordered_cycle = ordered_channels[start_index:] + ordered_channels[:start_index]
-                recent_reorder_channels = _recent_reordered_channels(
-                    Path("logs"),
-                    RELIABILITY_RECENT_HOURS,
-                )
+                if not managed_ids:
+                    _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
+                    continue
+                if current_index >= len(managed_ids):
+                    current_index = 0
+                if current_index == 0:
+                    recent_reorder_channels = _recent_reordered_channels(
+                        Path("logs"),
+                        RELIABILITY_RECENT_HOURS,
+                    )
+                channels = api.fetch_channels() or []
+                channel_lookup = {
+                    str(ch.get("id")): ch for ch in channels if isinstance(ch, dict)
+                }
+                channel_id = managed_ids[current_index]
+                channel = channel_lookup.get(str(channel_id))
+                completed_iteration = False
 
-                completed_full_cycle = True
-                for channel in ordered_cycle:
-                    if not _background_runner_enabled_event.is_set():
-                        completed_full_cycle = False
-                        break
+                if channel is None:
+                    _append_background_reorder_log(
+                        {
+                            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                            "channel_id": channel_id,
+                            "action_taken": "skipped",
+                            "reason": "channel_missing",
+                            "old_stream_order": [],
+                            "new_stream_order": [],
+                            "score_delta": None,
+                            "cycles_completed": cycles_completed,
+                        }
+                    )
+                    completed_iteration = True
+                elif not _is_active_channel(channel):
+                    _append_background_reorder_log(
+                        {
+                            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                            "channel_id": channel.get("id"),
+                            "action_taken": "skipped",
+                            "reason": "inactive_channel",
+                            "old_stream_order": [],
+                            "new_stream_order": [],
+                            "score_delta": None,
+                            "cycles_completed": cycles_completed,
+                        }
+                    )
+                    completed_iteration = True
+                else:
                     result = _run_background_optimization_channel(
                         api,
                         config,
@@ -1293,22 +1354,34 @@ def _background_runner_loop():
                         stream_provider_map,
                         recent_reorder_channels,
                         run_id,
-                        pass_count,
+                        cycles_completed,
                     )
-                    if result.get("completed") and result.get("channel_id") is not None:
-                        _save_background_reorder_state(result["channel_id"])
+                    completed_iteration = bool(result.get("completed"))
                     if result.get("action") == "reordered" and result.get("channel_id") is not None:
                         recent_reorder_channels.add(str(result["channel_id"]))
-                    if _background_runner_enabled_event.is_set():
-                        _sleep_while_enabled(BACKGROUND_OPTIMIZATION_CHANNEL_SLEEP_SECONDS)
 
+                if completed_iteration and managed_ids:
+                    # Cyclic worker: advance one channel per iteration and wrap without completion.
+                    next_index = (current_index + 1) % len(managed_ids)
+                    if next_index == 0:
+                        cycles_completed += 1
+                    current_index = next_index
+                    _save_background_reorder_state(
+                        current_index=current_index,
+                        cycles_completed=cycles_completed,
+                    )
                 if _background_runner_enabled_event.is_set():
-                    if completed_full_cycle:
-                        _save_background_reorder_state(pass_count=pass_count + 1)
-                    _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
+                    _sleep_while_enabled(BACKGROUND_OPTIMIZATION_CHANNEL_SLEEP_SECONDS)
 
             if not _background_runner_enabled_event.is_set():
                 run_id = None
+                managed_ids = None
+                current_index = 0
+                cycles_completed = 0
+                recent_reorder_channels = set()
+                api = None
+                config = None
+                stream_provider_map = None
         except Exception:
             logging.exception("Background optimisation loop error")
             _sleep_while_enabled(BACKGROUND_OPTIMIZATION_PASS_SLEEP_SECONDS)
@@ -3462,11 +3535,18 @@ def api_background_runner_toggle():
 @login_required
 def api_background_runner_progress():
     state = _load_background_reorder_state()
-    last_channel_id = state.get("last_channel_id")
     last_status = None
     last_duration_seconds = None
     completed_channels = None
     total_channels = None
+    current_channel_id = None
+    current_index = None
+    managed_set = _load_managed_channel_set()
+    if managed_set and managed_set.channel_ids:
+        managed_ids = [str(channel_id) for channel_id in managed_set.channel_ids]
+        current_index, _cycles_completed = _resolve_background_position(state, managed_ids)
+        if managed_ids:
+            current_channel_id = managed_ids[current_index]
     try:
         api = DispatcharrAPI()
         if not api.token:
@@ -3481,7 +3561,8 @@ def api_background_runner_progress():
             "enabled": _get_background_runner_enabled(),
             "completed_channels": completed_channels,
             "total_channels": total_channels,
-            "last_channel_id": last_channel_id,
+            "current_channel_id": current_channel_id,
+            "current_index": current_index,
             "last_status": last_status,
             "last_duration_seconds": last_duration_seconds,
         }
@@ -3512,16 +3593,29 @@ def api_background_optimisation_status():
             channel_name_by_id[channel_id] = channel.get("name")
     except Exception:
         channel_name_by_id = {}
-    last_channel_name = None
-    last_channel_id = state.get("last_channel_id")
-    if last_channel_id is not None:
-        last_channel_name = channel_name_by_id.get(last_channel_id)
-        if last_channel_name is None and isinstance(last_channel_id, str):
+    managed_set = _load_managed_channel_set()
+    current_channel_id = None
+    current_index = None
+    cycles_completed = None
+    if managed_set and managed_set.channel_ids:
+        managed_ids = [str(channel_id) for channel_id in managed_set.channel_ids]
+        current_index, cycles_completed = _resolve_background_position(state, managed_ids)
+        if managed_ids:
+            current_channel_id = managed_ids[current_index]
+    current_channel_name = None
+    if current_channel_id is not None:
+        current_channel_name = channel_name_by_id.get(current_channel_id)
+        if current_channel_name is None and isinstance(current_channel_id, str):
             try:
-                last_channel_name = channel_name_by_id.get(int(last_channel_id))
+                current_channel_name = channel_name_by_id.get(int(current_channel_id))
             except (TypeError, ValueError):
-                last_channel_name = None
-    state["last_channel_name"] = last_channel_name
+                current_channel_name = None
+    if current_index is not None:
+        state["current_index"] = current_index
+    if cycles_completed is not None:
+        state["cycles_completed"] = cycles_completed
+    state["current_channel_id"] = current_channel_id
+    state["current_channel_name"] = current_channel_name
     enriched_activity = []
     for entry in recent_activity:
         if not isinstance(entry, dict):

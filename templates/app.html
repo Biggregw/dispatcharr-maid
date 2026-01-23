@@ -1139,11 +1139,11 @@
                         <div class="background-status-card-title">Progress</div>
                         <div class="background-status-card-body">
                             <div class="status-field">
-                                <span class="status-label">Current pass</span>
+                                <span class="status-label">Cycles completed</span>
                                 <span class="status-value" id="background-optimisation-pass">—</span>
                             </div>
                             <div class="status-field">
-                                <span class="status-label">Last processed channel</span>
+                                <span class="status-label">Current channel</span>
                                 <span class="status-value" id="background-optimisation-last-channel">—</span>
                             </div>
                         </div>
@@ -1220,7 +1220,7 @@
                                 <th>Action</th>
                                 <th>Reason</th>
                                 <th>Score delta</th>
-                                <th>Pass count</th>
+                                <th>Cycles completed</th>
                             </tr>
                         </thead>
                         <tbody id="background-optimisation-activity">
@@ -1343,6 +1343,7 @@
         let jobTickerInterval = null;
         let jobTickerState = null;
         let backgroundRunnerEnabled = false;
+        let backgroundRunnerPaused = false;
         let backgroundRunnerBusy = false;
         let backgroundOptimisationActivityEntries = [];
         let backgroundScheduleBusy = false;
@@ -2138,11 +2139,11 @@
                 const actionTaken = entry?.action_taken ?? '';
                 const reason = entry?.reason ?? '';
                 const scoreDelta = formatScoreDelta(entry?.score_delta);
-                const passCount = entry?.pass_count ?? '';
+                const cyclesCompleted = entry?.cycles_completed ?? '';
 
                 row.dataset.channelId = channelId;
 
-                [timestamp, channelLabel, actionTaken, reason, scoreDelta, passCount].forEach(value => {
+                [timestamp, channelLabel, actionTaken, reason, scoreDelta, cyclesCompleted].forEach(value => {
                     const cell = document.createElement('td');
                     if (value === null || value === undefined || value === '') {
                         cell.textContent = '—';
@@ -2324,8 +2325,8 @@
 
         function updateBackgroundSummaryActive() {
             const activeLabel = backgroundRunnerEnabled
-                ? `Checking ${backgroundCurrentChannelLabel}`
-                : 'Idle';
+                ? (backgroundRunnerPaused ? 'Paused (outside window)' : `Checking ${backgroundCurrentChannelLabel}`)
+                : 'Disabled';
             const updateLabel = backgroundStatusUpdatedAt
                 ? `Last update ${formatTimeSince(backgroundStatusUpdatedAt)}`
                 : 'Last update —';
@@ -2341,18 +2342,24 @@
                 const enabled = Boolean(data?.enabled);
                 const activity = Array.isArray(data?.recent_activity) ? data.recent_activity : [];
                 const schedule = data?.schedule || null;
+                const scheduleEnabled = Boolean(schedule?.enabled);
+                const scheduleActive = Boolean(schedule?.active);
                 const lastEntry = activity.length ? activity[activity.length - 1] : null;
                 backgroundOptimisationActivityEntries = activity;
-                const currentChannelId = state.last_channel_id ?? '';
-                const currentChannelLabel = formatChannelLabel(currentChannelId, state.last_channel_name);
+                const currentChannelId = state.current_channel_id ?? '';
+                const currentChannelLabel = formatChannelLabel(
+                    currentChannelId,
+                    state.current_channel_name
+                );
                 backgroundCurrentChannelLabel = currentChannelLabel;
                 backgroundStatusUpdatedAt = state.updated_at || null;
                 backgroundRunnerEnabled = enabled;
+                backgroundRunnerPaused = enabled && scheduleEnabled && !scheduleActive;
                 const runningLabel = enabled
-                    ? `currently checking ${currentChannelLabel}`
-                    : 'Stopped';
+                    ? (backgroundRunnerPaused ? 'Paused (outside window)' : 'Running')
+                    : 'Disabled';
                 setBackgroundOptimisationValue('background-optimisation-running', runningLabel);
-                setBackgroundOptimisationValue('background-optimisation-pass', state.pass_count);
+                setBackgroundOptimisationValue('background-optimisation-pass', state.cycles_completed);
                 setBackgroundOptimisationValue('background-optimisation-last-channel', currentChannelLabel);
                 setBackgroundOptimisationValue('background-optimisation-updated-at', formatTimeSince(state.updated_at));
                 renderBackgroundOptimisationOutcomes(formatBackgroundOutcomes(activity));
@@ -2362,6 +2369,7 @@
                 updateBackgroundSummaryActive();
             } catch (error) {
                 backgroundOptimisationActivityEntries = [];
+                backgroundRunnerPaused = false;
                 setBackgroundOptimisationValue('background-optimisation-running', '—');
                 renderBackgroundOptimisationOutcomes([]);
                 setBackgroundOptimisationValue('background-optimisation-last-decision', '—');
