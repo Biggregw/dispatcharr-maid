@@ -50,6 +50,12 @@
             margin-bottom: 20px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
         }
+
+        .card--secondary {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            box-shadow: none;
+        }
         
         .card h2 {
             color: #667eea;
@@ -932,6 +938,15 @@
             gap: 12px;
         }
 
+        .background-status-card--secondary {
+            background: #f1f5f9;
+            border-color: #e2e8f0;
+        }
+
+        .background-status-card--secondary .background-status-card-title {
+            color: #475569;
+        }
+
         .background-status-card-title {
             font-weight: 700;
             color: #1f2937;
@@ -1293,7 +1308,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="background-status-card">
+                    <div class="background-status-card background-status-card--secondary">
                         <div class="background-status-card-title">Schedule</div>
                         <div class="background-status-card-body">
                             <div class="status-field">
@@ -1392,7 +1407,7 @@
         </div>
 
         <!-- Scope Selection -->
-        <div class="card" id="scope-selection">
+        <div class="card card--secondary" id="scope-selection">
             <h2>Background optimisation scope</h2>
             <p style="margin-bottom: 12px; color: #4b5563; font-size: 0.95em;">
                 Choose the channels that should be eligible for background optimisation.
