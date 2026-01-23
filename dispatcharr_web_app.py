@@ -2592,6 +2592,111 @@ def _load_scored_lookup(config):
         return {}
 
 
+def _normalize_previous_score_id(value):
+    try:
+        return int(value)
+    except Exception:
+        return value
+
+
+def _parse_iso_datetime(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        text = str(value)
+        if text.endswith('Z'):
+            text = text[:-1] + '+00:00'
+        return datetime.fromisoformat(text)
+    except Exception:
+        return None
+
+
+def _find_previous_analysis_job(job_id=None, started_at=None):
+    history = get_job_history()
+    if not isinstance(history, list):
+        return None
+
+    def _is_analysis(entry):
+        if not isinstance(entry, dict):
+            return False
+        if entry.get('status') != 'completed':
+            return False
+        return _job_ran_analysis(entry.get('job_type'))
+
+    if job_id:
+        for idx, entry in enumerate(history):
+            if isinstance(entry, dict) and entry.get('job_id') == job_id:
+                for prev in history[idx + 1:]:
+                    if _is_analysis(prev):
+                        return prev
+                return None
+
+    started_dt = _parse_iso_datetime(started_at)
+    if started_dt:
+        for entry in history:
+            if not _is_analysis(entry):
+                continue
+            completed_dt = _parse_iso_datetime(entry.get('completed_at') or entry.get('started_at'))
+            if completed_dt and completed_dt < started_dt:
+                return entry
+
+    skipped_first = False
+    for entry in history:
+        if not _is_analysis(entry):
+            continue
+        if not skipped_first:
+            skipped_first = True
+            continue
+        return entry
+
+    return None
+
+
+def _load_previous_score_lookup(job_id=None, started_at=None):
+    previous_job = _find_previous_analysis_job(job_id=job_id, started_at=started_at)
+    if not previous_job:
+        return {}, None
+
+    config = _build_config_from_history_job(previous_job)
+    try:
+        path = config.resolve_path('csv/05_iptv_streams_scored_sorted.csv')
+        if not os.path.exists(path):
+            return {}, None
+        df = pd.read_csv(path)
+    except Exception:
+        logging.debug("Failed to load previous scored streams", exc_info=True)
+        return {}, None
+
+    if 'stream_id' not in df.columns:
+        return {}, None
+
+    channel_key = None
+    if 'channel_id' in df.columns:
+        channel_key = 'channel_id'
+        df['channel_id'] = pd.to_numeric(df['channel_id'], errors='coerce')
+    elif 'channel_number' in df.columns:
+        channel_key = 'channel_number'
+        df['channel_number'] = pd.to_numeric(df['channel_number'], errors='coerce')
+
+    df['stream_id'] = pd.to_numeric(df['stream_id'], errors='coerce')
+
+    lookup = {}
+    for _, row in df.iterrows():
+        stream_id = row.get('stream_id')
+        if pd.isna(stream_id):
+            continue
+        channel_value = row.get(channel_key) if channel_key else None
+        key = (_normalize_previous_score_id(channel_value), _normalize_previous_score_id(stream_id))
+        score = row.get('final_score')
+        if pd.isna(score):
+            score = None
+        lookup[key] = score
+
+    return lookup, channel_key
+
+
 def _provider_name_from_lookup(entry, provider_names=None):
     if not isinstance(entry, dict):
         return None
@@ -2625,6 +2730,7 @@ def _merge_stream_details(stream_id, base_info, scored_lookup, provider_names=No
         'validation_result': None,
         'validation_reason': None,
         'final_score': None,
+        'previous_score': None,
     }
 
     for key in ['provider_id', 'provider_name', 'service_name', 'service_provider', 'resolution', 'video_codec', 'bitrate_kbps', 'validation_result', 'validation_reason', 'final_score']:
@@ -2642,7 +2748,7 @@ def _merge_stream_details(stream_id, base_info, scored_lookup, provider_names=No
     return merged
 
 
-def _build_ordering_visibility(results, config, provider_names=None):
+def _build_ordering_visibility(results, config, provider_names=None, previous_scores=None, previous_score_key=None):
     if not results or not config:
         return None
 
@@ -2667,6 +2773,23 @@ def _build_ordering_visibility(results, config, provider_names=None):
             return meta
         return fallback or {}
 
+    def _lookup_previous_score(channel_id, channel_number, stream_id):
+        if not previous_scores:
+            return None
+        stream_key = _normalize_previous_score_id(stream_id)
+        if previous_score_key == 'channel_number':
+            channel_key = _normalize_previous_score_id(channel_number)
+            return previous_scores.get((channel_key, stream_key))
+        if previous_score_key == 'channel_id':
+            channel_key = _normalize_previous_score_id(channel_id)
+            return previous_scores.get((channel_key, stream_key))
+        channel_key = _normalize_previous_score_id(channel_id)
+        score = previous_scores.get((channel_key, stream_key))
+        if score is None and channel_number is not None:
+            channel_key = _normalize_previous_score_id(channel_number)
+            score = previous_scores.get((channel_key, stream_key))
+        return score
+
     channels = ordering_summary.get('channels') if isinstance(ordering_summary, dict) else None
     if channels:
         for ch in channels:
@@ -2683,6 +2806,11 @@ def _build_ordering_visibility(results, config, provider_names=None):
                     'channel_id': channel_id,
                     'channel_number': channel_info.get('channel_number'),
                     'channel_name': channel_info.get('channel_name'),
+                    'previous_score': _lookup_previous_score(
+                        channel_id,
+                        channel_info.get('channel_number'),
+                        row.get('stream_id')
+                    ),
                 })
                 final_orders.append(merged)
 
@@ -4935,7 +5063,14 @@ def api_job_results(job_id):
         provider_metadata = _load_provider_metadata(config) if config else {}
         capacity_summary = results.get('capacity_summary') if isinstance(results, dict) else None
         job_meta = _build_job_meta(job_id, job_type, config)
-        ordering_visibility = _build_ordering_visibility(results, config, provider_names)
+        previous_scores, previous_score_key = _load_previous_score_lookup(job_id=job_id, started_at=job_meta.get('started_at'))
+        ordering_visibility = _build_ordering_visibility(
+            results,
+            config,
+            provider_names,
+            previous_scores=previous_scores,
+            previous_score_key=previous_score_key
+        )
         payload = _build_results_payload(
             results,
             analysis_ran,
@@ -4975,7 +5110,14 @@ def api_job_scoped_results(job_id):
         provider_metadata = _load_provider_metadata(config) if config else {}
         capacity_summary = results.get('capacity_summary') if isinstance(results, dict) else None
         job_meta = _build_job_meta(job_id, job_type, config)
-        ordering_visibility = _build_ordering_visibility(results, config, provider_names)
+        previous_scores, previous_score_key = _load_previous_score_lookup(job_id=job_id, started_at=job_meta.get('started_at'))
+        ordering_visibility = _build_ordering_visibility(
+            results,
+            config,
+            provider_names,
+            previous_scores=previous_scores,
+            previous_score_key=previous_score_key
+        )
         payload = _build_results_payload(
             results,
             analysis_ran,
@@ -5010,7 +5152,17 @@ def api_detailed_results():
                     capacity_summary = latest_job.result_summary.get('capacity_summary')
                 provider_metadata = _load_provider_metadata(_build_config_from_job(latest_job))
                 job_meta = _build_job_meta(latest_job.job_id, latest_job.job_type, _build_config_from_job(latest_job))
-                ordering_visibility = _build_ordering_visibility(latest_job.result_summary, _build_config_from_job(latest_job), provider_names)
+                previous_scores, previous_score_key = _load_previous_score_lookup(
+                    job_id=latest_job.job_id,
+                    started_at=job_meta.get('started_at')
+                )
+                ordering_visibility = _build_ordering_visibility(
+                    latest_job.result_summary,
+                    _build_config_from_job(latest_job),
+                    provider_names,
+                    previous_scores=previous_scores,
+                    previous_score_key=previous_score_key
+                )
                 payload = _build_results_payload(
                     latest_job.result_summary,
                     _job_ran_analysis(latest_job.job_type),
@@ -5043,7 +5195,17 @@ def api_detailed_results():
         provider_names = _load_provider_names(config)
         provider_metadata = _load_provider_metadata(config)
         capacity_summary = summary.get('capacity_summary') if isinstance(summary, dict) else None
-        ordering_visibility = _build_ordering_visibility(summary, config, provider_names)
+        previous_scores, previous_score_key = _load_previous_score_lookup(
+            job_id=job_meta.get('job_id'),
+            started_at=job_meta.get('started_at')
+        )
+        ordering_visibility = _build_ordering_visibility(
+            summary,
+            config,
+            provider_names,
+            previous_scores=previous_scores,
+            previous_score_key=previous_score_key
+        )
         payload = _build_results_payload(
             summary,
             True,
