@@ -1239,65 +1239,6 @@
         <!-- Background Channel Optimisation -->
         <div class="card" id="background-optimisation-panel">
             <h2>Background Channel Optimisation</h2>
-            <div class="background-summary-panel">
-                <div class="background-summary-card background-summary-card--highlight">
-                    <div class="background-summary-title">Selected for review</div>
-                    <div class="background-summary-value" id="background-summary-selected">None yet</div>
-                    <div class="background-summary-meta" id="background-summary-selected-count">No channels selected</div>
-                </div>
-                <div class="background-summary-card">
-                    <div class="background-summary-title">Active check</div>
-                    <div class="background-summary-value" id="background-summary-active">—</div>
-                    <div class="background-summary-meta" id="background-summary-active-meta">Last update —</div>
-                </div>
-                <div class="background-summary-card" id="background-last-run-card">
-                    <div class="background-summary-title">Last background optimisation run</div>
-                    <div class="background-run-summary-list" id="background-last-run-details">
-                        <div class="background-run-summary-row">
-                            <span class="background-run-summary-label">Run start time</span>
-                            <span class="background-run-summary-value" id="background-last-run-start">—</span>
-                        </div>
-                        <div class="background-run-summary-row">
-                            <span class="background-run-summary-label">Trigger</span>
-                            <span class="background-run-summary-value" id="background-last-run-trigger">—</span>
-                        </div>
-                        <div class="background-run-summary-row">
-                            <span class="background-run-summary-label">Channels checked</span>
-                            <span class="background-run-summary-value" id="background-last-run-channels">—</span>
-                        </div>
-                        <div class="background-run-summary-row">
-                            <span class="background-run-summary-label">Reordered</span>
-                            <span class="background-run-summary-value" id="background-last-run-reordered">—</span>
-                        </div>
-                        <div class="background-run-summary-row">
-                            <span class="background-run-summary-label">Unchanged</span>
-                            <span class="background-run-summary-value" id="background-last-run-unchanged">—</span>
-                        </div>
-                        <div class="background-run-summary-row">
-                            <span class="background-run-summary-label">Not evaluable</span>
-                            <span class="background-run-summary-value" id="background-last-run-not-evaluable">—</span>
-                        </div>
-                        <div class="background-run-summary-row">
-                            <span class="background-run-summary-label">Duration</span>
-                            <span class="background-run-summary-value" id="background-last-run-duration">—</span>
-                        </div>
-                    </div>
-                    <div class="background-run-summary-empty hidden" id="background-last-run-empty">No runs yet.</div>
-                    <button type="button" class="action-btn tertiary background-run-summary-action" id="background-last-run-view">
-                        View details
-                    </button>
-                </div>
-                <div class="background-summary-card">
-                    <div class="background-summary-title">Schedule</div>
-                    <div class="background-summary-value" id="background-summary-schedule">—</div>
-                    <div class="background-summary-meta" id="background-summary-next-start">Next start —</div>
-                </div>
-                <div class="background-summary-card">
-                    <div class="background-summary-title">Will check</div>
-                    <div class="background-summary-value" id="background-summary-scope">—</div>
-                    <div class="background-summary-meta">Based on managed channel set</div>
-                </div>
-            </div>
             <div>
                 <h3 style="margin-bottom: 12px; color: #1f2937;">Status</h3>
                 <div class="background-status-panel">
@@ -1387,6 +1328,65 @@
                 </div>
                 <div class="analysis-settings" style="margin-top: 12px;">
                     <strong>Analysis depth:</strong> Background optimisation always runs in deep, probe-complete mode.
+                </div>
+            </div>
+            <div class="background-summary-panel">
+                <div class="background-summary-card background-summary-card--highlight">
+                    <div class="background-summary-title">Selected for review</div>
+                    <div class="background-summary-value" id="background-summary-selected">None yet</div>
+                    <div class="background-summary-meta" id="background-summary-selected-count">No channels selected</div>
+                </div>
+                <div class="background-summary-card">
+                    <div class="background-summary-title">Active check</div>
+                    <div class="background-summary-value" id="background-summary-active">—</div>
+                    <div class="background-summary-meta" id="background-summary-active-meta">Last update —</div>
+                </div>
+                <div class="background-summary-card" id="background-last-run-card">
+                    <div class="background-summary-title">Last background optimisation run</div>
+                    <div class="background-run-summary-list" id="background-last-run-details">
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Run start time</span>
+                            <span class="background-run-summary-value" id="background-last-run-start">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Trigger</span>
+                            <span class="background-run-summary-value" id="background-last-run-trigger">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Channels checked</span>
+                            <span class="background-run-summary-value" id="background-last-run-channels">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Reordered</span>
+                            <span class="background-run-summary-value" id="background-last-run-reordered">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Unchanged</span>
+                            <span class="background-run-summary-value" id="background-last-run-unchanged">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Not evaluable</span>
+                            <span class="background-run-summary-value" id="background-last-run-not-evaluable">—</span>
+                        </div>
+                        <div class="background-run-summary-row">
+                            <span class="background-run-summary-label">Duration</span>
+                            <span class="background-run-summary-value" id="background-last-run-duration">—</span>
+                        </div>
+                    </div>
+                    <div class="background-run-summary-empty hidden" id="background-last-run-empty">No runs yet.</div>
+                    <button type="button" class="action-btn tertiary background-run-summary-action" id="background-last-run-view">
+                        View details
+                    </button>
+                </div>
+                <div class="background-summary-card">
+                    <div class="background-summary-title">Schedule</div>
+                    <div class="background-summary-value" id="background-summary-schedule">—</div>
+                    <div class="background-summary-meta" id="background-summary-next-start">Next start —</div>
+                </div>
+                <div class="background-summary-card">
+                    <div class="background-summary-title">Will check</div>
+                    <div class="background-summary-value" id="background-summary-scope">—</div>
+                    <div class="background-summary-meta">Based on managed channel set</div>
                 </div>
             </div>
             <div class="background-history background-history--collapsed" id="run-history-section">
