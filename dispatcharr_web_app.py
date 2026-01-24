@@ -2243,155 +2243,35 @@ def _build_exclude_filter(exclude_filter):
     return ','.join(filters) if filters else None
 
 
-_DERIVED_COLLISION_TOKENS = ('music', 'hits', 'radio', 'kids', 'junior', 'jr', '4k')
-_DERIVED_QUALITY_NEUTRAL_TOKENS = {'hd', 'fhd', 'uhd'}
-_DERIVED_TIMESHIFT_TOKENS = {'extra', 'timeshift'}
-_DERIVED_TOKEN_RE = re.compile(r'\+\d+|[a-z0-9]+', flags=re.IGNORECASE)
-_DERIVED_TIMESHIFT_RE = re.compile(r'\+\d+', flags=re.IGNORECASE)
-# Match the existing refresh normalization logic (stream_analysis.refresh_channel_streams).
-_DERIVED_STRIP_QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
-
-
-def _derive_base_search_text(channel_name):
-    """Strip quality tokens using the existing refresh normalization logic."""
-    cleaned = _DERIVED_STRIP_QUALITY_RE.sub(' ', str(channel_name or ''))
-    return ' '.join(cleaned.split()).strip()
-
-
-def _tokenize_refresh_text(value):
-    return [token.lower() for token in _DERIVED_TOKEN_RE.findall(str(value or '').lower()) if token]
-
-
-def _is_timeshift_token(token):
-    if not token:
-        return False
-    if token.startswith('+') and token[1:].isdigit():
-        return True
-    return token in _DERIVED_TIMESHIFT_TOKENS
-
-
-def _has_timeshift_variant(stream_name, tokens=None):
-    if _DERIVED_TIMESHIFT_RE.search(str(stream_name or '')):
-        return True
-    tokens = tokens or _tokenize_refresh_text(stream_name)
-    return any(token in _DERIVED_TIMESHIFT_TOKENS for token in tokens)
-
-
-def _filtered_token_set(tokens, base_tokens):
-    filtered = set()
-    for token in tokens:
-        if not token:
-            continue
-        if token in base_tokens:
-            continue
-        if token in _DERIVED_QUALITY_NEUTRAL_TOKENS:
-            continue
-        if _is_timeshift_token(token):
-            continue
-        filtered.add(token)
-    return filtered
-
-
 def _derive_refresh_filter_config(api, config, channel_id):
     """
     Derive a conservative refresh filter configuration from the channel's current streams.
 
     This is deterministic and explainable:
-    - Start with the channel name (existing normalization) as the primary match.
-    - Only include tokens that appear in MOST current streams.
-    - Exclude known collision tokens (unless the current channel already uses them).
-    - Use preview-only tokens as additional guardrails.
-    - Allow timeshift variants unless evidence says none exist.
+    - Treat the search input as literal (no automatic expansion).
+    - Inject current stream names so they are always searched for.
     """
     channel_id_int = int(channel_id)
     channels = api.fetch_channels() or []
     target = next((ch for ch in channels if int(ch.get('id', -1)) == channel_id_int), None)
     channel_name = (target or {}).get('name', '') or ''
 
-    base_search_text = _derive_base_search_text(channel_name) or str(channel_name).strip()
-
     current_streams = api.fetch_channel_streams(channel_id_int) or []
-    current_names = [s.get('name', '') for s in current_streams if isinstance(s, dict)]
-
-    base_tokens = set(_tokenize_refresh_text(channel_name))
-    current_token_sets = [set(_tokenize_refresh_text(name)) for name in current_names]
-
-    current_tokens_raw = set()
-    timeshift_count = 0
-    for tokens, name in zip(current_token_sets, current_names):
-        current_tokens_raw.update(tokens)
-        if _has_timeshift_variant(name, tokens=tokens):
-            timeshift_count += 1
-
-    total_current = len(current_names)
-    exclude_plus_one = (timeshift_count == 0)
-    exclude_plus_one_locked = exclude_plus_one
-
-    include_counts = {}
-    for tokens in current_token_sets:
-        filtered = _filtered_token_set(tokens, base_tokens)
-        for token in filtered:
-            include_counts[token] = include_counts.get(token, 0) + 1
-
-    include_tokens = [
-        token for token, count in include_counts.items()
-        if total_current > 0 and count > (total_current / 2)
-    ]
-
-    include_filter = ','.join(sorted(include_tokens)) if include_tokens else ''
-
-    preview_tokens = []
-    try:
-        preview = refresh_channel_streams(
-            api,
-            config,
-            channel_id_int,
-            base_search_text=base_search_text,
-            include_filter=include_filter or None,
-            exclude_filter=None,
-            exclude_plus_one=exclude_plus_one,
-            preview=True,
-            stream_name_regex=None,
-            stream_name_regex_override=None
-        )
-        preview_streams = preview.get('streams') if isinstance(preview, dict) else None
-        if isinstance(preview_streams, list):
-            preview_tokens = [set(_tokenize_refresh_text(s.get('name', ''))) for s in preview_streams if isinstance(s, dict)]
-    except Exception as exc:
-        logging.warning("Failed to derive preview tokens for channel %s: %s", channel_id, exc)
-
-    preview_filtered_counts = {}
-    preview_filtered_set = set()
-    for tokens in preview_tokens:
-        filtered = _filtered_token_set(tokens, base_tokens)
-        preview_filtered_set.update(filtered)
-        for token in filtered:
-            preview_filtered_counts[token] = preview_filtered_counts.get(token, 0) + 1
-
-    current_filtered_set = set()
-    for tokens in current_token_sets:
-        current_filtered_set.update(_filtered_token_set(tokens, base_tokens))
-
-    preview_total = len(preview_tokens)
-    preview_excludes = [
-        token for token, count in preview_filtered_counts.items()
-        if preview_total > 0 and count > (preview_total / 2) and token not in current_filtered_set
-    ]
-
-    collision_excludes = [
-        token for token in _DERIVED_COLLISION_TOKENS
-        if token not in base_tokens and token not in current_tokens_raw
-    ]
-
-    exclude_tokens = sorted(set(collision_excludes + preview_excludes))
-    exclude_filter = ','.join(exclude_tokens) if exclude_tokens else ''
+    injected_includes = []
+    seen = set()
+    for stream in current_streams:
+        if not isinstance(stream, dict):
+            continue
+        name = stream.get('name')
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        injected_includes.append(name)
 
     return {
-        'base_search_text': base_search_text,
-        'include_filter': include_filter,
-        'exclude_filter': exclude_filter,
-        'exclude_plus_one': exclude_plus_one,
-        'exclude_plus_one_locked': exclude_plus_one_locked
+        'base_search_text': '',
+        'injected_includes': injected_includes,
+        'channel_name': channel_name
     }
 
 
@@ -3579,36 +3459,26 @@ def run_job_worker(job, api, config):
                 # Avoid N calls to /api/channels/channels/ by caching channel metadata once.
                 all_channels = api.fetch_channels()
 
-                # Use global config default regex for refresh (if set); job may override.
-                filters = config.get('filters') or {}
-                stream_name_regex = getattr(job, 'stream_name_regex', None)
-                if stream_name_regex is None and isinstance(filters, dict):
-                    stream_name_regex = filters.get('refresh_stream_name_regex')
-
                 for idx, channel_id in enumerate(channels_to_refresh, start=1):
                     if job.cancel_requested:
                         job.status = 'cancelled'
                         return
 
                     job.current_step = f'Refresh: refreshing channel streams ({idx}/{len(channels_to_refresh)})...'
-                    # Only apply per-channel base/include/exclude overrides when refreshing a single channel.
+                    # Only apply per-channel base overrides when refreshing a single channel.
                     base_search_text = job.base_search_text if (len(channels_to_refresh) == 1) else None
-                    include_filter = job.include_filter if (len(channels_to_refresh) == 1) else None
-                    exclude_filter = None
-                    if len(channels_to_refresh) == 1:
-                        exclude_filter = _build_exclude_filter(job.exclude_filter)
                     result = refresh_channel_streams(
                         api,
                         config,
                         int(channel_id),
                         base_search_text=base_search_text,
-                        include_filter=include_filter,
-                        exclude_filter=exclude_filter,
-                        exclude_plus_one=job.exclude_plus_one,
+                        include_filter=None,
+                        exclude_filter=None,
+                        exclude_plus_one=False,
                         allowed_stream_ids=None,
                         preview=False,
-                        stream_name_regex=stream_name_regex,
-                        stream_name_regex_override=getattr(job, 'stream_name_regex_override', None),
+                        stream_name_regex=None,
+                        stream_name_regex_override=None,
                         all_streams_override=all_streams,
                         all_channels_override=all_channels,
                         clear_learned_rules=job.clear_learned_rules,
@@ -3976,23 +3846,18 @@ def run_job_worker(job, api, config):
             
             job.current_step = 'Searching all providers for matching streams...'
             _job_set_stage(job, 'refresh', 'Refresh', total=1)
-            effective_exclude_filter = _build_exclude_filter(job.exclude_filter)
-            filters = config.get('filters') or {}
-            stream_name_regex = getattr(job, 'stream_name_regex', None)
-            if stream_name_regex is None and isinstance(filters, dict):
-                stream_name_regex = filters.get('refresh_stream_name_regex')
 
             refresh_result = refresh_channel_streams(
                 api,
                 config,
                 channel_id,
                 base_search_text=job.base_search_text,
-                include_filter=job.include_filter,
-                exclude_filter=effective_exclude_filter,
-                exclude_plus_one=job.exclude_plus_one,
+                include_filter=None,
+                exclude_filter=None,
+                exclude_plus_one=False,
                 allowed_stream_ids=job.selected_stream_ids,
-                stream_name_regex=stream_name_regex,
-                stream_name_regex_override=job.stream_name_regex_override,
+                stream_name_regex=None,
+                stream_name_regex_override=None,
                 clear_learned_rules=job.clear_learned_rules
             )
             
@@ -4014,11 +3879,10 @@ def run_job_worker(job, api, config):
                 'previous_count': removed,
                 'new_count': added,
                 'total_matching': refresh_result.get('total_matching', 0),
-                'include_filter': job.include_filter,
-                'exclude_filter': effective_exclude_filter,
                 'base_search_text': refresh_result.get('base_search_text'),
-                'stream_name_regex': getattr(job, 'stream_name_regex', None),
-                'stream_name_regex_override': job.stream_name_regex_override,
+                'explicit_includes': refresh_result.get('explicit_includes'),
+                'injected_includes': refresh_result.get('injected_includes'),
+                'no_changes': refresh_result.get('no_changes'),
                 'previous_streams': refresh_result.get('previous_streams'),
                 'final_streams': refresh_result.get('final_streams'),
                 'final_stream_ids': refresh_result.get('final_stream_ids'),
@@ -5208,11 +5072,6 @@ def api_refresh_preview():
         data = request.get_json()
         channel_id = data.get('channel_id')
         base_search_text = data.get('base_search_text')
-        include_filter = data.get('include_filter')
-        exclude_filter = data.get('exclude_filter')
-        exclude_plus_one = data.get('exclude_plus_one', False)
-        stream_name_regex = data.get('stream_name_regex')
-        stream_name_regex_override = data.get('stream_name_regex_override')
         clear_learned_rules = bool(data.get('clear_learned_rules', False))
 
         if not channel_id:
@@ -5223,23 +5082,17 @@ def api_refresh_preview():
         config = Config('config.yaml')
         provider_names = _load_provider_names(config)
 
-        if stream_name_regex is None:
-            filters = config.get('filters') or {}
-            if isinstance(filters, dict):
-                stream_name_regex = filters.get('refresh_stream_name_regex')
-
-        effective_exclude_filter = _build_exclude_filter(exclude_filter)
         preview = refresh_channel_streams(
             api,
             config,
             int(channel_id),
             base_search_text,
-            include_filter,
-            effective_exclude_filter,
-            exclude_plus_one=exclude_plus_one,
+            include_filter=None,
+            exclude_filter=None,
+            exclude_plus_one=False,
             preview=True,
-            stream_name_regex=stream_name_regex,
-            stream_name_regex_override=stream_name_regex_override,
+            stream_name_regex=None,
+            stream_name_regex_override=None,
             provider_names=provider_names,
             clear_learned_rules=clear_learned_rules
         )
@@ -5292,7 +5145,14 @@ def api_start_job():
         if not groups:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
 
-        if stream_name_regex is None:
+        if job_type in {'refresh_optimize', 'pattern_refresh_full_cleanup'}:
+            include_filter = None
+            exclude_filter = None
+            exclude_plus_one = False
+            stream_name_regex = None
+            stream_name_regex_override = None
+
+        if stream_name_regex is None and job_type not in {'refresh_optimize', 'pattern_refresh_full_cleanup'}:
             try:
                 filters = Config('config.yaml').get('filters') or {}
                 if isinstance(filters, dict):

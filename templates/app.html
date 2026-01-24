@@ -804,6 +804,23 @@
             margin-top: 12px;
         }
 
+        .preview-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        .refresh-input-details summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #475569;
+        }
+
+        .refresh-input-details ul {
+            margin: 8px 0 0 18px;
+        }
+
         .preview-item {
             display: flex;
             gap: 12px;
@@ -1491,6 +1508,14 @@
             </div>
             <div class="modal-body">
                 <div class="preview-meta" id="refresh-preview-description"></div>
+                <details class="preview-meta refresh-input-details hidden" id="refresh-preview-inputs">
+                    <summary>Show refresh inputs</summary>
+                    <div id="refresh-preview-inputs-content"></div>
+                </details>
+                <div class="preview-actions hidden" id="refresh-preview-actions">
+                    <button type="button" class="text-btn" id="refresh-select-all">Select all</button>
+                    <button type="button" class="text-btn" id="refresh-deselect-all">Deselect all</button>
+                </div>
                 <div class="preview-list" id="refresh-preview-list"></div>
                 <div id="refresh-progress-container" class="alert alert-info hidden" style="margin-top: 15px;">
                     <div style="display: flex; align-items: center; gap: 10px;">
@@ -1662,6 +1687,20 @@
             const scopeSaveButton = document.getElementById('background-scope-save');
             if (scopeSaveButton) {
                 scopeSaveButton.addEventListener('click', saveBackgroundOptimisationScope);
+            }
+            const refreshSelectAllButton = document.getElementById('refresh-select-all');
+            if (refreshSelectAllButton) {
+                refreshSelectAllButton.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    toggleRefreshSelection(true);
+                });
+            }
+            const refreshDeselectAllButton = document.getElementById('refresh-deselect-all');
+            if (refreshDeselectAllButton) {
+                refreshDeselectAllButton.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    toggleRefreshSelection(false);
+                });
             }
 
             loadBackgroundInsightOptions();
@@ -2020,10 +2059,6 @@
             updateScopeSummary();
             updateRefreshUiState();
 
-            if (selectedChannels.length === 1) {
-                loadDerivedRefreshFilters(selectedChannels[0]);
-            }
-
             updateScopeSaveUi();
         }
 
@@ -2114,33 +2149,19 @@
 
         function updateRefreshUiState() {
             const baseSearchInput = document.getElementById('baseSearchText');
+            const selectedChannelId = selectedChannels && selectedChannels.length === 1
+                ? String(selectedChannels[0])
+                : null;
             if (baseSearchInput) {
-                if (selectedChannels && selectedChannels.length === 1) {
-                    const selectedChannelId = selectedChannels[0];
-                    const channelElement = document.querySelector(`.channel-item[data-channel-id="${selectedChannelId}"]`);
-                    baseSearchInput.value = channelElement?.dataset.baseSearchText || '';
-                } else {
+                if (!selectedChannelId) {
                     baseSearchInput.value = '';
+                    refreshInputChannelId = null;
+                } else if (refreshInputChannelId !== selectedChannelId) {
+                    baseSearchInput.value = '';
+                    refreshInputChannelId = selectedChannelId;
                 }
             }
 
-            if (selectedChannels.length !== 1) {
-                derivedRefreshChannelId = null;
-                derivedExcludePlusOne = false;
-                derivedStreamNameRegex = null;
-                derivedStreamNameRegexOverride = null;
-            } else if (String(derivedRefreshChannelId) !== String(selectedChannels[0])) {
-                derivedRefreshChannelId = null;
-                derivedExcludePlusOne = false;
-                derivedStreamNameRegex = null;
-                derivedStreamNameRegexOverride = null;
-            }
-
-            // Show/hide refresh filters based on selection
-            const refreshFiltersDiv = document.getElementById('refreshFilters');
-            if (refreshFiltersDiv) {
-                refreshFiltersDiv.style.display = selectedChannels.length === 1 ? 'block' : 'none';
-            }
         }
 
         async function getSelectedChannelsForPayload() {
@@ -2957,50 +2978,26 @@
             updateSelectionState();
         }
 
-        let derivedRefreshChannelId = null;
-        let derivedRefreshInFlight = false;
-        let derivedExcludePlusOne = false;
-        let derivedStreamNameRegex = null;
-        let derivedStreamNameRegexOverride = null;
-
-        async function loadDerivedRefreshFilters(channelId) {
-            if (!channelId) return;
-            if (derivedRefreshInFlight) return;
-            if (String(derivedRefreshChannelId) === String(channelId)) return;
-            derivedRefreshInFlight = true;
-            try {
-                const resp = await fetch(`/api/refresh-derived?channel_id=${encodeURIComponent(String(channelId))}&ts=${Date.now()}`, { cache: 'no-store' });
-                const data = await resp.json();
-                if (!data.success) {
-                    return;
-                }
-                const derived = data.derived || {};
-                const base = document.getElementById('baseSearchText');
-                const inc = document.getElementById('includeFilter');
-                const exc = document.getElementById('excludeFilter');
-                if (base && typeof derived.base_search_text === 'string') base.value = derived.base_search_text;
-                if (inc && typeof derived.include_filter === 'string') inc.value = derived.include_filter;
-                if (exc && typeof derived.exclude_filter === 'string') exc.value = derived.exclude_filter;
-                derivedExcludePlusOne = derived.exclude_plus_one === true;
-                derivedStreamNameRegex = typeof derived.stream_name_regex === 'string' ? derived.stream_name_regex : null;
-                derivedStreamNameRegexOverride = typeof derived.stream_name_regex_override === 'string'
-                    ? derived.stream_name_regex_override
-                    : null;
-
-                derivedRefreshChannelId = channelId;
-            } catch (e) {
-                // Best-effort only: leave existing values untouched on failure.
-            } finally {
-                derivedRefreshInFlight = false;
-            }
-        }
+        let refreshInputChannelId = null;
 
         // Refresh preview helpers
+        function toggleRefreshSelection(shouldSelect) {
+            document.querySelectorAll('.refresh-stream-checkbox').forEach(checkbox => {
+                checkbox.checked = shouldSelect;
+            });
+        }
+
         function closeRefreshPreview() {
             document.getElementById('refresh-preview-modal').classList.add('hidden');
             refreshPreviewStreams = [];
             refreshPreviewMeta = null;
             refreshJobId = null;
+            const inputs = document.getElementById('refresh-preview-inputs');
+            const inputsContent = document.getElementById('refresh-preview-inputs-content');
+            if (inputs) inputs.classList.add('hidden');
+            if (inputsContent) inputsContent.innerHTML = '';
+            const actions = document.getElementById('refresh-preview-actions');
+            if (actions) actions.classList.add('hidden');
             resetRefreshProgress();
         }
 
@@ -3011,21 +3008,51 @@
             const list = document.getElementById('refresh-preview-list');
             const description = document.getElementById('refresh-preview-description');
             const summary = document.getElementById('refresh-preview-summary');
+            const inputs = document.getElementById('refresh-preview-inputs');
+            const inputsContent = document.getElementById('refresh-preview-inputs-content');
+            const actions = document.getElementById('refresh-preview-actions');
+            const submitButton = document.getElementById('refresh-submit-button');
 
-            const baseSearchText = preview.base_search_text ? `Base search text: "${preview.base_search_text}". ` : '';
+            const baseSearchText = preview.base_search_text ? `Exact input: "${preview.base_search_text}". ` : '';
             description.textContent = (preview.channel_name
                 ? `Streams found for ${preview.channel_name}. Uncheck any you don't want to add.`
                 : 'Streams found for the selected channel.') + ` ${baseSearchText}`;
             summary.textContent = `${preview.new_count} stream(s) ready to add from ${preview.total_matching} matches.`;
 
+            const explicitInputs = Array.isArray(preview.explicit_includes) ? preview.explicit_includes : [];
+            const injectedInputs = Array.isArray(preview.injected_includes) ? preview.injected_includes : [];
+            if (inputs && inputsContent) {
+                const blocks = [];
+                if (explicitInputs.length) {
+                    const explicitLabel = explicitInputs.map(item => escapeHtml(String(item))).join(', ');
+                    blocks.push(`<div><strong>Explicit input</strong>: ${explicitLabel}</div>`);
+                }
+                if (injectedInputs.length) {
+                    const injectedItems = injectedInputs.map(item => `<li>${escapeHtml(String(item))}</li>`).join('');
+                    blocks.push(`<div><strong>Injected existing streams</strong> (${injectedInputs.length}):</div><ul>${injectedItems}</ul>`);
+                }
+                if (blocks.length) {
+                    inputsContent.innerHTML = blocks.join('');
+                    inputs.classList.remove('hidden');
+                } else {
+                    inputsContent.innerHTML = '';
+                    inputs.classList.add('hidden');
+                }
+            }
+
             if (preview.preview_truncated) {
                 const limit = preview.preview_limit || refreshPreviewStreams.length;
                 const shown = Math.min(limit, refreshPreviewStreams.length);
-                description.textContent += ` Showing first ${shown} result(s) — refine your filters to narrow matches.`;
+                description.textContent += ` Showing first ${shown} result(s).`;
             }
 
             if (!refreshPreviewStreams.length) {
-                list.innerHTML = '<div class="alert alert-warning">No streams matched your filters. Proceeding will clear current streams for this channel.</div>';
+                list.innerHTML = '<div class="alert alert-warning">No streams matched. Proceeding will clear current streams for this channel.</div>';
+                if (actions) actions.classList.add('hidden');
+                if (submitButton) {
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Add Selected Streams';
+                }
                 return;
             }
 
@@ -3053,6 +3080,21 @@
                     </div>
                 </label>
             `).join('');
+
+            if (actions) {
+                actions.classList.remove('hidden');
+            }
+
+            if (preview.no_changes) {
+                summary.textContent = 'No changes detected. Current stream list already matches.';
+                if (submitButton) {
+                    submitButton.disabled = true;
+                    submitButton.textContent = 'No changes to apply';
+                }
+            } else if (submitButton) {
+                submitButton.disabled = false;
+                submitButton.textContent = 'Add Selected Streams';
+            }
         }
 
         async function showRefreshPreview() {
@@ -3070,16 +3112,17 @@
             resetRefreshProgress();
             document.getElementById('refresh-preview-summary').textContent = 'Looking up matching streams...';
             document.getElementById('refresh-preview-description').textContent = '';
+            const inputs = document.getElementById('refresh-preview-inputs');
+            const inputsContent = document.getElementById('refresh-preview-inputs-content');
+            if (inputs) inputs.classList.add('hidden');
+            if (inputsContent) inputsContent.innerHTML = '';
+            const actions = document.getElementById('refresh-preview-actions');
+            if (actions) actions.classList.add('hidden');
 
             try {
                 const payload = {
                     channel_id: selectedChannelsForPreview[0],
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                    include_filter: document.getElementById('includeFilter')?.value || null,
-                    exclude_filter: document.getElementById('excludeFilter')?.value || null,
-                    exclude_plus_one: derivedExcludePlusOne,
-                    stream_name_regex: derivedStreamNameRegex,
-                    stream_name_regex_override: derivedStreamNameRegexOverride,
                     clear_learned_rules: isClearLearnedRulesChecked()
                 };
 
@@ -3150,6 +3193,13 @@
             }
             const selected = Array.from(document.querySelectorAll('.refresh-stream-checkbox:checked')).map(cb => parseInt(cb.value));
             const submitButton = document.getElementById('refresh-submit-button');
+
+            if (!selected.length) {
+                const confirmed = confirm('No streams are selected. Continuing will remove all streams from this channel. Continue?');
+                if (!confirmed) {
+                    return;
+                }
+            }
 
             submitButton.disabled = true;
             submitButton.textContent = 'Adding...';
@@ -3275,12 +3325,7 @@
                     group_names: groupNames,
                     channel_names: channelNames,
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                    include_filter: document.getElementById('includeFilter')?.value || null,
-                    exclude_filter: document.getElementById('excludeFilter')?.value || null,
-                    exclude_plus_one: derivedExcludePlusOne,
                     selected_stream_ids: selectedStreamIds,
-                    stream_name_regex: derivedStreamNameRegex,
-                    stream_name_regex_override: derivedStreamNameRegexOverride,
                     clear_learned_rules: jobType === 'refresh_optimize' ? isClearLearnedRulesChecked() : false
                 };
 
@@ -3785,18 +3830,22 @@
                     `;
                     if (job.result_summary.base_search_text) {
                         html += `<div style="margin-top: 15px; padding: 10px; background: #f0f4ff; border-radius: 5px;">
-                            <strong>Primary Match:</strong> ${job.result_summary.base_search_text}
+                            <strong>Exact input:</strong> ${job.result_summary.base_search_text}
                         </div>`;
                     }
-                    if (job.result_summary.include_filter || job.result_summary.exclude_filter) {
-                        html += `<div style="margin-top: 15px; padding: 10px; background: #f7fafc; border-radius: 5px;">`;
-                        if (job.result_summary.include_filter) {
-                            html += `<div><strong>Include Filter:</strong> ${job.result_summary.include_filter}</div>`;
-                        }
-                        if (job.result_summary.exclude_filter) {
-                            html += `<div><strong>Exclude Filter:</strong> ${job.result_summary.exclude_filter}</div>`;
-                        }
-                        html += `</div>`;
+                    const injectedStreams = Array.isArray(job.result_summary.injected_includes)
+                        ? job.result_summary.injected_includes
+                        : [];
+                    if (injectedStreams.length) {
+                        const injectedList = injectedStreams
+                            .map(name => `<li>${escapeHtml(String(name))}</li>`)
+                            .join('');
+                        html += `
+                            <details style="margin-top: 12px; padding: 10px; background: #f7fafc; border-radius: 5px;">
+                                <summary><strong>Injected existing streams</strong> (${injectedStreams.length})</summary>
+                                <ul style="margin: 8px 0 0 18px;">${injectedList}</ul>
+                            </details>
+                        `;
                     }
                 } else {
                     // Analysis job summary

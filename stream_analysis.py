@@ -4136,88 +4136,14 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         config: Config instance
         channel_id: ID of the channel to refresh
         base_search_text: Optional override for the channel name used when matching streams
-        include_filter: Optional comma-separated wildcards (e.g., "york*,lond*")
-        exclude_filter: Optional comma-separated exclusions (e.g., "lincoln*")
         allowed_stream_ids: Optional explicit selection from a prior preview. A full scan still
-            happens to enforce channel filters (regex, include/exclude, timeshift parity) and to
-            regenerate counts/preview data after re-applying those rules.
+            happens to enforce literal-name matching rules and to regenerate counts/preview data.
     Returns:
         dict with stats about streams found/added
     """
     import json
     import os
-    import re
     from datetime import datetime, timezone
-
-    # Performance: precompile regexes used in matching loops
-    _QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
-    _TIMESHIFT_SEMANTIC_RE = re.compile(r'(?:\+\s*\d+|\bplus\s*\d+\b)', flags=re.IGNORECASE)
-    _QUALITY_NEUTRAL_TOKENS = {
-        'sd', 'hd', 'fhd', 'uhd', '4k', '8k',
-        'hevc', 'h264', 'h265', 'avc', 'x264', 'x265',
-        '720p', '1080p', '1440p', '2160p', '4320p',
-        'hdr', 'hdr10', 'dolby', 'vision',
-    }
-
-    _REGION_NEUTRAL_TOKENS = {
-        'england', 'wales', 'scotland', 'ni', 'northern',
-        'london', 'midlands', 'yorkshire',
-        'north', 'south', 'east', 'west'
-    }
-
-    _PREFIX_NEUTRAL_TOKENS = {
-        'uk', 'us', 'usa', 'ca', 'au', 'ie', 'de', 'fr', 'es', 'it'
-    }
-    
-    _NUMERIC_WORD_ALIASES = {
-        'one': '1',
-        'two': '2',
-        'three': '3',
-        'four': '4',
-        'five': '5',
-        'six': '6',
-        'seven': '7',
-        'eight': '8',
-        'nine': '9',
-        'ten': '10',
-    }
-
-    def canonicalize_name(text):
-        """Lowercase and normalize punctuation/whitespace for name comparisons."""
-        lowered = text.lower()
-        cleaned = re.sub(r'[^0-9a-z]', ' ', lowered)
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        if not cleaned:
-            return cleaned
-        tokens = cleaned.split(' ')
-        normalized_tokens = [
-            _NUMERIC_WORD_ALIASES.get(token, token)
-            for token in tokens
-            if token
-        ]
-        return ' '.join(normalized_tokens)
-    
-    def strip_quality(text):
-        """Remove quality indicators"""
-        return _QUALITY_RE.sub('', text).strip()
-
-    def tokenize_canonical(text):
-        return [token for token in canonicalize_name(text).split(' ') if token]
-
-    def compile_wildcard_filter(filter_text):
-        """
-        Compile a comma-separated glob filter (supports '*' wildcard) into regex objects.
-        Uses a safe glob-to-regex conversion (escapes all non-wildcard characters).
-        """
-        if not filter_text:
-            return []
-        parts = [p.strip().lower() for p in filter_text.split(',') if p.strip()]
-        regexes = []
-        for part in parts:
-            # Convert glob (*) to regex (.*), escape everything else
-            pat = re.escape(part).replace(r'\*', '.*')
-            regexes.append(re.compile(pat))
-        return regexes
 
     def _deny_log_path():
         return os.path.join('logs', 'channel_stream_denies.ndjson')
@@ -4294,196 +4220,6 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     if clear_learned_rules:
         _clear_channel_denies(channel_id)
-
-    # Optional regex for stream name filtering (applied after base match + wildcard include/exclude).
-    _stream_name_re = None
-    if isinstance(stream_name_regex, str) and stream_name_regex.strip():
-        try:
-            _stream_name_re = re.compile(stream_name_regex.strip(), flags=re.IGNORECASE)
-        except re.error as exc:
-            logging.error(f"Invalid stream_name_regex ignored: {exc}")
-            _stream_name_re = None
-
-    # Optional regex OVERRIDE for stream name matching.
-    # When set, this replaces the base match + include/exclude (+ timeshift) rules.
-    _stream_name_override_re = None
-    if isinstance(stream_name_regex_override, str) and stream_name_regex_override.strip():
-        try:
-            _stream_name_override_re = re.compile(stream_name_regex_override.strip(), flags=re.IGNORECASE)
-            logging.info("Using stream-name REGEX OVERRIDE (base/include/exclude rules ignored).")
-        except re.error as exc:
-            logging.error(f"Invalid stream_name_regex_override: {exc}")
-            return {'error': f'Invalid regex override: {exc}'}
-
-    # Precompute constants used for all stream comparisons (initialized later,
-    # once `search_name` is known).
-    _selected_normalized = None
-    _selected_has_timeshift = None
-    _selected_numeric_re = None
-    _selected_tokens = None
-    _selected_token_set = None
-    _include_regexes = None
-    _exclude_regexes = None
-    _alias_neutral_tokens = set()
-    _derived_negative_tokens = set()
-    
-    def _find_match_window(stream_tokens, selected_tokens):
-        if not selected_tokens:
-            return None
-        selected_len = len(selected_tokens)
-        for start in range(len(stream_tokens) - selected_len + 1):
-            if stream_tokens[start:start + selected_len] == selected_tokens:
-                return start + selected_len
-        selected_index = 0
-        end_index = None
-        for idx, token in enumerate(stream_tokens):
-            if token == selected_tokens[selected_index]:
-                selected_index += 1
-                end_index = idx + 1
-                if selected_index == selected_len:
-                    return end_index
-        return None
-
-    def _passes_semantic_suffix(selected_tokens, stream_tokens):
-        match_end = _find_match_window(stream_tokens, selected_tokens)
-        if match_end is None:
-            return False
-        # Prefix tokens (like ones in _PREFIX_NEUTRAL_TOKENS) must not be treated as suffixes.
-        suffix_tokens = stream_tokens[match_end:]
-        for token in suffix_tokens:
-            if (
-                token not in _QUALITY_NEUTRAL_TOKENS
-                and token not in _alias_neutral_tokens
-                and token not in _REGION_NEUTRAL_TOKENS
-            ):
-                return False
-        return True
-
-    def _is_timeshift_token(token):
-        if token == 'plus':
-            return True
-        return bool(_TIMESHIFT_SEMANTIC_RE.search(token))
-
-    def _extract_suffix_tokens(stream_name):
-        stream_tokens = tokenize_canonical(stream_name)
-        match_end = _find_match_window(stream_tokens, _selected_tokens)
-        if match_end is None:
-            return []
-        suffix_tokens = stream_tokens[match_end:]
-        filtered = []
-        for token in suffix_tokens:
-            if token in _QUALITY_NEUTRAL_TOKENS:
-                continue
-            if token in _REGION_NEUTRAL_TOKENS:
-                continue
-            if token.isdigit():
-                continue
-            if _is_timeshift_token(token):
-                continue
-            filtered.append(token)
-        return filtered
-
-    def _allows_numeric_one_equivalence(selected_name, stream_name):
-        selected_tokens = tokenize_canonical(selected_name)
-        stream_tokens = tokenize_canonical(stream_name)
-        if not selected_tokens or not stream_tokens:
-            return False
-        if selected_tokens[-1] != '1':
-            return False
-        base_tokens = selected_tokens[:-1]
-        if not base_tokens:
-            return False
-        if any(token.isdigit() for token in base_tokens):
-            return False
-        for token in stream_tokens:
-            for digits in re.findall(r'\d+', token):
-                if digits != '1':
-                    return False
-        normalized_stream_tokens = [
-            token[:-1] if (token.endswith('1') and not token.isdigit()) else token
-            for token in stream_tokens
-        ]
-        return normalized_stream_tokens == base_tokens
-
-    def _allows_trailing_one_equivalence(selected_name, stream_name):
-        selected_tokens = tokenize_canonical(selected_name)
-        stream_tokens = tokenize_canonical(stream_name)
-        if not selected_tokens or not stream_tokens:
-            return False
-
-        def _strip_trailing_one(tokens):
-            last_token = tokens[-1]
-            if last_token.isdigit() or not last_token.endswith('1'):
-                return None
-            base_token = last_token[:-1]
-            if not base_token or base_token[-1].isdigit():
-                return None
-            return tokens[:-1] + [base_token]
-
-        selected_base = _strip_trailing_one(selected_tokens)
-        if selected_base is not None and selected_base == stream_tokens:
-            return True
-        stream_base = _strip_trailing_one(stream_tokens)
-        if stream_base is not None and stream_base == selected_tokens:
-            return True
-        return False
-
-    def matches_stream(stream_name):
-        """Check if stream matches the selected channel (fast path; precomputed filters)."""
-        if exclude_plus_one and _TIMESHIFT_SEMANTIC_RE.search(stream_name):
-            return False
-
-        if _stream_name_override_re is not None:
-            # Regex-only override: bypass grammar and other channel filters.
-            return bool(_stream_name_override_re.search(stream_name))
-
-        stream_normalized = canonicalize_name(stream_name)
-        
-        if _selected_normalized not in stream_normalized:
-            if not _allows_trailing_one_equivalence(selected_cleaned, stream_name):
-                return False
-        if _selected_numeric_re and not _selected_numeric_re.search(stream_normalized):  # use canonical form so word-number aliases (e.g., "one"->"1") pass
-            if not (
-                _allows_numeric_one_equivalence(selected_cleaned, stream_name)
-                or _allows_trailing_one_equivalence(selected_cleaned, stream_name)
-            ):
-                return False
-        
-        stream_has_timeshift = bool(_TIMESHIFT_SEMANTIC_RE.search(stream_name))
-        
-        if _selected_has_timeshift and not stream_has_timeshift:
-            return False
-        if not _selected_has_timeshift and stream_has_timeshift:
-            return False
-
-        if _selected_tokens is not None:
-            if not _passes_semantic_suffix(_selected_tokens, tokenize_canonical(stream_normalized)):
-                if not _allows_trailing_one_equivalence(selected_cleaned, stream_name):
-                    return False
-
-        if _derived_negative_tokens:
-            suffix_tokens = _extract_suffix_tokens(stream_name)
-            for token in suffix_tokens:
-                if token in _derived_negative_tokens:
-                    logging.info(
-                        f"Rejected stream due to derived negative token '{token}': {stream_name}"
-                    )
-                    return False
-        
-        if _include_regexes:
-            stream_lower = stream_name.lower()
-            if not any(r.search(stream_lower) for r in _include_regexes):
-                return False
-        
-        if _exclude_regexes:
-            stream_lower = stream_name.lower()
-            if any(r.search(stream_lower) for r in _exclude_regexes):
-                return False
-
-        if _stream_name_re and not _stream_name_re.search(stream_name):
-            return False
-        
-        return True
     
     logging.info(f"Refreshing channel {channel_id} from all providers...")
     
@@ -4509,69 +4245,47 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         return {'error': 'Channel not found'}
     
     channel_name = target_channel.get('name', '')
-    search_name = channel_name if base_search_text is None else base_search_text
+    search_name = ''
+    if base_search_text is not None:
+        search_name = str(base_search_text).strip()
     logging.info(f"Channel: {channel_name}")
     if base_search_text is not None:
-        logging.info(f"Using custom base search text: {search_name}")
-    
-    if _stream_name_override_re is None:
-        if include_filter:
-            logging.info(f"Include filter: {include_filter}")
-        if exclude_filter:
-            logging.info(f"Exclude filter: {exclude_filter}")
-
-    # Precompute match constants once (used inside the stream loop).
-    # In override mode these values are unused, but we still set safe defaults.
-    selected_cleaned = strip_quality(search_name)
-    _selected_normalized = canonicalize_name(selected_cleaned)
-    _selected_has_timeshift = bool(_TIMESHIFT_SEMANTIC_RE.search(search_name))
-    _selected_tokens = tokenize_canonical(selected_cleaned)
-    _selected_token_set = set(_selected_tokens)
-    numeric_match = re.search(r'(?:^|\s)(\d+)\s*$', _selected_normalized)
-    if numeric_match:
-        numeric_token = numeric_match.group(1)
-        _selected_numeric_re = re.compile(rf'\b{re.escape(numeric_token)}\b', flags=re.IGNORECASE)
-    _include_regexes = [] if _stream_name_override_re is not None else compile_wildcard_filter(include_filter)
-    _exclude_regexes = [] if _stream_name_override_re is not None else compile_wildcard_filter(exclude_filter)
+        logging.info(f"Using literal search text: {search_name}")
+    if base_search_text is not None and not search_name:
+        logging.info("Empty literal search text supplied; only injected includes will be used.")
     
     # Get current streams for this channel
     current_streams = api.fetch_channel_streams(channel_id)
-    current_stream_ids = {s['id'] for s in current_streams} if current_streams else set()
+    current_order_ids = []
+    current_stream_id_set = set()
+    current_stream_names = []
+    for stream in current_streams or []:
+        if not isinstance(stream, dict):
+            continue
+        stream_id = stream.get('id')
+        if stream_id is not None:
+            try:
+                stream_id_int = int(stream_id)
+                current_stream_id_set.add(stream_id_int)
+                current_order_ids.append(stream_id_int)
+            except (TypeError, ValueError):
+                pass
+        stream_name = stream.get('name')
+        if stream_name:
+            current_stream_names.append(stream_name)
 
-    def _infer_alias_neutral_tokens(streams):
-        if not streams:
-            return set()
-        token_counts = defaultdict(int)
-        stream_count = 0
-        for stream in streams:
-            if not isinstance(stream, dict):
-                continue
-            stream_name = stream.get('name')
-            if not stream_name:
-                continue
-            stream_tokens = tokenize_canonical(stream_name)
-            if not _passes_semantic_suffix(_selected_tokens, stream_tokens):
-                continue
-            tokens = {
-                token for token in stream_tokens
-                if token not in _selected_token_set and token not in _QUALITY_NEUTRAL_TOKENS
-            }
-            if not tokens:
-                continue
-            stream_count += 1
-            for token in tokens:
-                token_counts[token] += 1
-        if stream_count == 0:
-            return set()
-        return {
-            token for token, count in token_counts.items()
-            if 0 < count < stream_count
-            and token not in _selected_token_set
-            and not token.isdigit()
-            and token not in _QUALITY_NEUTRAL_TOKENS
-        }
+    injected_includes = []
+    seen_injected = set()
+    for name in current_stream_names:
+        if name in seen_injected:
+            continue
+        # Inject existing stream names so refresh only re-adds exact known names.
+        seen_injected.add(name)
+        injected_includes.append(name)
 
-    _alias_neutral_tokens = _infer_alias_neutral_tokens(current_streams)
+    explicit_includes = []
+    if search_name:
+        explicit_includes.append(search_name)
 
     def _stream_snapshot(stream):
         if not isinstance(stream, dict):
@@ -4587,7 +4301,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             'resolution': stream.get('resolution'),
             'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate')
         }
-    logging.info(f"Channel currently has {len(current_stream_ids)} streams")
+    logging.info(f"Channel currently has {len(current_order_ids)} streams")
     
     # Fetch ALL streams from ALL providers (paginated) unless a shared cache is provided.
     if isinstance(all_streams_override, list):
@@ -4612,42 +4326,35 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     
     logging.info(f"Checking {len(all_streams)} streams from all providers...")
 
-    if _stream_name_override_re is None:
-        preview_only_streams = []
-        for stream in all_streams:
-            stream_name = stream.get('name', '')
-            stream_id = stream.get('id')
-            if not matches_stream(stream_name):
-                continue
-            if stream_id in current_stream_ids:
-                continue
-            preview_only_streams.append(stream)
+    name_counts = defaultdict(int)
+    for stream in all_streams:
+        stream_name = stream.get('name')
+        if stream_name:
+            name_counts[stream_name] += 1
 
-        current_suffix_tokens = set()
-        for stream in current_streams or []:
-            stream_name = stream.get('name')
-            if not stream_name:
-                continue
-            current_suffix_tokens.update(_extract_suffix_tokens(stream_name))
+    explicit_name_set = set(explicit_includes)
+    injected_name_set = set(injected_includes)
 
-        preview_token_counts = defaultdict(int)
-        for stream in preview_only_streams:
-            stream_name = stream.get('name')
-            if not stream_name:
-                continue
-            stream_tokens = set(_extract_suffix_tokens(stream_name))
-            for token in stream_tokens:
-                preview_token_counts[token] += 1
-
-        _derived_negative_tokens = {
-            token for token, count in preview_token_counts.items()
-            if count >= 2 and token not in current_suffix_tokens
-        }
-        if _derived_negative_tokens:
-            sorted_tokens = ', '.join(sorted(_derived_negative_tokens))
-            logging.info(f"Derived negative tokens learned: {sorted_tokens}")
+    def matches_stream(stream_name, stream_id):
+        """Exact, literal matching only."""
+        # New streams may only be added by exact name match to explicit input or injected includes.
+        # Ambiguous names across providers are accepted only when they map to an existing stream ID.
+        if not stream_name:
+            return False
+        if stream_name in explicit_name_set:
+            return True
+        if stream_name in injected_name_set:
+            if name_counts.get(stream_name, 0) <= 1:
+                return True
+            if stream_id is None:
+                return False
+            try:
+                return int(stream_id) in current_stream_id_set
+            except (TypeError, ValueError):
+                return False
+        return False
     
-    # Preview responses can become very large when regex override is broad.
+    # Preview responses can become very large when the literal match set is broad.
     # Cap the returned stream list while still computing accurate counts.
     _PREVIEW_STREAM_LIMIT = 250
 
@@ -4666,11 +4373,11 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     filtered_streams = []   # used when preview=False (full set)
     preview_streams = []    # capped list returned to UI when preview=True
     filtered_count = 0      # accurate count after all filtering (and allowed_set)
+    filtered_stream_ids = []
 
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
 
-    deny_overrides = _stream_name_override_re is not None
-    denied_stream_ids = set() if (deny_overrides or clear_learned_rules) else _load_channel_denies(channel_id)
+    denied_stream_ids = set() if clear_learned_rules else _load_channel_denies(channel_id)
     deny_records = []
     record_denies = allowed_stream_ids is not None and not preview
 
@@ -4694,7 +4401,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             )
             continue
 
-        if not matches_stream(stream_name):
+        if not matches_stream(stream_name, stream_id):
             continue
 
         total_matching += 1
@@ -4710,6 +4417,11 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             continue
 
         filtered_count += 1
+        if stream_id is not None:
+            try:
+                filtered_stream_ids.append(int(stream_id))
+            except (TypeError, ValueError):
+                pass
 
         detailed_stream = {
             'id': stream_id,
@@ -4734,9 +4446,33 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     logging.info(f"Found {total_matching} matching streams")
 
-    final_stream_ids = [s['id'] for s in filtered_streams] if not preview else []
+    if not preview and allowed_stream_ids is None and filtered_count == 0:
+        return {
+            'error': 'No matching streams found. Confirmation required to clear channel.'
+        }
+
+    if allowed_stream_ids is None and not preview and current_order_ids:
+        existing_ids = {s.get('id') for s in filtered_streams if isinstance(s, dict)}
+        for stream in current_streams or []:
+            if not isinstance(stream, dict):
+                continue
+            stream_id = stream.get('id')
+            if stream_id is None:
+                continue
+            try:
+                stream_id_int = int(stream_id)
+            except (TypeError, ValueError):
+                continue
+            if stream_id_int in filtered_stream_ids:
+                continue
+            filtered_stream_ids.append(stream_id_int)
+            if stream_id not in existing_ids:
+                filtered_streams.append(_stream_snapshot(stream))
+
+    final_stream_ids = filtered_stream_ids if (preview or filtered_stream_ids) else []
     previous_streams = [_stream_snapshot(s) for s in (current_streams or [])]
     final_streams = filtered_streams if not preview else preview_streams
+    no_changes = bool(current_order_ids and current_order_ids == filtered_stream_ids)
     
     if (not preview and not final_stream_ids) or (preview and filtered_count == 0):
         logging.info("No streams remaining after filtering - channel will be emptied")
@@ -4745,9 +4481,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     
     result = {
         'total_matching': total_matching,
-        'previous_count': len(current_stream_ids),
+        'previous_count': len(current_order_ids),
         'new_count': filtered_count if preview else len(final_stream_ids),
-        'removed': len(current_stream_ids),
+        'removed': len(current_order_ids),
         'added': filtered_count if preview else len(final_stream_ids),
         'streams': preview_streams if preview else filtered_streams,
         'channel_name': channel_name,
@@ -4756,7 +4492,10 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         'preview_truncated': bool(preview_truncated) if preview else False,
         'previous_streams': previous_streams,
         'final_streams': final_streams,
-        'final_stream_ids': final_stream_ids
+        'final_stream_ids': final_stream_ids,
+        'explicit_includes': explicit_includes,
+        'injected_includes': injected_includes,
+        'no_changes': no_changes
     }
 
     if preview:
