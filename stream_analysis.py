@@ -2180,6 +2180,29 @@ def _load_refresh_learning_stats(config, channel_id):
     return stats
 
 
+def _has_refresh_learning_stats(config, channel_id):
+    """Return True when refresh learning stats exist for the channel."""
+    try:
+        conn = _ensure_refresh_learning_db(config)
+    except Exception as exc:
+        logging.warning("Refresh learning DB unavailable: %s", exc)
+        return False
+
+    try:
+        cursor = conn.execute(
+            """
+            SELECT 1
+            FROM refresh_learning_stats
+            WHERE channel_id = ?
+            LIMIT 1
+            """,
+            (str(channel_id),)
+        )
+        return cursor.fetchone() is not None
+    finally:
+        conn.close()
+
+
 def _build_refresh_learning_metadata(signature, stats):
     """Compute learning metadata for a given signature."""
     accept_count = 0
@@ -2475,6 +2498,28 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     final_stream_ids = [s['id'] for s in filtered_streams] if not preview else []
     previous_streams = [_stream_snapshot(s) for s in (current_streams or [])]
     final_streams = filtered_streams if not preview else preview_streams
+
+    if not preview and (allowed_stream_ids is None or no_change):
+        if not _has_refresh_learning_stats(config, channel_id):
+            # Bootstrap refresh learning once per channel so existing streams are treated as accepted.
+            baseline_streams = []
+            baseline_allowed = set()
+            for stream in current_streams or []:
+                stream_id = stream.get('id')
+                stream_name = stream.get('name')
+                if stream_id is None or not stream_name:
+                    continue
+                signature = _normalize_refresh_signature(stream_name)
+                if not signature:
+                    continue
+                baseline_allowed.add(int(stream_id))
+                baseline_streams.append({
+                    'id': stream_id,
+                    'name': stream_name,
+                    'signature': signature,
+                })
+            if baseline_streams:
+                _record_refresh_learning_decisions(config, channel_id, baseline_streams, baseline_allowed)
     
     if (not preview and not final_stream_ids) or (preview and filtered_count == 0):
         logging.info("No streams remaining after filtering - channel will be emptied")
