@@ -2748,6 +2748,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
     matching_streams = []
+    matched_keys = set()
 
     all_stream_ids = {stream.get('id') for stream in all_streams if stream.get('id') is not None}
     extra_current_streams = [
@@ -2757,39 +2758,51 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     if extra_current_streams:
         all_streams = list(all_streams) + extra_current_streams
 
-    for stream in all_streams:
-        stream_name = stream.get('name', '')
-        stream_id = stream.get('id')
-        provider_id = stream.get('m3u_account')
-        provider_name = stream.get('m3u_account_name')
+    def _tokenize_refresh_name(stream_name):
+        if not isinstance(stream_name, str):
+            return []
+        cleaned = stream_name.strip().lower()
+        cleaned = re.sub(r'[^a-z0-9\\s]', ' ', cleaned)
+        cleaned = re.sub(r'\\s+', ' ', cleaned).strip()
+        return [token for token in cleaned.split(' ') if token]
 
-        if provider_name is None and provider_lookup and provider_id is not None:
-            provider_name = provider_lookup.get(str(provider_id))
+    quality_tokens = {
+        'uhd',
+        'hd',
+        'fhd',
+        'sd',
+        '4k',
+        'hdr',
+        'hlg',
+        'dv',
+        'dolby',
+        'vision',
+        'hevc',
+        'h265',
+    }
+    region_tokens = {
+        'uk',
+        'us',
+        'usa',
+        'gb',
+        'eu',
+        'au',
+        'nz',
+        'ca',
+    }
+    allowed_extra_tokens = quality_tokens | region_tokens
 
-        signature = _normalize_refresh_signature(stream_name)
-        match_source = None
-        matched_pattern = None
-        regex_trusted = False
+    def _stream_match_key(stream_id, stream_name, provider_id, provider_name):
+        if stream_id is not None:
+            return ('id', str(stream_id))
+        return ('fallback', str(stream_name), str(provider_id), str(provider_name))
 
-        if signature and signature in baseline_signatures:
-            match_source = 'implicit' if signature in implicit_added_signatures else 'baseline'
-        elif isinstance(stream_name, str) and stream_name in literal_terms:
-            if signature and signature in rejected_signatures:
-                continue
-            match_source = 'literal'
-        elif isinstance(stream_name, str) and stream_name:
-            for pattern in regex_patterns:
-                if pattern['regex'].match(stream_name):
-                    if signature and signature in rejected_signatures:
-                        match_source = None
-                        break
-                    match_source = 'regex'
-                    matched_pattern = pattern['pattern']
-                    regex_trusted = bool(pattern.get('trusted'))
-                    break
-
-        if not match_source:
-            continue
+    def _add_matched_stream(stream, stream_name, stream_id, provider_id, provider_name, signature, match_source, matched_pattern=None, regex_trusted=False):
+        nonlocal total_matching, filtered_count, preview_truncated
+        key = _stream_match_key(stream_id, stream_name, provider_id, provider_name)
+        if key in matched_keys:
+            return
+        matched_keys.add(key)
 
         total_matching += 1
         matching_streams.append({
@@ -2800,8 +2813,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             'regex_pattern': matched_pattern,
         })
 
-        if allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
-            continue
+        if match_source in ('literal', 'regex') and allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
+            return
 
         filtered_count += 1
         if stream_id is not None:
@@ -2828,6 +2841,94 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
                 preview_truncated = True
         else:
             filtered_streams.append(detailed_stream)
+
+    provider_token_sets = [
+        set(_tokenize_refresh_name(stream.get('name', '')))
+        for stream in all_streams
+    ]
+
+    # PHASE 1: BASELINE RECALL
+    for baseline_name in baseline_names:
+        baseline_tokens = set(_tokenize_refresh_name(baseline_name))
+        if not baseline_tokens:
+            continue
+        for stream, provider_tokens in zip(all_streams, provider_token_sets):
+            if not provider_tokens:
+                continue
+            if not baseline_tokens.issubset(provider_tokens):
+                continue
+            extra_tokens = provider_tokens - baseline_tokens
+            if extra_tokens and not extra_tokens.issubset(allowed_extra_tokens):
+                continue
+            stream_name = stream.get('name', '')
+            stream_id = stream.get('id')
+            provider_id = stream.get('m3u_account')
+            provider_name = stream.get('m3u_account_name')
+
+            if provider_name is None and provider_lookup and provider_id is not None:
+                provider_name = provider_lookup.get(str(provider_id))
+
+            signature = _normalize_refresh_signature(stream_name)
+            match_source = 'implicit' if signature in implicit_added_signatures else 'baseline'
+            _add_matched_stream(
+                stream,
+                stream_name,
+                stream_id,
+                provider_id,
+                provider_name,
+                signature,
+                match_source,
+            )
+
+    # PHASE 2: PROVIDER SWEEP
+    for stream in all_streams:
+        stream_name = stream.get('name', '')
+        stream_id = stream.get('id')
+        provider_id = stream.get('m3u_account')
+        provider_name = stream.get('m3u_account_name')
+
+        if provider_name is None and provider_lookup and provider_id is not None:
+            provider_name = provider_lookup.get(str(provider_id))
+
+        signature = _normalize_refresh_signature(stream_name)
+        if _stream_match_key(stream_id, stream_name, provider_id, provider_name) in matched_keys:
+            continue
+
+        match_source = None
+        matched_pattern = None
+        regex_trusted = False
+
+        if signature and signature in baseline_signatures:
+            match_source = 'implicit' if signature in implicit_added_signatures else 'baseline'
+        elif isinstance(stream_name, str) and stream_name in literal_terms:
+            if signature and signature in rejected_signatures:
+                continue
+            match_source = 'literal'
+        elif isinstance(stream_name, str) and stream_name:
+            for pattern in regex_patterns:
+                if pattern['regex'].match(stream_name):
+                    if signature and signature in rejected_signatures:
+                        match_source = None
+                        break
+                    match_source = 'regex'
+                    matched_pattern = pattern['pattern']
+                    regex_trusted = bool(pattern.get('trusted'))
+                    break
+
+        if not match_source:
+            continue
+
+        _add_matched_stream(
+            stream,
+            stream_name,
+            stream_id,
+            provider_id,
+            provider_name,
+            signature,
+            match_source,
+            matched_pattern,
+            regex_trusted,
+        )
 
     logging.info(f"Found {total_matching} matching streams")
 
