@@ -2102,7 +2102,8 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
 #   refresh_learning_stats: per-channel aggregate counts used for preview annotations.
 def _refresh_learning_db_path(config):
     """Return the sqlite path for refresh learning decisions/stats."""
-    return config.resolve_path('data/refresh_learning.sqlite')
+    # Refresh learning must not be job-scoped so per-channel learning persists across runs.
+    return config.resolve_path('../data/refresh_learning.sqlite')
 
 
 def _normalize_refresh_signature(stream_name):
