@@ -2439,8 +2439,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     filtered_count = 0      # accurate count after all filtering (and allowed_set)
 
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
-    learning_stats = _load_refresh_learning_stats(config, channel_id) if preview else {}
+    # Learned inclusion is unconditional so preview and execution share eligibility; this is
+    # intentional and not a performance optimization.
+    include_learned = True
+    learning_stats = _load_refresh_learning_stats(config, channel_id)
     matching_streams = []
+    logged_learned_inclusion = False
 
     for stream in all_streams:
         stream_name = stream.get('name', '')
@@ -2451,11 +2455,32 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if provider_name is None and provider_lookup and provider_id is not None:
             provider_name = provider_lookup.get(str(provider_id))
 
-        if not matches_stream(stream_name):
-            continue
+        signature = _normalize_refresh_signature(stream_name)
+        literal_match = matches_stream(stream_name)
+
+        # Two-path inclusion logic:
+        # Path A: strict literal match.
+        # Path B: learned acceptance for this channel only (no reject override).
+        learned_reinjected = False
+        learning_meta = None
+        if not literal_match:
+            if not include_learned or not signature or not learning_stats:
+                continue
+            learning_meta = _build_refresh_learning_metadata(signature, learning_stats)
+            if signature not in learning_stats:
+                continue
+            if not learning_meta.get('learned_accept'):
+                continue
+            learned_reinjected = True
+            if not logged_learned_inclusion:
+                logging.debug(
+                    "Refresh learned inclusion: channel_id=%s stream=%s reason=learned",
+                    channel_id,
+                    stream_name,
+                )
+                logged_learned_inclusion = True
 
         total_matching += 1
-        signature = _normalize_refresh_signature(stream_name)
         matching_streams.append({
             'id': stream_id,
             'name': stream_name,
@@ -2476,11 +2501,14 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             'provider_name': provider_name,
             # URL is not used by the UI and can be large/sensitive; omit.
             'resolution': stream.get('resolution'),
-            'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate')
+            'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate'),
+            'learned_reinjected': learned_reinjected,
         }
 
         if preview:
-            detailed_stream.update(_build_refresh_learning_metadata(signature, learning_stats))
+            if learning_meta is None:
+                learning_meta = _build_refresh_learning_metadata(signature, learning_stats)
+            detailed_stream.update(learning_meta)
             if _PREVIEW_STREAM_LIMIT is None or len(preview_streams) < _PREVIEW_STREAM_LIMIT:
                 preview_streams.append(detailed_stream)
             else:
