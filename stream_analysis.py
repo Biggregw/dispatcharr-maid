@@ -2494,6 +2494,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     added_ids = filtered_id_set - current_stream_ids
     removed_ids = current_stream_ids - filtered_id_set
     no_change = len(added_ids) == 0 and len(removed_ids) == 0
+    if preview and no_change and not _has_refresh_learning_stats(config, channel_id):
+        # Override to allow a one-time refresh commit that bootstraps learning history.
+        no_change = False
 
     final_stream_ids = [s['id'] for s in filtered_streams] if not preview else []
     previous_streams = [_stream_snapshot(s) for s in (current_streams or [])]
