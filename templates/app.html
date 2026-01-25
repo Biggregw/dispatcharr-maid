@@ -905,120 +905,6 @@
             color: #764ba2;
         }
 
-        /* Saved regex presets dropdown (custom menu so we can add delete icons) */
-        .regex-preset-dropdown {
-            position: relative;
-            width: 100%;
-        }
-
-        .regex-preset-dropdown__control {
-            width: 100%;
-            padding: 10px;
-            border: 2px solid #e2e8f0;
-            border-radius: 6px;
-            font-size: 1em;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            background: #ffffff;
-            cursor: pointer;
-            user-select: none;
-        }
-
-        .regex-preset-dropdown__control:focus {
-            outline: none;
-            border-color: #a3bffa;
-            box-shadow: 0 0 0 3px rgba(163, 191, 250, 0.35);
-        }
-
-        .regex-preset-dropdown__label {
-            color: #2d3748;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            flex: 1;
-        }
-
-        .regex-preset-dropdown__chev {
-            color: #718096;
-            font-weight: 700;
-        }
-
-        .regex-preset-dropdown__menu {
-            position: absolute;
-            top: calc(100% + 6px);
-            left: 0;
-            right: 0;
-            z-index: 50;
-            background: #ffffff;
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-            max-height: 280px;
-            overflow: auto;
-            padding: 6px;
-        }
-
-        .regex-preset-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            padding: 10px 10px;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-
-        .regex-preset-item:hover {
-            background: #f7fafc;
-        }
-
-        .regex-preset-item__text {
-            min-width: 0;
-            flex: 1;
-        }
-
-        .regex-preset-item__name {
-            font-weight: 700;
-            color: #2d3748;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .regex-preset-item__meta {
-            margin-top: 2px;
-            font-size: 0.85em;
-            color: #718096;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .regex-preset-item__delete {
-            border: none;
-            background: transparent;
-            padding: 6px;
-            border-radius: 8px;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            color: #718096;
-        }
-
-        .regex-preset-item__delete:hover {
-            background: #fed7d7;
-            color: #742a2a;
-        }
-
-        .regex-preset-item__delete svg {
-            width: 18px;
-            height: 18px;
-            display: block;
-        }
-
         /* Saved job delete button */
         .btn-icon-danger {
             border: 2px solid #e2e8f0;
@@ -1217,126 +1103,32 @@
 
             <div id="refreshFilters" style="display: none; margin: 20px 0; padding: 20px; background: #fff5f0; border-radius: 8px; border-left: 4px solid #f97316;">
                 <label style="display: block; margin-bottom: 15px; font-weight: 600; color: #2d3748; font-size: 1.1em;">
-                    🔍 Channel Refresh Filters (for "Refresh Channel Streams" only)
+                    🔍 Refresh Channel Streams
                 </label>
 
                 <div style="margin-bottom: 16px;">
                     <label style="display: block; margin-bottom: 5px; color: #1f2937; font-weight: 700;">
-                        Primary Match
+                        Literal search text
                     </label>
-                    <input type="text" id="baseSearchText" placeholder="Exact search text used to find matching streams"
+                    <input type="text" id="baseSearchText" placeholder="Exact stream name to match (literal)"
                            style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
                     <span style="display: block; margin-top: 5px; color: #4b5563; font-size: 0.9em;">
-                        Start here. This is the main match used for channel discovery.
+                        Used verbatim. Leave blank to match only the existing stream names.
                     </span>
                 </div>
 
-                <div style="margin-bottom: 12px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fbfdff;">
-                    <label style="display: flex; align-items: center; cursor: pointer; gap: 10px;">
-                        <input type="checkbox" id="excludePlusOne"
-                               style="width: 18px; height: 18px; cursor: pointer;">
-                        <span style="color: #1f2937; font-weight: 600;">Exclude +1 channels</span>
-                    </label>
-                    <span style="display: block; margin-top: 6px; color: #4b5563; font-size: 0.9em;">
-                        Hide time-shifted variants when you want the primary feed only.
-                    </span>
-                </div>
-
-                <details id="refine-matches" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
+                <details id="refresh-injected-includes" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
                     <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
-                        <span style="font-weight: 700; color: #1f2937;">Refine Matches (optional)</span>
-                        <span style="color: #4b5563; font-size: 0.9em;">Use only if you need to narrow results.</span>
+                        <span style="font-weight: 700; color: #1f2937;">Show injected includes</span>
+                        <span style="color: #4b5563; font-size: 0.9em;">Exact stream names injected from the current channel.</span>
                     </summary>
-                    <div style="padding: 12px 14px; border-top: 1px solid #e5e7eb; display: flex; flex-direction: column; gap: 12px;">
-                        <div>
-                            <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
-                                Include Filter (optional)
-                            </label>
-                            <input type="text" id="includeFilter" placeholder="e.g., york*,lond*,scot*"
-                                   style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
-                            <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                                Use * as wildcard. Leave blank to include all matching streams.
-                            </span>
-                        </div>
-
-                        <div>
-                            <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
-                                Exclude Filter (optional)
-                            </label>
-                            <input type="text" id="excludeFilter" placeholder="e.g. linc*,york*,scot*"
-                                   style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
-                            <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                                Streams matching these patterns will be excluded.
-                            </span>
-                        </div>
-
-                        <div style="padding: 10px 12px; border: 1px dashed #cbd5e1; border-radius: 6px; background: #fff;">
-                            <label style="display: flex; align-items: center; cursor: pointer; gap: 10px;">
-                                <input type="checkbox" id="excludePlusOneRefine"
-                                       style="width: 18px; height: 18px; cursor: pointer;">
-                                <span style="color: #4b5563; font-weight: 600;">Exclude +1 channels</span>
-                            </label>
-                            <span style="display: block; margin-top: 5px; margin-left: 28px; color: #718096; font-size: 0.85em;">
-                                Same as above. Adjust here while fine-tuning filters.
-                            </span>
-                        </div>
-                    </div>
-                </details>
-
-                <details id="advanced-matching" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff7ed;">
-                    <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
-                        <span style="font-weight: 700; color: #7c2d12;">Advanced Matching (Regex)</span>
-                        <span style="color: #9a3412; font-size: 0.9em;">Bypasses simple matching. Use only if you are comfortable with regex.</span>
-                    </summary>
-                    <div style="padding: 12px 14px; border-top: 1px solid #fed7aa; display: flex; flex-direction: column; gap: 12px;">
-                        <div>
-                            <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
-                                Advanced Regex
-                            </label>
-                            <input type="text" id="advancedRegexInput" placeholder="e.g., york.*(hd|fhd)$"
-                                   style="width: 100%; padding: 10px; border: 2px solid #f97316; border-radius: 6px; font-size: 1em; background: #fff;">
-                            <span style="display: block; margin-top: 5px; color: #9a3412; font-size: 0.9em;">
-                                Use regex only when simple matching cannot express what you need.
-                            </span>
-                            <div style="margin-top: 6px; color: #9a3412; font-size: 0.9em; line-height: 1.4;">
-                                <div>• Start with Include / Exclude filters when wildcards are enough.</div>
-                                <div>• Layer Advanced Regex on top only to refine those results.</div>
-                                <div>• Switch on "Use regex as the only match rule" only when regex should replace every other filter.</div>
-                            </div>
-                            <div id="regex-only-container" style="margin-top: 10px; display: none;">
-                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: #4b5563; font-weight: 500;">
-                                    <input type="checkbox" id="regexOnlyMode" style="width: 18px; height: 18px; cursor: pointer;">
-                                    Use regex as the only match rule
-                                </label>
-                                <span style="display: block; margin-top: 5px; margin-left: 28px; color: #718096; font-size: 0.85em;">
-                                    When checked, Primary Match / Include / Exclude / +1 are ignored.
-                                </span>
-                            </div>
-                            <input type="hidden" id="streamNameRegexOverride">
-                            <input type="hidden" id="streamNameRegex">
-                        </div>
-
-                        <div>
-                            <label style="display: block; margin-bottom: 5px; color: #4b5563; font-weight: 500;">
-                                Saved Regex Presets
-                            </label>
-                            <div class="regex-preset-dropdown" id="saved-regex-dropdown">
-                                <div class="regex-preset-dropdown__control" id="saved-regex-control" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
-                                    <span class="regex-preset-dropdown__label" id="saved-regex-label">— Select Saved Job —</span>
-                                    <span class="regex-preset-dropdown__chev" aria-hidden="true">▾</span>
-                                </div>
-                                <div class="regex-preset-dropdown__menu hidden" id="saved-regex-menu" role="listbox" aria-label="Saved Jobs for Advanced Regex"></div>
-                            </div>
-                            <span style="display: block; margin-top: 5px; color: #718096; font-size: 0.85em;">
-                                Jobs save automatically when you run them. They capture your regex, filters, +1 choice, and group/channel picks.
-                                Loading a Saved Job fills those fields (best-effort) so you can tweak or rerun with the current selection.
-                            </span>
-                        </div>
+                    <div id="refresh-injected-includes-list" style="padding: 12px 14px; border-top: 1px solid #e5e7eb; color: #4b5563; font-size: 0.9em;">
+                        No injected includes yet.
                     </div>
                 </details>
 
                 <div style="margin-top: 10px; padding: 12px; background: #fef2f2; border-left: 3px solid #ef4444; border-radius: 4px; font-size: 0.9em; color: #991b1b;">
-                    <strong>⚠️ Note:</strong> These filters only apply when clicking "Refresh Channel Streams"
+                    <strong>⚠️ Note:</strong> This input only applies when clicking "Refresh Channel Streams"
                 </div>
             </div>
 
@@ -1353,7 +1145,7 @@
                             <span>Refresh Channel Streams</span>
                         </button>
                         <div class="action-help action-help--orange">
-                            Adds matching streams to the selected channels using the filters above (include/exclude, regex, +1 options).
+                            Updates the selected channel using literal stream names and existing channel entries.
                         </div>
                     </div>
                 </div>
@@ -1501,6 +1293,10 @@
             </div>
             <div class="modal-body">
                 <div class="preview-meta" id="refresh-preview-description"></div>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0;">
+                    <button type="button" class="btn btn-back" id="refresh-select-all">Select all</button>
+                    <button type="button" class="btn btn-back" id="refresh-deselect-all">Deselect all</button>
+                </div>
                 <div class="preview-list" id="refresh-preview-list"></div>
                 <div id="refresh-progress-container" class="alert alert-info hidden" style="margin-top: 15px;">
                     <div style="display: flex; align-items: center; gap: 10px;">
@@ -1519,8 +1315,7 @@
             </div>
             <div class="modal-actions">
                 <button class="btn btn-back" onclick="closeRefreshPreview()">Cancel</button>
-                <button type="button" class="btn btn-back" id="refresh-save-regex-button" onclick="saveRegexFromPreview(event)">Save Job Definition</button>
-                <button type="button" class="btn btn-next" id="refresh-submit-button" onclick="submitRefreshJob(event)">Add Selected Streams</button>
+                <button type="button" class="btn btn-next" id="refresh-submit-button" onclick="submitRefreshJob(event)">Apply Changes</button>
             </div>
         </div>
 
@@ -1614,276 +1409,26 @@
             });
         }
         
-        function syncRegexInputsFromAdvanced() {
-            const advanced = document.getElementById('advancedRegexInput');
-            const regexOnly = document.getElementById('regexOnlyMode');
-            const overrideInput = document.getElementById('streamNameRegexOverride');
-            const filterInput = document.getElementById('streamNameRegex');
-            if (!advanced || !regexOnly) return;
-
-            const value = (advanced.value || '').trim();
-            const useOnly = regexOnly.checked;
-
-            if (overrideInput) overrideInput.value = useOnly ? value : '';
-            if (filterInput) filterInput.value = useOnly ? '' : value;
-            updateRegexOnlyVisibility();
-        }
-
-        function syncAdvancedFieldFromInputs() {
-            const advanced = document.getElementById('advancedRegexInput');
-            const regexOnly = document.getElementById('regexOnlyMode');
-            const overrideInput = document.getElementById('streamNameRegexOverride');
-            const filterInput = document.getElementById('streamNameRegex');
-            if (!advanced || !regexOnly) return;
-
-            const overrideValue = (overrideInput?.value || '').trim();
-            const filterValue = (filterInput?.value || '').trim();
-
-            if (overrideValue) {
-                advanced.value = overrideValue;
-                regexOnly.checked = true;
-            } else {
-                advanced.value = filterValue;
-                regexOnly.checked = false;
-            }
-
-            updateRegexOnlyVisibility();
-        }
-
-        function updateRegexOnlyVisibility() {
-            const advanced = document.getElementById('advancedRegexInput');
-            const container = document.getElementById('regex-only-container');
-            if (!advanced || !container) return;
-
-            const hasValue = (advanced.value || '').trim().length > 0;
-            container.style.display = hasValue ? 'block' : 'none';
-        }
-
-        function syncExcludePlusOneCheckboxes() {
-            const primary = document.getElementById('excludePlusOne');
-            const refine = document.getElementById('excludePlusOneRefine');
-            if (!primary || !refine) return;
-
-            const align = (source, target) => {
-                target.checked = source.checked;
-            };
-
-            primary.addEventListener('change', () => align(primary, refine));
-            refine.addEventListener('change', () => align(refine, primary));
-
-            align(primary, refine);
-        }
-
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             loadGroups();
             loadJobHistory();
             loadProviderRanking();
             loadSavedPatterns();
-            initSavedRegexPresetDropdown();
-            loadSavedRegexPresets();
-
-            const advancedRegexInput = document.getElementById('advancedRegexInput');
-            const regexOnlyCheckbox = document.getElementById('regexOnlyMode');
-            if (advancedRegexInput) {
-                advancedRegexInput.addEventListener('input', syncRegexInputsFromAdvanced);
+            const selectAllBtn = document.getElementById('refresh-select-all');
+            const deselectAllBtn = document.getElementById('refresh-deselect-all');
+            if (selectAllBtn) {
+                selectAllBtn.addEventListener('click', () => setRefreshSelection(true));
             }
-            if (regexOnlyCheckbox) {
-                regexOnlyCheckbox.addEventListener('change', syncRegexInputsFromAdvanced);
+            if (deselectAllBtn) {
+                deselectAllBtn.addEventListener('click', () => setRefreshSelection(false));
             }
-            syncAdvancedFieldFromInputs();
-            syncExcludePlusOneCheckboxes();
 
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
         });
 
-        // Saved stream-name regex presets
-        let savedRegexPresets = [];
-        let selectedRegexPresetId = '';
-        let savedRegexDropdownInitialized = false;
-
-        function initSavedRegexPresetDropdown() {
-            if (savedRegexDropdownInitialized) return;
-            savedRegexDropdownInitialized = true;
-
-            const control = document.getElementById('saved-regex-control');
-            const dropdown = document.getElementById('saved-regex-dropdown');
-            if (!control || !dropdown) return;
-
-            const toggle = () => toggleSavedRegexMenu();
-            control.addEventListener('click', toggle);
-            control.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    toggle();
-                }
-                if (e.key === 'Escape') {
-                    closeSavedRegexMenu();
-                }
-            });
-
-            document.addEventListener('click', (e) => {
-                const menu = document.getElementById('saved-regex-menu');
-                if (!menu || menu.classList.contains('hidden')) return;
-                if (!dropdown.contains(e.target)) closeSavedRegexMenu();
-            });
-        }
-
-        async function loadSavedRegexPresets() {
-            try {
-                const resp = await fetch(`/api/regex/presets?ts=${Date.now()}`, { cache: 'no-store' });
-                const data = await resp.json();
-                if (!data.success) return;
-                savedRegexPresets = Array.isArray(data.presets) ? data.presets : [];
-                renderSavedRegexPresets();
-            } catch (e) {
-                // ignore
-            }
-        }
-
-        function setSavedRegexLabel(text) {
-            const label = document.getElementById('saved-regex-label');
-            if (label) label.textContent = text || '— Select Saved Job —';
-        }
-
-        function openSavedRegexMenu() {
-            const menu = document.getElementById('saved-regex-menu');
-            const control = document.getElementById('saved-regex-control');
-            if (!menu || !control) return;
-            menu.classList.remove('hidden');
-            control.setAttribute('aria-expanded', 'true');
-        }
-
-        function closeSavedRegexMenu() {
-            const menu = document.getElementById('saved-regex-menu');
-            const control = document.getElementById('saved-regex-control');
-            if (!menu || !control) return;
-            menu.classList.add('hidden');
-            control.setAttribute('aria-expanded', 'false');
-        }
-
-        function toggleSavedRegexMenu() {
-            const menu = document.getElementById('saved-regex-menu');
-            if (!menu) return;
-            if (menu.classList.contains('hidden')) openSavedRegexMenu();
-            else closeSavedRegexMenu();
-        }
-
-        function renderSavedRegexPresets() {
-            const menu = document.getElementById('saved-regex-menu');
-            if (!menu) return;
-
-            // Rebuild menu items.
-            menu.innerHTML = '';
-
-            // Keep selection if it still exists.
-            const selectedPreset = selectedRegexPresetId
-                ? savedRegexPresets.find(p => String(p?.id) === String(selectedRegexPresetId))
-                : null;
-            if (!selectedPreset) {
-                selectedRegexPresetId = '';
-                setSavedRegexLabel('— Select Saved Job —');
-            } else {
-                setSavedRegexLabel(selectedPreset.name || 'Saved Job');
-            }
-
-            if (!Array.isArray(savedRegexPresets) || savedRegexPresets.length === 0) {
-                const empty = document.createElement('div');
-                empty.className = 'regex-preset-item';
-                empty.style.cursor = 'default';
-                empty.innerHTML = `<div class="regex-preset-item__text"><div class="regex-preset-item__name" style="font-weight:600; color:#718096;">No Saved Jobs yet</div><div class="regex-preset-item__meta">Run a job to auto-save it, or save from a preview to capture tweaks.</div></div>`;
-                menu.appendChild(empty);
-                return;
-            }
-
-            for (const preset of savedRegexPresets) {
-                if (!preset || !preset.id) continue;
-                const id = String(preset.id);
-                const name = String(preset.name || 'Unnamed');
-                const created = preset.created_at ? new Date(preset.created_at).toLocaleDateString() : '';
-                const meta = created ? `Created ${created}` : '';
-
-                const item = document.createElement('div');
-                item.className = 'regex-preset-item';
-                item.setAttribute('role', 'option');
-                item.setAttribute('data-id', id);
-
-                const text = document.createElement('div');
-                text.className = 'regex-preset-item__text';
-
-                const nameEl = document.createElement('div');
-                nameEl.className = 'regex-preset-item__name';
-                nameEl.textContent = name;
-
-                const metaEl = document.createElement('div');
-                metaEl.className = 'regex-preset-item__meta';
-                metaEl.textContent = meta;
-
-                text.appendChild(nameEl);
-                if (meta) text.appendChild(metaEl);
-
-                const delBtn = document.createElement('button');
-                delBtn.type = 'button';
-                delBtn.className = 'regex-preset-item__delete';
-                delBtn.title = `Delete “${name}”`;
-                delBtn.setAttribute('aria-label', `Delete Saved Job ${name}`);
-                delBtn.innerHTML = `
-                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path d="M9 3h6m-8 4h10m-9 0 1 14h6l1-14M10 7v12m4-12v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                `;
-                delBtn.addEventListener('click', async (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    await deleteRegexPreset(id, name);
-                });
-
-                item.appendChild(text);
-                item.appendChild(delBtn);
-                item.addEventListener('click', () => {
-                    selectedRegexPresetId = id;
-                    setSavedRegexLabel(name);
-                    applyRegexPreset(preset);
-                    closeSavedRegexMenu();
-                });
-
-                menu.appendChild(item);
-            }
-        }
-
-        function applyRegexPreset(preset) {
-            if (!preset?.regex) return;
-
-            const mode = String(preset?.regex_mode || '').trim().toLowerCase();
-            const overrideInput = document.getElementById('streamNameRegexOverride');
-            const filterInput = document.getElementById('streamNameRegex');
-
-            // Apply any stored refresh filter settings (best-effort).
-            const base = document.getElementById('baseSearchText');
-            const inc = document.getElementById('includeFilter');
-            const exc = document.getElementById('excludeFilter');
-            const exPlusOne = document.getElementById('excludePlusOne');
-            const exPlusOneRefine = document.getElementById('excludePlusOneRefine');
-            if (base && typeof preset.base_search_text === 'string') base.value = preset.base_search_text;
-            if (inc && typeof preset.include_filter === 'string') inc.value = preset.include_filter;
-            if (exc && typeof preset.exclude_filter === 'string') exc.value = preset.exclude_filter;
-            if (exPlusOne && typeof preset.exclude_plus_one === 'boolean') exPlusOne.checked = preset.exclude_plus_one;
-            if (exPlusOne && exPlusOneRefine) exPlusOneRefine.checked = exPlusOne.checked;
-
-            // Backwards compatible: presets without regex_mode behave like an override.
-            if (mode === 'filter') {
-                if (filterInput) filterInput.value = preset.regex;
-                if (overrideInput) overrideInput.value = '';
-            } else {
-                if (overrideInput) overrideInput.value = preset.regex;
-                if (filterInput) filterInput.value = '';
-            }
-
-            syncAdvancedFieldFromInputs();
-        }
-
-        async function deleteRegexPreset(presetId, presetName) {
+        async function deleteSavedJob(presetId, presetName) {
             const label = presetName ? `“${presetName}”` : 'this Saved Job';
             if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
 
@@ -1892,14 +1437,6 @@
                 const data = await resp.json();
                 if (!data.success) throw new Error(data.error || 'Failed to delete Saved Job.');
 
-                // If we deleted the selected preset, clear selection label.
-                if (String(selectedRegexPresetId) === String(presetId)) {
-                    selectedRegexPresetId = '';
-                    setSavedRegexLabel('— Select saved regex —');
-                }
-
-                // Refresh both dropdowns that depend on presets.
-                await loadSavedRegexPresets();
                 await loadSavedPatterns();
             } catch (e) {
                 alert(`Unable to delete Saved Job: ${e.message}`);
@@ -1963,7 +1500,7 @@
                 // If there was no explicit error shown, show a helpful hint.
                 const status = document.getElementById('saved-pattern-status');
                 if (status && status.classList.contains('hidden')) {
-                    showSavedPatternStatus('No saved jobs yet. Run a job to auto-save it (or save from the preview dialog if you prefer).', false);
+                    showSavedPatternStatus('No saved jobs yet. Run a job to auto-save it.', false);
                 }
                 return;
             }
@@ -2110,8 +1647,7 @@
             // Start job directly with the saved pattern id.
             const payload = {
                 job_type: 'pattern_refresh_full_cleanup',
-                regex_preset_id: patternId,
-                exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false
+                regex_preset_id: patternId
             };
 
             try {
@@ -2161,7 +1697,7 @@
             if (!patternId) return;
 
             const pattern = savedPatterns.find(p => String(p?.id) === String(patternId));
-            await deleteRegexPreset(patternId, pattern?.name || 'Saved job');
+            await deleteSavedJob(patternId, pattern?.name || 'Saved job');
 
             // Best-effort reset in case the browser holds a stale selected value.
             if (select) select.value = '';
@@ -2461,20 +1997,21 @@
             const description = document.getElementById('refresh-preview-description');
             const summary = document.getElementById('refresh-preview-summary');
 
-            const baseSearchText = preview.base_search_text ? `Base search text: "${preview.base_search_text}". ` : '';
+            const baseSearchText = preview.base_search_text ? `Literal search text: "${preview.base_search_text}". ` : '';
             description.textContent = (preview.channel_name
-                ? `Streams found for ${preview.channel_name}. Uncheck any you don't want to add.`
+                ? `Streams found for ${preview.channel_name}. Uncheck any you want removed.`
                 : 'Streams found for the selected channel.') + ` ${baseSearchText}`;
-            summary.textContent = `${preview.new_count} stream(s) ready to add from ${preview.total_matching} matches.`;
 
             if (preview.preview_truncated) {
                 const limit = preview.preview_limit || refreshPreviewStreams.length;
                 const shown = Math.min(limit, refreshPreviewStreams.length);
-                description.textContent += ` Showing first ${shown} result(s) — refine your regex/filters to narrow matches.`;
+                description.textContent += ` Showing first ${shown} result(s).`;
             }
 
             if (!refreshPreviewStreams.length) {
-                list.innerHTML = '<div class="alert alert-warning">No streams matched your filters. Proceeding will clear current streams for this channel.</div>';
+                list.innerHTML = '<div class="alert alert-warning">No streams matched. Proceeding will clear current streams for this channel.</div>';
+                updateInjectedIncludes(preview.injected_includes || []);
+                updateRefreshSelectionState();
                 return;
             }
 
@@ -2502,158 +2039,60 @@
                     </div>
                 </label>
             `).join('');
+
+            updateInjectedIncludes(preview.injected_includes || []);
+            document.querySelectorAll('.refresh-stream-checkbox').forEach(cb => {
+                cb.addEventListener('change', updateRefreshSelectionState);
+            });
+            updateRefreshSelectionState();
         }
 
-        async function saveRegexFromPreview(event) {
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
+        function updateInjectedIncludes(injected) {
+            const container = document.getElementById('refresh-injected-includes-list');
+            if (!container) return;
+            const names = Array.isArray(injected) ? injected.filter(Boolean) : [];
+            if (!names.length) {
+                container.textContent = 'No injected includes.';
+                return;
             }
+            const items = names.map(name => `<div>${escapeHtml(name)}</div>`).join('');
+            container.innerHTML = items;
+        }
 
+        function setRefreshSelection(checked) {
+            document.querySelectorAll('.refresh-stream-checkbox').forEach(cb => {
+                cb.checked = checked;
+            });
+            updateRefreshSelectionState();
+        }
+
+        function updateRefreshSelectionState() {
+            const summary = document.getElementById('refresh-preview-summary');
+            const submitButton = document.getElementById('refresh-submit-button');
             const checkboxes = Array.from(document.querySelectorAll('.refresh-stream-checkbox'));
-            if (!checkboxes.length || !refreshPreviewStreams.length) {
-                alert('No preview streams available to generate a regex from.');
+            const selectedCount = checkboxes.filter(cb => cb.checked).length;
+            const totalCount = checkboxes.length;
+            const noChange = !!refreshPreviewMeta?.no_change;
+
+            if (summary && refreshPreviewMeta) {
+                const newCount = Number(refreshPreviewMeta.new_count || 0).toLocaleString();
+                const addedCount = Number(refreshPreviewMeta.added || 0).toLocaleString();
+                const removedCount = Number(refreshPreviewMeta.removed || 0).toLocaleString();
+                if (noChange) {
+                    summary.textContent = `No changes detected. ${newCount} stream(s) already match.`;
+                } else {
+                    summary.textContent = `${newCount} matching stream(s). Added: ${addedCount}, removed: ${removedCount}.`;
+                }
+            }
+
+            if (!submitButton) return;
+            if (noChange && selectedCount === totalCount && totalCount > 0) {
+                submitButton.disabled = true;
+                submitButton.textContent = 'No Changes';
                 return;
             }
-
-            let defaultName = '';
-            try {
-                const channelId = (selectedChannels && selectedChannels.length === 1) ? selectedChannels[0] : null;
-                const channelElement = channelId
-                    ? document.querySelector(`.channel-item[data-channel-id="${channelId}"]`)
-                    : null;
-                // Prefer a human-friendly default preset name.
-                // `baseSearchText` is often the "base" channel name (e.g., "BBC One") even when the channel display name includes regions.
-                const baseSearchText = (channelElement?.dataset?.baseSearchText || '').trim();
-                const channelDisplayName = (channelElement?.querySelector?.('.channel-name')?.textContent || '').trim();
-                const channelName = baseSearchText || channelDisplayName || channelElement?.dataset?.channelNumber || '';
-                const groupName = (channelElement?.closest?.('.channel-group-section')
-                    ?.querySelector?.('.channel-group-title')
-                    ?.textContent || '').trim();
-
-                if (channelName && groupName) {
-                    // Append the channel group for clarity (even when the group name
-                    // is a substring of the channel name, e.g. "Sky Sports F1").
-                    // Only avoid the truly redundant case where the channel already
-                    // ends with the group label (or is exactly the same).
-                    const cn = String(channelName || '').trim();
-                    const gn = String(groupName || '').trim();
-                    if (!cn) {
-                        defaultName = '';
-                    } else if (!gn) {
-                        defaultName = cn;
-                    } else {
-                        const endsWithGroup = cn.toLowerCase().endsWith(gn.toLowerCase());
-                        defaultName = endsWithGroup ? cn : `${cn} ${gn}`;
-                    }
-                } else {
-                    defaultName = (channelName || '').trim();
-                }
-            } catch (e) {
-                defaultName = '';
-            }
-
-            const name = (prompt('Name this Saved Job:', defaultName) || '').trim();
-            if (!name) return;
-
-            syncRegexInputsFromAdvanced();
-
-            const byId = new Map((refreshPreviewStreams || []).map(s => [String(s.id), s]));
-            const include = [];
-            const exclude = [];
-
-            for (const cb of checkboxes) {
-                const stream = byId.get(String(cb.value));
-                const streamName = stream?.name;
-                if (!streamName) continue;
-                if (cb.checked) include.push(streamName);
-                else exclude.push(streamName);
-            }
-
-            if (!include.length) {
-                alert('Please leave at least one stream checked before saving a Job Definition.');
-                return;
-            }
-
-            const saveBtn = document.getElementById('refresh-save-regex-button');
-            if (saveBtn) {
-                saveBtn.disabled = true;
-                saveBtn.textContent = 'Saving...';
-            }
-
-            try {
-                const overrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
-                let regex = overrideValue;
-                let regexMode = 'override';
-
-                if (!regex) {
-                    // Generate an exact-match regex from the preview selection so the
-                    // saved preset reproduces the same selection when re-applied.
-                    regexMode = 'filter';
-                    const genResp = await fetch('/api/regex/generate', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ include, exclude, mode: 'exact' })
-                    });
-                    const genData = await genResp.json();
-                    if (!genData.success || !genData.regex) {
-                        throw new Error(genData.error || 'Failed to generate regex.');
-                    }
-                    regex = String(genData.regex).trim();
-                }
-
-                // Also persist current group/channel selection so the Saved Job can be re-run later.
-                const saveResp = await fetch('/api/regex/save', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        name,
-                        regex,
-                        regex_mode: regexMode,
-                        groups: (Array.isArray(selectedGroups) && selectedGroups.length > 0) ? selectedGroups : undefined,
-                        channels: Array.isArray(selectedChannels) ? selectedChannels : null,
-                        exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
-                        base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                        include_filter: document.getElementById('includeFilter')?.value || null,
-                        exclude_filter: document.getElementById('excludeFilter')?.value || null
-                    })
-                });
-                const saveData = await saveResp.json();
-                if (!saveData.success) {
-                    throw new Error(saveData.error || 'Failed to save Saved Job.');
-                }
-
-                // Fill the appropriate input immediately.
-                if (regexMode === 'filter') {
-                    const input = document.getElementById('streamNameRegex');
-                    if (input) input.value = regex;
-                } else {
-                    const input = document.getElementById('streamNameRegexOverride');
-                    if (input) input.value = regex;
-                }
-
-                syncAdvancedFieldFromInputs();
-
-                // Refresh dropdowns.
-                await loadSavedRegexPresets();
-                await loadSavedPatterns();
-                // Best-effort select the newly saved job.
-                const presetId = saveData.preset?.id;
-                if (presetId) {
-                    selectedRegexPresetId = String(presetId);
-                    const preset = savedRegexPresets.find(p => String(p?.id) === String(presetId));
-                    setSavedRegexLabel(preset?.name || 'Saved Job');
-                }
-
-                alert(saveData.replaced ? 'Saved Job definition (overwrote existing Saved Job with the same name).' : 'Saved Job definition saved.');
-            } catch (e) {
-                alert(`Unable to save regex: ${e.message}`);
-            } finally {
-                if (saveBtn) {
-                    saveBtn.disabled = false;
-                    saveBtn.textContent = 'Save Regex';
-                }
-            }
+            submitButton.disabled = false;
+            submitButton.textContent = 'Apply Changes';
         }
 
         async function showRefreshPreview() {
@@ -2662,8 +2101,6 @@
                 return;
             }
 
-            syncRegexInputsFromAdvanced();
-
             document.getElementById('refresh-preview-modal').classList.remove('hidden');
             document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-info preview-loading"><span class="loading-ellipsis">Searching for matching streams</span></div>';
             resetRefreshProgress();
@@ -2671,16 +2108,9 @@
             document.getElementById('refresh-preview-description').textContent = '';
 
             try {
-                const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
-                const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
                 const payload = {
                     channel_id: selectedChannels[0],
-                    base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                    include_filter: document.getElementById('includeFilter')?.value || null,
-                    exclude_filter: document.getElementById('excludeFilter')?.value || null,
-                    exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
-                    stream_name_regex: regexFilterValue ? regexFilterValue : null,
-                    stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
+                    base_search_text: document.getElementById('baseSearchText')?.value ?? null
                 };
 
                 const response = await fetch('/api/refresh-preview', {
@@ -2720,7 +2150,7 @@
             const submitButton = document.getElementById('refresh-submit-button');
 
             container.classList.add('hidden');
-            document.getElementById('refresh-progress-message').textContent = 'Preparing to add streams...';
+            document.getElementById('refresh-progress-message').textContent = 'Preparing to apply refresh changes...';
             document.getElementById('refresh-progress-detail').textContent = 'This window will stay open until the channel is updated.';
             document.getElementById('refresh-progress-percentage').textContent = '';
             bar.classList.add('indeterminate');
@@ -2728,7 +2158,7 @@
 
             if (submitButton) {
                 submitButton.disabled = false;
-                submitButton.textContent = 'Add Selected Streams';
+                submitButton.textContent = 'Apply Changes';
             }
         }
 
@@ -2737,18 +2167,32 @@
                 event.preventDefault();
                 event.stopPropagation();
             }
-            const selected = Array.from(document.querySelectorAll('.refresh-stream-checkbox:checked')).map(cb => parseInt(cb.value));
+            const checkboxes = Array.from(document.querySelectorAll('.refresh-stream-checkbox'));
+            const selected = checkboxes.filter(cb => cb.checked).map(cb => parseInt(cb.value));
             const submitButton = document.getElementById('refresh-submit-button');
 
+            if (refreshPreviewMeta?.no_change && checkboxes.length > 0 && selected.length === checkboxes.length) {
+                return;
+            }
+
+            if (selected.length === 0) {
+                const warning = refreshPreviewMeta?.new_count
+                    ? 'You have deselected all streams. Proceeding will remove every stream from this channel. Continue?'
+                    : 'No streams matched. Proceeding will clear the channel. Continue?';
+                if (!confirm(warning)) {
+                    return;
+                }
+            }
+
             submitButton.disabled = true;
-            submitButton.textContent = 'Adding...';
-            showRefreshProgress('Please wait while we add the selected streams...');
+            submitButton.textContent = 'Applying...';
+            showRefreshProgress('Please wait while we apply refresh changes...');
 
             const jobId = await startJob('refresh_optimize', selected);
 
             if (!jobId) {
                 submitButton.disabled = false;
-                submitButton.textContent = 'Add Selected Streams';
+                submitButton.textContent = 'Apply Changes';
                 document.getElementById('refresh-progress-message').textContent = 'Failed to start refresh job. Please try again.';
                 document.getElementById('refresh-progress-detail').textContent = '';
                 document.getElementById('refresh-progress-bar').classList.remove('indeterminate');
@@ -2849,8 +2293,6 @@
         async function startJob(jobType, selectedStreamIds = null, event = null) {
             const clickedBtn = getClickedButton(event);
             try {
-                syncRegexInputsFromAdvanced();
-
                 // Get group names
                 const groupNames = selectedGroups.map(id => {
                     const group = allGroups.find(g => g.id === id);
@@ -2881,9 +2323,7 @@
                 // User initiated a job — bring the Current Job card into view (centered).
                 const scrollToken = requestAutoScrollToCurrentJob();
                 maybeAutoScrollToCurrentJob(scrollToken);
-                
-                const regexOverrideValue = (document.getElementById('streamNameRegexOverride')?.value || '').trim();
-                const regexFilterValue = (document.getElementById('streamNameRegex')?.value || '').trim();
+
                 const payload = {
                     job_type: jobType,
                     groups: selectedGroups,
@@ -2892,12 +2332,7 @@
                     channel_names: channelNames,
                     analysis_profile: document.getElementById('analysisProfile')?.value || 'balanced',
                     base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                    include_filter: document.getElementById('includeFilter')?.value || null,
-                    exclude_filter: document.getElementById('excludeFilter')?.value || null,
-                    exclude_plus_one: document.getElementById('excludePlusOne')?.checked || false,
-                    selected_stream_ids: selectedStreamIds,
-                    stream_name_regex: regexFilterValue ? regexFilterValue : null,
-                    stream_name_regex_override: regexOverrideValue ? regexOverrideValue : null
+                    selected_stream_ids: selectedStreamIds
                 };
 
                 // Button loading state (best-effort)
@@ -3054,10 +2489,10 @@
             container.classList.remove('hidden');
             if (submitButton) {
                 submitButton.disabled = true;
-                submitButton.textContent = 'Adding...';
+                submitButton.textContent = 'Applying...';
             }
 
-            messageEl.textContent = job.current_step || 'Adding streams to Dispatcharr...';
+            messageEl.textContent = job.current_step || 'Applying refresh changes...';
             detailEl.textContent = job.status === 'queued' ? 'Job queued and will start shortly.' : 'Updating your channel with the selected streams...';
 
             if (job.total > 0) {
@@ -3077,8 +2512,8 @@
                 percentEl.textContent = job.status === 'completed' ? '100%' : '';
 
                 if (job.status === 'completed') {
-                    detailEl.textContent = 'Streams added successfully. You can close this window when you are ready.';
-                    messageEl.textContent = job.current_step || 'Streams added.';
+                    detailEl.textContent = 'Refresh applied successfully. You can close this window when you are ready.';
+                    messageEl.textContent = job.current_step || 'Refresh complete.';
                     if (submitButton) {
                         submitButton.textContent = 'Completed';
                         submitButton.disabled = true;
@@ -3089,7 +2524,7 @@
                     detailEl.textContent = 'The refresh did not finish. Please review the current job for details.';
                     if (submitButton) {
                         submitButton.disabled = false;
-                        submitButton.textContent = 'Retry Add Selected Streams';
+                        submitButton.textContent = 'Retry Apply Changes';
                     }
                     refreshJobId = null;
                 }
@@ -3247,11 +2682,11 @@
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Streams Added</div>
-                                <div class="stat-value" style="color: #38a169;">${job.result_summary.new_count.toLocaleString()}</div>
+                                <div class="stat-value" style="color: #38a169;">${(job.result_summary.added || 0).toLocaleString()}</div>
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Streams Removed</div>
-                                <div class="stat-value" style="color: #718096;">${job.result_summary.previous_count.toLocaleString()}</div>
+                                <div class="stat-value" style="color: #718096;">${(job.result_summary.removed || 0).toLocaleString()}</div>
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Status</div>
@@ -3261,23 +2696,8 @@
                     `;
                     if (job.result_summary.base_search_text) {
                         html += `<div style="margin-top: 15px; padding: 10px; background: #f0f4ff; border-radius: 5px;">
-                            <strong>Primary Match:</strong> ${job.result_summary.base_search_text}
+                            <strong>Literal search text:</strong> ${job.result_summary.base_search_text}
                         </div>`;
-                    }
-                    if (job.result_summary.stream_name_regex_override) {
-                        html += `<div style="margin-top: 15px; padding: 10px; background: #fefce8; border-radius: 5px;">
-                            <strong>Advanced Regex (only):</strong> <code>${job.result_summary.stream_name_regex_override}</code>
-                        </div>`;
-                    }
-                    if (job.result_summary.include_filter || job.result_summary.exclude_filter) {
-                        html += `<div style="margin-top: 15px; padding: 10px; background: #f7fafc; border-radius: 5px;">`;
-                        if (job.result_summary.include_filter) {
-                            html += `<div><strong>Include Filter:</strong> ${job.result_summary.include_filter}</div>`;
-                        }
-                        if (job.result_summary.exclude_filter) {
-                            html += `<div><strong>Exclude Filter:</strong> ${job.result_summary.exclude_filter}</div>`;
-                        }
-                        html += `</div>`;
                     }
                 } else {
                     // Analysis job summary
