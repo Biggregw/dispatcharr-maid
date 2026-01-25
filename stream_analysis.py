@@ -2146,6 +2146,39 @@ def _ensure_refresh_learning_db(config):
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS refresh_baseline (
+                channel_id TEXT NOT NULL,
+                stream_signature TEXT NOT NULL,
+                stream_name TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                PRIMARY KEY (channel_id, stream_signature)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS refresh_rejections (
+                channel_id TEXT NOT NULL,
+                stream_signature TEXT NOT NULL,
+                stream_name TEXT NOT NULL,
+                rejected_at TEXT NOT NULL,
+                PRIMARY KEY (channel_id, stream_signature)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS refresh_regex_trust (
+                channel_id TEXT NOT NULL,
+                pattern TEXT NOT NULL,
+                accepted_count INTEGER NOT NULL DEFAULT 0,
+                last_seen_at TEXT NOT NULL,
+                PRIMARY KEY (channel_id, pattern)
+            )
+            """
+        )
         conn.commit()
     except Exception:
         conn.close()
@@ -2202,6 +2235,257 @@ def _has_refresh_learning_stats(config, channel_id):
         return cursor.fetchone() is not None
     finally:
         conn.close()
+
+
+def _load_refresh_baseline(config, channel_id):
+    """Load the baseline stream names for a channel keyed by normalized signature."""
+    baseline = {}
+    try:
+        conn = _ensure_refresh_learning_db(config)
+    except Exception as exc:
+        logging.warning("Refresh baseline DB unavailable: %s", exc)
+        return baseline
+
+    try:
+        cursor = conn.execute(
+            """
+            SELECT stream_signature, stream_name
+            FROM refresh_baseline
+            WHERE channel_id = ?
+            """,
+            (str(channel_id),)
+        )
+        for signature, stream_name in cursor.fetchall():
+            baseline[signature] = stream_name
+    finally:
+        conn.close()
+    return baseline
+
+
+def _add_refresh_baseline_entries(config, channel_id, stream_names):
+    """Insert baseline stream names for a channel (idempotent)."""
+    if not stream_names:
+        return 0
+    entries = []
+    added_at = datetime.now().isoformat()
+    for stream_name in stream_names:
+        signature = _normalize_refresh_signature(stream_name)
+        if not signature:
+            continue
+        entries.append((str(channel_id), signature, stream_name, added_at))
+
+    if not entries:
+        return 0
+
+    try:
+        conn = _ensure_refresh_learning_db(config)
+    except Exception as exc:
+        logging.warning("Refresh baseline DB unavailable: %s", exc)
+        return 0
+
+    try:
+        conn.execute("BEGIN")
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO refresh_baseline (
+                channel_id, stream_signature, stream_name, added_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            entries
+        )
+        conn.commit()
+        return conn.total_changes
+    except Exception as exc:
+        conn.rollback()
+        logging.warning("Failed to persist refresh baseline entries: %s", exc)
+        return 0
+    finally:
+        conn.close()
+
+
+def _load_refresh_rejections(config, channel_id):
+    """Load permanently rejected stream signatures for a channel."""
+    rejected = set()
+    try:
+        conn = _ensure_refresh_learning_db(config)
+    except Exception as exc:
+        logging.warning("Refresh rejection DB unavailable: %s", exc)
+        return rejected
+
+    try:
+        cursor = conn.execute(
+            """
+            SELECT stream_signature
+            FROM refresh_rejections
+            WHERE channel_id = ?
+            """,
+            (str(channel_id),)
+        )
+        for (signature,) in cursor.fetchall():
+            rejected.add(signature)
+    finally:
+        conn.close()
+    return rejected
+
+
+def _record_refresh_rejections(config, channel_id, stream_names):
+    """Persist rejected stream names (idempotent)."""
+    if not stream_names:
+        return 0
+    entries = []
+    rejected_at = datetime.now().isoformat()
+    for stream_name in stream_names:
+        signature = _normalize_refresh_signature(stream_name)
+        if not signature:
+            continue
+        entries.append((str(channel_id), signature, stream_name, rejected_at))
+
+    if not entries:
+        return 0
+
+    try:
+        conn = _ensure_refresh_learning_db(config)
+    except Exception as exc:
+        logging.warning("Refresh rejection DB unavailable: %s", exc)
+        return 0
+
+    try:
+        conn.execute("BEGIN")
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO refresh_rejections (
+                channel_id, stream_signature, stream_name, rejected_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            entries
+        )
+        conn.commit()
+        return conn.total_changes
+    except Exception as exc:
+        conn.rollback()
+        logging.warning("Failed to persist refresh rejections: %s", exc)
+        return 0
+    finally:
+        conn.close()
+
+
+def _load_refresh_regex_trust(config, channel_id):
+    """Load regex trust counts for a channel."""
+    trust = {}
+    try:
+        conn = _ensure_refresh_learning_db(config)
+    except Exception as exc:
+        logging.warning("Refresh regex trust DB unavailable: %s", exc)
+        return trust
+
+    try:
+        cursor = conn.execute(
+            """
+            SELECT pattern, accepted_count
+            FROM refresh_regex_trust
+            WHERE channel_id = ?
+            """,
+            (str(channel_id),)
+        )
+        for pattern, accepted_count in cursor.fetchall():
+            trust[pattern] = int(accepted_count or 0)
+    finally:
+        conn.close()
+    return trust
+
+
+def _record_refresh_regex_accepts(config, channel_id, pattern_counts):
+    """Persist accepted counts per regex pattern."""
+    if not pattern_counts:
+        return 0
+    entries = []
+    updated_at = datetime.now().isoformat()
+    for pattern, count in pattern_counts.items():
+        if count <= 0:
+            continue
+        entries.append((str(channel_id), pattern, int(count), updated_at))
+
+    if not entries:
+        return 0
+
+    try:
+        conn = _ensure_refresh_learning_db(config)
+    except Exception as exc:
+        logging.warning("Refresh regex trust DB unavailable: %s", exc)
+        return 0
+
+    try:
+        conn.execute("BEGIN")
+        for channel_id_value, pattern, count, updated_at_value in entries:
+            conn.execute(
+                """
+                INSERT INTO refresh_regex_trust (
+                    channel_id, pattern, accepted_count, last_seen_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(channel_id, pattern) DO UPDATE SET
+                    accepted_count = accepted_count + ?,
+                    last_seen_at = excluded.last_seen_at
+                """,
+                (
+                    channel_id_value,
+                    pattern,
+                    count,
+                    updated_at_value,
+                    count,
+                )
+            )
+        conn.commit()
+        return conn.total_changes
+    except Exception as exc:
+        conn.rollback()
+        logging.warning("Failed to persist refresh regex accept counts: %s", exc)
+        return 0
+    finally:
+        conn.close()
+
+
+def _build_refresh_regex_patterns(baseline_names, trust_counts):
+    """Build deterministic regex patterns derived from baseline names."""
+    patterns = []
+    quality_tokens = {
+        'UHD',
+        'HD',
+        'FHD',
+        'SD',
+        '4K',
+        'HDR',
+        'HLG',
+        'DV',
+        'DOLBY',
+        'DOLBYVISION',
+        'HEVC',
+        'H265',
+    }
+
+    for name in baseline_names:
+        if not isinstance(name, str) or not name.strip():
+            continue
+        cleaned = name.strip()
+        tokens = cleaned.split()
+        last_token = tokens[-1] if tokens else ''
+        normalized_last = re.sub(r'[^A-Za-z0-9]', '', last_token or '').upper()
+        allow_suffix = normalized_last not in quality_tokens
+
+        escaped = re.escape(cleaned)
+        suffix = r'(?:\s+(?:UHD|HD|FHD|SD|4K|HDR|HLG|DV|DOLBY(?:\s+VISION)?|HEVC|H(?:\.?265)))'
+        if allow_suffix:
+            pattern_text = rf'^{escaped}{suffix}?$'
+        else:
+            pattern_text = rf'^{escaped}$'
+
+        accepted_count = int(trust_counts.get(pattern_text, 0) or 0)
+        patterns.append({
+            'pattern': pattern_text,
+            'regex': re.compile(pattern_text, flags=re.IGNORECASE),
+            'trusted': accepted_count >= 2,
+            'accepted_count': accepted_count,
+        })
+    return patterns
 
 
 def _build_refresh_learning_metadata(signature, stats):
@@ -2316,8 +2600,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     """
     Find and add all matching streams from all providers for a specific channel.
 
-    Refresh matching is strictly literal: only exact stream names provided by the user or
-    injected from the channel's existing streams are considered matches.
+    Refresh matching follows a strict baseline recall with optional regex-derived proposals.
+    Baseline stream names are recalled exactly (normalized) across providers, with regex
+    patterns derived mechanically from the baseline used only to propose additional candidates.
 
     Args:
         api: DispatcharrAPI instance
@@ -2359,29 +2644,51 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     if isinstance(search_name, str) and search_name.strip():
         logging.info(f"Using literal search text: {search_name}")
     
-    # Get current streams for this channel
+    # Get current streams for this channel.
     current_streams = api.fetch_channel_streams(channel_id)
     current_stream_ids = {s['id'] for s in current_streams} if current_streams else set()
+
     injected_includes = []
-    seen_injected = set()
     for stream in current_streams or []:
         name = stream.get('name')
         if not isinstance(name, str) or not name:
             continue
-        if name in seen_injected:
-            continue
-        seen_injected.add(name)
         injected_includes.append(name)
 
-    literal_terms = set(injected_includes)
+    baseline = _load_refresh_baseline(config, channel_id)
+    if not baseline:
+        _add_refresh_baseline_entries(config, channel_id, injected_includes)
+        baseline = _load_refresh_baseline(config, channel_id)
+
+    implicit_added_signatures = set()
+    implicit_added_names = []
+    for stream in current_streams or []:
+        name = stream.get('name')
+        if not isinstance(name, str) or not name:
+            continue
+        signature = _normalize_refresh_signature(name)
+        if not signature:
+            continue
+        if signature not in baseline:
+            implicit_added_signatures.add(signature)
+            implicit_added_names.append(name)
+
+    if implicit_added_names:
+        _add_refresh_baseline_entries(config, channel_id, implicit_added_names)
+        for name in implicit_added_names:
+            signature = _normalize_refresh_signature(name)
+            if signature:
+                baseline.setdefault(signature, name)
+
+    baseline_signatures = set(baseline.keys())
+    baseline_names = list(baseline.values())
+    rejected_signatures = _load_refresh_rejections(config, channel_id)
+    regex_trust = _load_refresh_regex_trust(config, channel_id)
+    regex_patterns = _build_refresh_regex_patterns(baseline_names, regex_trust)
+
+    literal_terms = set()
     if isinstance(search_name, str) and search_name.strip():
         literal_terms.add(search_name)
-
-    def matches_stream(stream_name):
-        """Check if stream matches the selected channel using strict literal rules."""
-        if not isinstance(stream_name, str):
-            return False
-        return stream_name in literal_terms
 
     def _stream_snapshot(stream):
         if not isinstance(stream, dict):
@@ -2440,12 +2747,15 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     filtered_count = 0      # accurate count after all filtering (and allowed_set)
 
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
-    # Learned inclusion is unconditional so preview and execution share eligibility; this is
-    # intentional and not a performance optimization.
-    include_learned = True
-    learning_stats = _load_refresh_learning_stats(config, channel_id)
     matching_streams = []
-    logged_learned_inclusion = False
+
+    all_stream_ids = {stream.get('id') for stream in all_streams if stream.get('id') is not None}
+    extra_current_streams = [
+        stream for stream in (current_streams or [])
+        if stream.get('id') is None or stream.get('id') not in all_stream_ids
+    ]
+    if extra_current_streams:
+        all_streams = list(all_streams) + extra_current_streams
 
     for stream in all_streams:
         stream_name = stream.get('name', '')
@@ -2457,35 +2767,37 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             provider_name = provider_lookup.get(str(provider_id))
 
         signature = _normalize_refresh_signature(stream_name)
-        literal_match = matches_stream(stream_name)
+        match_source = None
+        matched_pattern = None
+        regex_trusted = False
 
-        # Two-path inclusion logic:
-        # Path A: strict literal match.
-        # Path B: learned acceptance for this channel only (no reject override).
-        learned_reinjected = False
-        learning_meta = None
-        if not literal_match:
-            if not include_learned or not signature or not learning_stats:
+        if signature and signature in baseline_signatures:
+            match_source = 'implicit' if signature in implicit_added_signatures else 'baseline'
+        elif isinstance(stream_name, str) and stream_name in literal_terms:
+            if signature and signature in rejected_signatures:
                 continue
-            learning_meta = _build_refresh_learning_metadata(signature, learning_stats)
-            if signature not in learning_stats:
-                continue
-            if not learning_meta.get('learned_accept'):
-                continue
-            learned_reinjected = True
-            if not logged_learned_inclusion:
-                logging.debug(
-                    "Refresh learned inclusion: channel_id=%s stream=%s reason=learned",
-                    channel_id,
-                    stream_name,
-                )
-                logged_learned_inclusion = True
+            match_source = 'literal'
+        elif isinstance(stream_name, str) and stream_name:
+            for pattern in regex_patterns:
+                if pattern['regex'].match(stream_name):
+                    if signature and signature in rejected_signatures:
+                        match_source = None
+                        break
+                    match_source = 'regex'
+                    matched_pattern = pattern['pattern']
+                    regex_trusted = bool(pattern.get('trusted'))
+                    break
+
+        if not match_source:
+            continue
 
         total_matching += 1
         matching_streams.append({
             'id': stream_id,
             'name': stream_name,
             'signature': signature,
+            'match_source': match_source,
+            'regex_pattern': matched_pattern,
         })
 
         if allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
@@ -2503,13 +2815,13 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             # URL is not used by the UI and can be large/sensitive; omit.
             'resolution': stream.get('resolution'),
             'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate'),
-            'learned_reinjected': learned_reinjected,
+            'match_source': match_source,
+            'regex_pattern': matched_pattern,
+            'regex_trusted': regex_trusted,
+            'checked_default': regex_trusted if match_source == 'regex' else True,
         }
 
         if preview:
-            if learning_meta is None:
-                learning_meta = _build_refresh_learning_metadata(signature, learning_stats)
-            detailed_stream.update(learning_meta)
             if _PREVIEW_STREAM_LIMIT is None or len(preview_streams) < _PREVIEW_STREAM_LIMIT:
                 preview_streams.append(detailed_stream)
             else:
@@ -2523,35 +2835,37 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     added_ids = filtered_id_set - current_stream_ids
     removed_ids = current_stream_ids - filtered_id_set
     no_change = len(added_ids) == 0 and len(removed_ids) == 0
-    if preview and no_change and not _has_refresh_learning_stats(config, channel_id):
-        # Override to allow a one-time refresh commit that bootstraps learning history.
-        no_change = False
 
     final_stream_ids = [s['id'] for s in filtered_streams] if not preview else []
     previous_streams = [_stream_snapshot(s) for s in (current_streams or [])]
     final_streams = filtered_streams if not preview else preview_streams
 
-    if not preview and (allowed_stream_ids is None or no_change):
-        if not _has_refresh_learning_stats(config, channel_id):
-            # Bootstrap refresh learning once per channel so existing streams are treated as accepted.
-            baseline_streams = []
-            baseline_allowed = set()
-            for stream in current_streams or []:
-                stream_id = stream.get('id')
-                stream_name = stream.get('name')
-                if stream_id is None or not stream_name:
-                    continue
-                signature = _normalize_refresh_signature(stream_name)
-                if not signature:
-                    continue
-                baseline_allowed.add(int(stream_id))
-                baseline_streams.append({
-                    'id': stream_id,
-                    'name': stream_name,
-                    'signature': signature,
-                })
-            if baseline_streams:
-                _record_refresh_learning_decisions(config, channel_id, baseline_streams, baseline_allowed)
+    if allowed_set is not None:
+        rejected_names = []
+        regex_accept_counts = {}
+        baseline_additions = []
+        for stream in matching_streams:
+            stream_id = stream.get('id')
+            stream_name = stream.get('name')
+            signature = stream.get('signature')
+            if not isinstance(stream_name, str) or not stream_name:
+                continue
+            accepted = stream_id is not None and int(stream_id) in allowed_set
+            if not accepted:
+                rejected_names.append(stream_name)
+                continue
+            if stream.get('match_source') == 'regex':
+                pattern = stream.get('regex_pattern')
+                if pattern:
+                    regex_accept_counts[pattern] = regex_accept_counts.get(pattern, 0) + 1
+                if signature and signature not in baseline_signatures:
+                    baseline_additions.append(stream_name)
+                    baseline_signatures.add(signature)
+
+        _record_refresh_rejections(config, channel_id, rejected_names)
+        _record_refresh_regex_accepts(config, channel_id, regex_accept_counts)
+        if baseline_additions:
+            _add_refresh_baseline_entries(config, channel_id, baseline_additions)
     
     if (not preview and not final_stream_ids) or (preview and filtered_count == 0):
         logging.info("No streams remaining after filtering - channel will be emptied")
@@ -2578,9 +2892,6 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     if preview:
         return result
-
-    if allowed_set is not None:
-        _record_refresh_learning_decisions(config, channel_id, matching_streams, allowed_set)
 
     # Update channel with new stream list
     try:
