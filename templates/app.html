@@ -905,42 +905,6 @@
             color: #764ba2;
         }
 
-        /* Saved job delete button */
-        .btn-icon-danger {
-            border: 2px solid #e2e8f0;
-            background: #fff;
-            padding: 10px 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            color: #718096;
-            height: 44px; /* matches select height */
-            min-width: 44px;
-            user-select: none;
-            -webkit-tap-highlight-color: transparent;
-        }
-
-        .btn-icon-danger svg {
-            width: 20px;
-            height: 20px;
-            display: block;
-        }
-
-        .btn-icon-danger:hover {
-            background: #fed7d7;
-            border-color: #feb2b2;
-            color: #742a2a;
-        }
-
-        .btn-icon-danger:disabled {
-            opacity: 0.45;
-            cursor: not-allowed;
-            background: #fff;
-            border-color: #e2e8f0;
-            color: #718096;
-        }
     </style>
 </head>
 <body>
@@ -989,20 +953,6 @@
                     <button class="btn btn-next" id="btn-next-1" onclick="goToStep2()" disabled>
                         Next: Select Channels →
                     </button>
-                </div>
-                <div style="margin-top: 12px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #f9fafb;">
-                    <div style="font-weight: 700; color: #1f2937;">Saved jobs (quick access)</div>
-                    <div style="color: #4b5563; font-size: 0.95em; margin: 6px 0 10px 0;">
-                        Load a saved job and switch to Run Jobs without starting it. You’ll review and run it from the Run Jobs step.
-                    </div>
-                    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
-                        <select id="saved-pattern-quick-select" style="flex: 1; min-width: 240px; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em;">
-                            <option value="">— Select saved job —</option>
-                        </select>
-                        <button class="btn btn-next" id="btn-load-saved-pattern" type="button" onclick="loadSavedPatternIntoRunStep(event)" disabled>
-                            Load into Run Jobs
-                        </button>
-                    </div>
                 </div>
             </div>
         </div>
@@ -1061,43 +1011,6 @@
                 <div class="summary-row">
                     <span class="summary-label">Channels:</span>
                     <span class="summary-value" id="final-channels-summary">All channels</span>
-                </div>
-            </div>
-
-            <div style="margin: 20px 0; padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
-                    <div>
-                        <div style="font-weight: 700; color: #111827;">Saved Jobs</div>
-                        <div style="color: #4b5563; font-size: 0.95em;">Jobs are saved automatically when you run them. Re-run or manage the latest version here.</div>
-                    </div>
-                </div>
-
-                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin: 12px 0 8px 0;">
-                    <select id="saved-pattern-select" style="flex: 1; min-width: 240px; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em;">
-                        <option value="">— Select saved job —</option>
-                    </select>
-                    <button class="btn-icon-danger" id="btn-delete-saved-preset" type="button" onclick="deleteSelectedSavedPattern(event)" disabled
-                            title="Delete selected job" aria-label="Delete selected job">
-                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                            <path d="M9 3h6m-8 4h10m-9 0 1 14h6l1-14M10 7v12m4-12v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                    </button>
-                    <button class="btn btn-next" id="btn-run-saved-pipeline" onclick="runSavedPatternPipeline(event)" disabled>
-                        ▶ Run Saved Job
-                    </button>
-                </div>
-
-                <div id="saved-pattern-status" class="alert alert-info hidden" style="margin-top: 6px;"></div>
-
-                <div id="saved-pattern-preview" class="selection-summary hidden" style="margin-top: 10px;">
-                    <div class="summary-row">
-                        <span class="summary-label">Variant:</span>
-                        <span class="summary-value" id="saved-pattern-preview-name"></span>
-                    </div>
-                    <div class="summary-row">
-                        <span class="summary-label">Matched Channels:</span>
-                        <span class="summary-value" id="saved-pattern-preview-count">—</span>
-                    </div>
                 </div>
             </div>
 
@@ -1414,7 +1327,6 @@
             loadGroups();
             loadJobHistory();
             loadProviderRanking();
-            loadSavedPatterns();
             const selectAllBtn = document.getElementById('refresh-select-all');
             const deselectAllBtn = document.getElementById('refresh-deselect-all');
             if (selectAllBtn) {
@@ -1428,282 +1340,6 @@
             setInterval(checkActiveJobs, 2000);
         });
 
-        async function deleteSavedJob(presetId, presetName) {
-            const label = presetName ? `“${presetName}”` : 'this Saved Job';
-            if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
-
-            try {
-                const resp = await fetch(`/api/regex/presets/${encodeURIComponent(String(presetId))}`, { method: 'DELETE' });
-                const data = await resp.json();
-                if (!data.success) throw new Error(data.error || 'Failed to delete Saved Job.');
-
-                await loadSavedPatterns();
-            } catch (e) {
-                alert(`Unable to delete Saved Job: ${e.message}`);
-            }
-        }
-
-        // Saved job selection
-        let savedPatterns = [];
-        let skippedSavedPatterns = 0;
-
-        async function loadSavedPatterns() {
-            try {
-                // Saved jobs are stored alongside regex presets.
-                const resp = await fetch(`/api/regex/presets?ts=${Date.now()}`, { cache: 'no-store' });
-                const data = await resp.json();
-                if (!data.success) {
-                    showSavedPatternStatus(data.error || 'Unable to load saved patterns.', true);
-                    skippedSavedPatterns = 0;
-                    savedPatterns = [];
-                    renderSavedPatterns();
-                    return;
-                }
-                const presets = Array.isArray(data.presets) ? data.presets : [];
-                skippedSavedPatterns = 0;
-                // Only show saved jobs that can drive the workflow (must have groups saved).
-                const usablePresets = presets.filter(p => Array.isArray(p?.groups) && p.groups.length > 0);
-                skippedSavedPatterns = presets.length - usablePresets.length;
-                savedPatterns = usablePresets;
-                renderSavedPatterns();
-            } catch (e) {
-                showSavedPatternStatus(`Unable to load saved patterns: ${e.message}`, true);
-                skippedSavedPatterns = 0;
-                savedPatterns = [];
-                renderSavedPatterns();
-            }
-        }
-
-        function renderSavedPatterns() {
-            const select = document.getElementById('saved-pattern-select');
-            const quickSelect = document.getElementById('saved-pattern-quick-select');
-            if (!select && !quickSelect) return;
-            const desiredSelection = select?.value || quickSelect?.value || '';
-
-            if (!Array.isArray(savedPatterns) || savedPatterns.length === 0) {
-                const emptyOptions = '<option value="">— Select saved job —</option><option value="" disabled>(No saved jobs yet — run a job to auto-save it)</option>';
-                if (select) {
-                    select.innerHTML = emptyOptions;
-                    select.value = '';
-                    select.onchange = () => setSavedPatternSelection(select.value);
-                }
-                if (quickSelect) {
-                    quickSelect.innerHTML = emptyOptions;
-                    quickSelect.value = '';
-                    quickSelect.onchange = () => onQuickSavedPatternSelected();
-                }
-                if (skippedSavedPatterns > 0) {
-                    showSavedPatternStatus('Some saved jobs are missing their group selections. Re-open and save them again (no need to delete).', false);
-                }
-                onQuickSavedPatternSelected();
-                onSavedPatternSelected();
-                // If there was no explicit error shown, show a helpful hint.
-                const status = document.getElementById('saved-pattern-status');
-                if (status && status.classList.contains('hidden')) {
-                    showSavedPatternStatus('No saved jobs yet. Run a job to auto-save it.', false);
-                }
-                return;
-            }
-
-            if (skippedSavedPatterns > 0) {
-                showSavedPatternStatus('Some saved jobs are missing their group selections. Re-open and save them again (no need to delete).', false);
-            } else {
-                hideSavedPatternStatus();
-            }
-            const options = '<option value="">— Select saved job —</option>' + savedPatterns.map(p => {
-                const name = p.name || 'Unnamed';
-                const created = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
-                return `<option value="${p.id}">${name}${created ? ` • ${created}` : ''}</option>`;
-            }).join('');
-            if (select) {
-                select.innerHTML = options;
-                select.onchange = () => setSavedPatternSelection(select.value);
-            }
-            if (quickSelect) {
-                quickSelect.innerHTML = options;
-                quickSelect.onchange = () => setSavedPatternSelection(quickSelect.value);
-            }
-            setSavedPatternSelection(desiredSelection);
-        }
-
-        function showSavedPatternStatus(message, isError) {
-            const el = document.getElementById('saved-pattern-status');
-            if (!el) return;
-            el.textContent = message || '';
-            el.classList.remove('hidden');
-            el.classList.toggle('alert-error', !!isError);
-            el.classList.toggle('alert-info', !isError);
-        }
-
-        function hideSavedPatternStatus() {
-            const el = document.getElementById('saved-pattern-status');
-            if (!el) return;
-            el.classList.add('hidden');
-            el.textContent = '';
-            el.classList.remove('alert-error');
-            el.classList.add('alert-info');
-        }
-
-        function onQuickSavedPatternSelected() {
-            const select = document.getElementById('saved-pattern-quick-select');
-            const btn = document.getElementById('btn-load-saved-pattern');
-            if (!btn) return;
-            btn.disabled = !(select && select.value);
-        }
-
-        function setSavedPatternSelection(patternId) {
-            const select = document.getElementById('saved-pattern-select');
-            const quickSelect = document.getElementById('saved-pattern-quick-select');
-            if (select) select.value = patternId || '';
-            if (quickSelect) quickSelect.value = patternId || '';
-            onQuickSavedPatternSelected();
-            onSavedPatternSelected();
-            applySavedPatternSelection(patternId);
-        }
-
-        function applySavedPatternSelection(patternId) {
-            const pattern = savedPatterns.find(p => String(p?.id) === String(patternId));
-            if (!pattern) return;
-
-            if (Array.isArray(pattern.groups) && pattern.groups.length > 0) {
-                selectedGroups = [...pattern.groups];
-                renderGroups();
-                updateStep1Button();
-
-                selectedChannels = Array.isArray(pattern.channels) ? [...pattern.channels] : null;
-                loadChannels(selectedChannels);
-            }
-        }
-
-        async function onSavedPatternSelected() {
-            const select = document.getElementById('saved-pattern-select');
-            const runBtn = document.getElementById('btn-run-saved-pipeline');
-            const delBtn = document.getElementById('btn-delete-saved-preset');
-            const preview = document.getElementById('saved-pattern-preview');
-            const nameEl = document.getElementById('saved-pattern-preview-name');
-            const countEl = document.getElementById('saved-pattern-preview-count');
-
-            const patternId = select?.value || '';
-            if (!patternId) {
-                if (runBtn) runBtn.disabled = true;
-                if (delBtn) delBtn.disabled = true;
-                if (preview) preview.classList.add('hidden');
-                return;
-            }
-            if (runBtn) runBtn.disabled = false;
-            if (delBtn) delBtn.disabled = false;
-
-            const pattern = savedPatterns.find(p => p.id === patternId);
-            if (nameEl) nameEl.textContent = pattern?.name || 'Saved job';
-            if (countEl) countEl.textContent = 'Resolving...';
-            if (preview) preview.classList.remove('hidden');
-
-            try {
-                const resp = await fetch('/api/regex/presets/resolve', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ preset_id: patternId })
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    if (countEl) countEl.textContent = `${data.count} channels`;
-                    const preset = data.preset;
-                } else {
-                    if (countEl) countEl.textContent = data.error || 'Unable to resolve';
-                }
-            } catch (e) {
-                if (countEl) countEl.textContent = `Unable to resolve: ${e.message}`;
-            }
-        }
-
-        function loadSavedPatternIntoRunStep(event) {
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
-            const patternId = document.getElementById('saved-pattern-quick-select')?.value || '';
-            if (!patternId) return;
-
-            setSavedPatternSelection(patternId);
-            goToStep3();
-        }
-
-        async function runSavedPatternPipeline(event) {
-            const clickedBtn = getClickedButton(event);
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
-            const patternId = document.getElementById('saved-pattern-select')?.value || '';
-            if (!patternId) return;
-            const pattern = savedPatterns.find(p => p.id === patternId);
-
-            // UI feedback
-            renderOptimisticStartingJob('pattern_refresh_full_cleanup', pattern?.name || 'Saved job', 'Resolving channels…');
-            // User initiated a job — bring the Current Job card into view (centered).
-            const scrollToken = requestAutoScrollToCurrentJob();
-            maybeAutoScrollToCurrentJob(scrollToken);
-
-            // Start job directly with the saved pattern id.
-            const payload = {
-                job_type: 'pattern_refresh_full_cleanup',
-                regex_preset_id: patternId
-            };
-
-            try {
-                // Button loading state (best-effort)
-                if (clickedBtn) {
-                    clickedBtn.dataset.jobType = 'pattern_refresh_full_cleanup';
-                    setButtonLoading(clickedBtn, true);
-                }
-
-                const response = await fetch('/api/start-job', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(payload)
-                });
-                const data = await response.json();
-                if (data.success) {
-                    currentJobId = data.job_id;
-                    lastTerminalJobId = null;
-                    document.getElementById('current-job-card').classList.remove('hidden');
-                    if (data.job) {
-                        const reconciled = reconcileJobForRender(normalizeJobStatus(data.job));
-                        renderCurrentJob(reconciled);
-                    }
-                    if (jobCheckInterval) clearInterval(jobCheckInterval);
-                    jobCheckInterval = setInterval(() => checkJob(currentJobId), 2000);
-                    checkJob(currentJobId);
-                    maybeAutoScrollToCurrentJob(currentJobId);
-                } else {
-                    alert('Failed to start saved job: ' + (data.error || 'Unknown error'));
-                }
-            } catch (e) {
-                alert('Failed to start saved job: ' + e.message);
-            } finally {
-                // Always restore the button even if the request errored/hung.
-                if (clickedBtn) setButtonLoading(clickedBtn, false);
-            }
-        }
-
-        async function deleteSelectedSavedPattern(event) {
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
-
-            const select = document.getElementById('saved-pattern-select');
-            const patternId = select?.value || '';
-            if (!patternId) return;
-
-            const pattern = savedPatterns.find(p => String(p?.id) === String(patternId));
-            await deleteSavedJob(patternId, pattern?.name || 'Saved job');
-
-            // Best-effort reset in case the browser holds a stale selected value.
-            if (select) select.value = '';
-            await onSavedPatternSelected();
-        }
-        
         // Load channel groups
         async function loadGroups() {
             try {
@@ -2207,7 +1843,7 @@
         function jobTypeLabel(jobType) {
             return {
                 refresh_optimize: 'Refresh Channel Streams',
-                pattern_refresh_full_cleanup: 'Saved Job (Refresh + QC)',
+                pattern_refresh_full_cleanup: 'Refresh + QC',
                 full_cleanup_plan: 'Quality Check (Read-Only)',
                 full_cleanup: 'Quality Check (Apply Changes)',
                 full: 'Full Job',
@@ -3033,7 +2669,7 @@
                 
                 let typeLabel = {
                     'refresh_optimize': 'Refresh',
-                    'pattern_refresh_full_cleanup': 'Saved Job',
+                    'pattern_refresh_full_cleanup': 'Refresh + QC',
                     'full_cleanup_plan': 'Quality Check (Read-Only)',
                     'full_cleanup': 'Quality Check (Apply Changes)',
                     'full': 'Full Job',

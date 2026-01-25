@@ -39,7 +39,6 @@ Dispatcharr-Maid is a companion tool for Dispatcharr that enriches, analyses, an
 ## Jobs and Run Jobs
 
 Jobs define what to run and how to run it.
-Saved Jobs can be viewed, executed, and deleted from the Run Jobs screen.
 
 ## Notes on Analysis
 
