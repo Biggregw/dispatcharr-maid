@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -2095,6 +2096,198 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
         return summary
     logging.info("Reordering complete!")
 
+# Refresh learning DB: stored at data/refresh_learning.sqlite (per working dir).
+# Tables:
+#   refresh_learning_decisions: raw accept/reject events per channel/signature.
+#   refresh_learning_stats: per-channel aggregate counts used for preview annotations.
+def _refresh_learning_db_path(config):
+    """Return the sqlite path for refresh learning decisions/stats."""
+    return config.resolve_path('data/refresh_learning.sqlite')
+
+
+def _normalize_refresh_signature(stream_name):
+    """Normalize stream names into deterministic signatures for refresh learning."""
+    if not isinstance(stream_name, str):
+        return ""
+    cleaned = stream_name.strip().lower()
+    cleaned = re.sub(r'[^a-z0-9\s]', '', cleaned)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
+
+
+def _ensure_refresh_learning_db(config):
+    """Ensure refresh learning sqlite schema exists."""
+    db_path = _refresh_learning_db_path(config)
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS refresh_learning_decisions (
+                channel_id TEXT NOT NULL,
+                stream_id TEXT,
+                stream_name TEXT,
+                stream_signature TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                decided_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS refresh_learning_stats (
+                channel_id TEXT NOT NULL,
+                stream_signature TEXT NOT NULL,
+                accept_count INTEGER NOT NULL DEFAULT 0,
+                reject_count INTEGER NOT NULL DEFAULT 0,
+                last_seen_at TEXT NOT NULL,
+                PRIMARY KEY (channel_id, stream_signature)
+            )
+            """
+        )
+        conn.commit()
+    except Exception:
+        conn.close()
+        raise
+    return conn
+
+
+def _load_refresh_learning_stats(config, channel_id):
+    """Load per-channel learning stats keyed by signature."""
+    stats = {}
+    try:
+        conn = _ensure_refresh_learning_db(config)
+    except Exception as exc:
+        logging.warning("Refresh learning DB unavailable: %s", exc)
+        return stats
+
+    try:
+        cursor = conn.execute(
+            """
+            SELECT stream_signature, accept_count, reject_count
+            FROM refresh_learning_stats
+            WHERE channel_id = ?
+            """,
+            (str(channel_id),)
+        )
+        for signature, accept_count, reject_count in cursor.fetchall():
+            stats[signature] = {
+                'accept_count': int(accept_count or 0),
+                'reject_count': int(reject_count or 0),
+            }
+    finally:
+        conn.close()
+    return stats
+
+
+def _build_refresh_learning_metadata(signature, stats):
+    """Compute learning metadata for a given signature."""
+    accept_count = 0
+    reject_count = 0
+    if signature and signature in stats:
+        entry = stats[signature] or {}
+        accept_count = int(entry.get('accept_count', 0) or 0)
+        reject_count = int(entry.get('reject_count', 0) or 0)
+
+    confidence = (accept_count + 1) / (accept_count + reject_count + 2)
+    has_reject = reject_count > 0
+    overrode_reject = has_reject and confidence >= 0.9
+
+    return {
+        'checked_default': True,
+        'learned_accept': accept_count > 0,
+        'learned_reject': has_reject and not overrode_reject,
+        'overrode_reject': overrode_reject,
+        'confidence': float(confidence),
+        'signature': signature,
+    }
+
+
+def _record_refresh_learning_decisions(config, channel_id, matching_streams, allowed_set):
+    """Persist accept/reject decisions for refresh candidates."""
+    if allowed_set is None:
+        return
+
+    decisions = []
+    decided_at = datetime.now().isoformat()
+
+    for stream in matching_streams:
+        stream_id = stream.get('id')
+        stream_name = stream.get('name')
+        signature = stream.get('signature') or _normalize_refresh_signature(stream_name)
+        if not signature:
+            continue
+        decision = 'accept' if (stream_id is not None and int(stream_id) in allowed_set) else 'reject'
+        decisions.append({
+            'channel_id': str(channel_id),
+            'stream_id': str(stream_id) if stream_id is not None else None,
+            'stream_name': stream_name,
+            'signature': signature,
+            'decision': decision,
+            'decided_at': decided_at,
+        })
+
+    if not decisions:
+        return
+
+    try:
+        conn = _ensure_refresh_learning_db(config)
+    except Exception as exc:
+        logging.warning("Failed to open refresh learning DB: %s", exc)
+        return
+
+    try:
+        conn.execute("BEGIN")
+        conn.executemany(
+            """
+            INSERT INTO refresh_learning_decisions (
+                channel_id, stream_id, stream_name, stream_signature, decision, decided_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    entry['channel_id'],
+                    entry['stream_id'],
+                    entry['stream_name'],
+                    entry['signature'],
+                    entry['decision'],
+                    entry['decided_at'],
+                )
+                for entry in decisions
+            ]
+        )
+
+        for entry in decisions:
+            accept_delta = 1 if entry['decision'] == 'accept' else 0
+            reject_delta = 1 if entry['decision'] == 'reject' else 0
+            conn.execute(
+                """
+                INSERT INTO refresh_learning_stats (
+                    channel_id, stream_signature, accept_count, reject_count, last_seen_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(channel_id, stream_signature) DO UPDATE SET
+                    accept_count = accept_count + ?,
+                    reject_count = reject_count + ?,
+                    last_seen_at = excluded.last_seen_at
+                """,
+                (
+                    entry['channel_id'],
+                    entry['signature'],
+                    accept_delta,
+                    reject_delta,
+                    entry['decided_at'],
+                    accept_delta,
+                    reject_delta,
+                )
+            )
+
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logging.warning("Failed to persist refresh learning decisions: %s", exc)
+    finally:
+        conn.close()
+
 def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None):
     """
     Find and add all matching streams from all providers for a specific channel.
@@ -2202,9 +2395,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     
     logging.info(f"Checking {len(all_streams)} streams from all providers...")
     
-    # Preview responses can become very large when regex override is broad.
-    # Cap the returned stream list while still computing accurate counts.
-    _PREVIEW_STREAM_LIMIT = 250
+    # Preview responses should list all candidates that pass base matching.
+    _PREVIEW_STREAM_LIMIT = None
 
     total_matching = 0
     preview_truncated = False
@@ -2224,6 +2416,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     filtered_count = 0      # accurate count after all filtering (and allowed_set)
 
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
+    learning_stats = _load_refresh_learning_stats(config, channel_id) if preview else {}
+    matching_streams = []
 
     for stream in all_streams:
         stream_name = stream.get('name', '')
@@ -2238,6 +2432,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             continue
 
         total_matching += 1
+        signature = _normalize_refresh_signature(stream_name)
+        matching_streams.append({
+            'id': stream_id,
+            'name': stream_name,
+            'signature': signature,
+        })
 
         if allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
             continue
@@ -2257,7 +2457,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         }
 
         if preview:
-            if len(preview_streams) < _PREVIEW_STREAM_LIMIT:
+            detailed_stream.update(_build_refresh_learning_metadata(signature, learning_stats))
+            if _PREVIEW_STREAM_LIMIT is None or len(preview_streams) < _PREVIEW_STREAM_LIMIT:
                 preview_streams.append(detailed_stream)
             else:
                 preview_truncated = True
@@ -2300,6 +2501,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     if preview:
         return result
+
+    if allowed_set is not None:
+        _record_refresh_learning_decisions(config, channel_id, matching_streams, allowed_set)
 
     # Update channel with new stream list
     try:
