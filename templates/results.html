@@ -409,7 +409,6 @@
 
             const chosen = [];
             if (meta.group_names) chosen.push(`<div><strong>Selected</strong>: ${escapeHtml(String(meta.group_names))}${meta.channel_names ? ` — ${escapeHtml(String(meta.channel_names))}` : ''}</div>`);
-            if (meta.regex_preset_name) chosen.push(`<div><strong>Saved Job</strong>: ${escapeHtml(String(meta.regex_preset_name))}</div>`);
             if (meta.selection_pattern_name) chosen.push(`<div><strong>Pattern</strong>: ${escapeHtml(String(meta.selection_pattern_name))}</div>`);
 
             const runLines = [

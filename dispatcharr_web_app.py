@@ -456,7 +456,7 @@ def _generate_regex_preset_name(base_search_text, regex, regex_mode):
         return f"{primary} – Primary Match"
     if advanced:
         return f"{advanced} – {descriptor}"
-    return 'Saved Job'
+    return 'Regex Preset'
 
 
 def _replace_or_insert_preset(presets, preset, preserve_existing_name=False):
@@ -3551,22 +3551,6 @@ def api_start_job():
                     stream_name_regex = filters.get('refresh_stream_name_regex')
             except Exception:
                 stream_name_regex = None
-
-        try:
-            _maybe_auto_save_job_request({
-                'groups': groups,
-                'channels': channels,
-                'base_search_text': base_search_text,
-                'include_filter': include_filter,
-                'exclude_filter': exclude_filter,
-                'exclude_plus_one': exclude_plus_one,
-                'stream_name_regex': stream_name_regex,
-                'stream_name_regex_override': stream_name_regex_override,
-                'regex_preset_name': regex_preset_name or data.get('regex_preset_name'),
-                'name': data.get('name')
-            })
-        except Exception:
-            logging.debug("Auto-saving job as preset failed", exc_info=True)
 
         # Create job
         job_id = str(uuid.uuid4())

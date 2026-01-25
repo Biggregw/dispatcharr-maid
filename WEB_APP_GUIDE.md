@@ -53,7 +53,6 @@ This step is where you define and run Jobs. The matching model is always:
 - **Refresh Channel Streams** is intended for **one channel at a time** so you can inspect the preview list.
 - Click **Refresh Channel Streams**, adjust the matching chain above, and preview the results.
 - Untick any streams you do *not* want, then click **Add Selected Streams**.
-- Jobs are saved automatically when you run them. You can still click **Save Job Definition** from the preview to capture one-off tweaks, then manage the Saved Job from the Run Jobs screen (view, re-run, rename via re-saving, or delete).
 
 Dispatcharr-Maid assumes client-side decode (e.g., Firestick) with proxied playback only; FFmpeg capability testing and transcoding are out of scope.
 
