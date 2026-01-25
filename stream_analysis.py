@@ -2097,109 +2097,22 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
 
 def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None):
     """
-    Find and add all matching streams from all providers for a specific channel
+    Find and add all matching streams from all providers for a specific channel.
+
+    Refresh matching is strictly literal: only exact stream names provided by the user or
+    injected from the channel's existing streams are considered matches.
 
     Args:
         api: DispatcharrAPI instance
         config: Config instance
         channel_id: ID of the channel to refresh
-        base_search_text: Optional override for the channel name used when matching streams
-        include_filter: Optional comma-separated wildcards (e.g., "york*,lond*")
-        exclude_filter: Optional comma-separated exclusions (e.g., "lincoln*")
-        allowed_stream_ids: Optional explicit selection from a prior preview. A full scan still
-            happens to enforce channel filters (regex, include/exclude, timeshift parity) and to
-            regenerate counts/preview data after re-applying those rules.
+        base_search_text: Optional literal search text supplied by the user
+        include_filter: Unused (legacy)
+        exclude_filter: Unused (legacy)
+        allowed_stream_ids: Optional explicit selection from a prior preview.
     Returns:
         dict with stats about streams found/added
     """
-    import re
-
-    # Performance: precompile regexes used in matching loops
-    _QUALITY_RE = re.compile(r'\b(?:hd|sd|fhd|4k|uhd|hevc|h264|h265)\b', flags=re.IGNORECASE)
-    _TIMESHIFT_RE = re.compile(r'\+\d')
-    
-    def normalize(text):
-        """Remove spaces and lowercase"""
-        return text.replace(" ", "").lower()
-    
-    def strip_quality(text):
-        """Remove quality indicators"""
-        return _QUALITY_RE.sub('', text).strip()
-
-    def compile_wildcard_filter(filter_text):
-        """
-        Compile a comma-separated glob filter (supports '*' wildcard) into regex objects.
-        Uses a safe glob-to-regex conversion (escapes all non-wildcard characters).
-        """
-        if not filter_text:
-            return []
-        parts = [p.strip().lower() for p in filter_text.split(',') if p.strip()]
-        regexes = []
-        for part in parts:
-            # Convert glob (*) to regex (.*), escape everything else
-            pat = re.escape(part).replace(r'\*', '.*')
-            regexes.append(re.compile(pat))
-        return regexes
-
-    # Optional regex for stream name filtering (applied after base match + wildcard include/exclude).
-    _stream_name_re = None
-    if isinstance(stream_name_regex, str) and stream_name_regex.strip():
-        try:
-            _stream_name_re = re.compile(stream_name_regex.strip(), flags=re.IGNORECASE)
-        except re.error as exc:
-            logging.error(f"Invalid stream_name_regex ignored: {exc}")
-            _stream_name_re = None
-
-    # Optional regex OVERRIDE for stream name matching.
-    # When set, this replaces the base match + include/exclude (+ timeshift) rules.
-    _stream_name_override_re = None
-    if isinstance(stream_name_regex_override, str) and stream_name_regex_override.strip():
-        try:
-            _stream_name_override_re = re.compile(stream_name_regex_override.strip(), flags=re.IGNORECASE)
-            logging.info("Using stream-name REGEX OVERRIDE (base/include/exclude/+1 rules ignored).")
-        except re.error as exc:
-            logging.error(f"Invalid stream_name_regex_override: {exc}")
-            return {'error': f'Invalid regex override: {exc}'}
-
-    # Precompute constants used for all stream comparisons (initialized later,
-    # once `search_name` is known).
-    _selected_normalized = None
-    _selected_has_timeshift = None
-    _include_regexes = None
-    _exclude_regexes = None
-    
-    def matches_stream(stream_name):
-        """Check if stream matches the selected channel (fast path; precomputed filters)."""
-        if _stream_name_override_re is not None:
-            return bool(_stream_name_override_re.search(stream_name))
-
-        stream_normalized = normalize(stream_name)
-        
-        if _selected_normalized not in stream_normalized:
-            return False
-        
-        stream_has_timeshift = bool(_TIMESHIFT_RE.search(stream_name))
-        
-        if _selected_has_timeshift and not stream_has_timeshift:
-            return False
-        if not _selected_has_timeshift and stream_has_timeshift:
-            return False
-        
-        if _include_regexes:
-            stream_lower = stream_name.lower()
-            if not any(r.search(stream_lower) for r in _include_regexes):
-                return False
-        
-        if _exclude_regexes:
-            stream_lower = stream_name.lower()
-            if any(r.search(stream_lower) for r in _exclude_regexes):
-                return False
-
-        if _stream_name_re and not _stream_name_re.search(stream_name):
-            return False
-        
-        return True
-    
     logging.info(f"Refreshing channel {channel_id} from all providers...")
     
     # Get channel details (allow caller-provided cache to avoid N API calls).
@@ -2224,27 +2137,34 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         return {'error': 'Channel not found'}
     
     channel_name = target_channel.get('name', '')
-    search_name = channel_name if base_search_text is None else base_search_text
+    search_name = base_search_text if base_search_text is not None else ''
     logging.info(f"Channel: {channel_name}")
-    if base_search_text is not None:
-        logging.info(f"Using custom base search text: {search_name}")
-    
-    if _stream_name_override_re is None:
-        if include_filter:
-            logging.info(f"Include filter: {include_filter}")
-        if exclude_filter:
-            logging.info(f"Exclude filter: {exclude_filter}")
-
-    # Precompute match constants once (used inside the stream loop).
-    # In override mode these values are unused, but we still set safe defaults.
-    _selected_normalized = normalize(strip_quality(search_name))
-    _selected_has_timeshift = bool(_TIMESHIFT_RE.search(search_name))
-    _include_regexes = [] if _stream_name_override_re is not None else compile_wildcard_filter(include_filter)
-    _exclude_regexes = [] if _stream_name_override_re is not None else compile_wildcard_filter(exclude_filter)
+    if isinstance(search_name, str) and search_name.strip():
+        logging.info(f"Using literal search text: {search_name}")
     
     # Get current streams for this channel
     current_streams = api.fetch_channel_streams(channel_id)
     current_stream_ids = {s['id'] for s in current_streams} if current_streams else set()
+    injected_includes = []
+    seen_injected = set()
+    for stream in current_streams or []:
+        name = stream.get('name')
+        if not isinstance(name, str) or not name:
+            continue
+        if name in seen_injected:
+            continue
+        seen_injected.add(name)
+        injected_includes.append(name)
+
+    literal_terms = set(injected_includes)
+    if isinstance(search_name, str) and search_name.strip():
+        literal_terms.add(search_name)
+
+    def matches_stream(stream_name):
+        """Check if stream matches the selected channel using strict literal rules."""
+        if not isinstance(stream_name, str):
+            return False
+        return stream_name in literal_terms
 
     def _stream_snapshot(stream):
         if not isinstance(stream, dict):
@@ -2300,6 +2220,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     # detailed streams for preview/UI.
     filtered_streams = []   # used when preview=False (full set)
     preview_streams = []    # capped list returned to UI when preview=True
+    filtered_ids = []       # full list of matched stream IDs (used for counts/deltas)
     filtered_count = 0      # accurate count after all filtering (and allowed_set)
 
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
@@ -2322,6 +2243,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             continue
 
         filtered_count += 1
+        if stream_id is not None:
+            filtered_ids.append(stream_id)
 
         detailed_stream = {
             'id': stream_id,
@@ -2343,6 +2266,11 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     logging.info(f"Found {total_matching} matching streams")
 
+    filtered_id_set = set(filtered_ids)
+    added_ids = filtered_id_set - current_stream_ids
+    removed_ids = current_stream_ids - filtered_id_set
+    no_change = len(added_ids) == 0 and len(removed_ids) == 0
+
     final_stream_ids = [s['id'] for s in filtered_streams] if not preview else []
     previous_streams = [_stream_snapshot(s) for s in (current_streams or [])]
     final_streams = filtered_streams if not preview else preview_streams
@@ -2356,8 +2284,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         'total_matching': total_matching,
         'previous_count': len(current_stream_ids),
         'new_count': filtered_count if preview else len(final_stream_ids),
-        'removed': len(current_stream_ids),
-        'added': filtered_count if preview else len(final_stream_ids),
+        'removed': len(removed_ids),
+        'added': len(added_ids),
         'streams': preview_streams if preview else filtered_streams,
         'channel_name': channel_name,
         'base_search_text': search_name,
@@ -2365,7 +2293,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         'preview_truncated': bool(preview_truncated) if preview else False,
         'previous_streams': previous_streams,
         'final_streams': final_streams,
-        'final_stream_ids': final_stream_ids
+        'final_stream_ids': final_stream_ids,
+        'no_change': no_change,
+        'injected_includes': injected_includes if preview else None
     }
 
     if preview:

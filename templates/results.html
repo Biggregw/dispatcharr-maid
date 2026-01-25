@@ -399,14 +399,13 @@
             const channelIds = Array.isArray(selection.specific_channel_ids) ? selection.specific_channel_ids : [];
             const nameRegex = selection.channel_name_regex || '';
             const numRegex = selection.channel_number_regex || '';
-            const refreshRegex = selection.refresh_stream_name_regex || '';
-
             const selectionLines = [];
             if (groupIds.length) selectionLines.push(`<div><strong>Groups (config)</strong>: ${escapeHtml(groupIds.join(', '))}</div>`);
             if (channelIds.length) selectionLines.push(`<div><strong>Specific channels (config)</strong>: ${escapeHtml(channelIds.slice(0, 50).join(', '))}${channelIds.length > 50 ? '…' : ''}</div>`);
-            if (nameRegex) selectionLines.push(`<div><strong>Channel name regex</strong>: <code>${escapeHtml(nameRegex)}</code></div>`);
-            if (numRegex) selectionLines.push(`<div><strong>Channel number regex</strong>: <code>${escapeHtml(numRegex)}</code></div>`);
-            if (refreshRegex) selectionLines.push(`<div><strong>Refresh stream regex</strong>: <code>${escapeHtml(refreshRegex)}</code></div>`);
+            if (meta.job_type !== 'refresh') {
+                if (nameRegex) selectionLines.push(`<div><strong>Channel name regex</strong>: <code>${escapeHtml(nameRegex)}</code></div>`);
+                if (numRegex) selectionLines.push(`<div><strong>Channel number regex</strong>: <code>${escapeHtml(numRegex)}</code></div>`);
+            }
 
             const chosen = [];
             if (meta.group_names) chosen.push(`<div><strong>Selected</strong>: ${escapeHtml(String(meta.group_names))}${meta.channel_names ? ` — ${escapeHtml(String(meta.channel_names))}` : ''}</div>`);
@@ -423,12 +422,7 @@
             ].filter(Boolean);
 
             const refreshLines = [];
-            if (meta.base_search_text) refreshLines.push(`<div><strong>Primary Match</strong>: ${escapeHtml(String(meta.base_search_text))}</div>`);
-            if (meta.include_filter) refreshLines.push(`<div><strong>Include filter</strong>: ${escapeHtml(String(meta.include_filter))}</div>`);
-            if (meta.exclude_filter) refreshLines.push(`<div><strong>Exclude filter</strong>: ${escapeHtml(String(meta.exclude_filter))}</div>`);
-            if (meta.exclude_plus_one === true) refreshLines.push(`<div><strong>Exclude +1</strong>: true</div>`);
-            if (meta.stream_name_regex) refreshLines.push(`<div><strong>Advanced Regex (layered)</strong>: <code>${escapeHtml(String(meta.stream_name_regex))}</code></div>`);
-            if (meta.stream_name_regex_override) refreshLines.push(`<div><strong>Advanced Regex (regex-only)</strong>: <code>${escapeHtml(String(meta.stream_name_regex_override))}</code></div>`);
+            if (meta.base_search_text) refreshLines.push(`<div><strong>Literal search text</strong>: ${escapeHtml(String(meta.base_search_text))}</div>`);
 
             const sections = []
                 .concat(chosen.length ? [`<div style="margin-bottom:10px;">${chosen.join('')}</div>`] : [])
@@ -645,10 +639,10 @@
                     document.getElementById('stat-total').textContent = r.total_matching.toLocaleString();
                     document.querySelector('#stat-total').previousElementSibling.textContent = 'Total Matching Streams Found';
                     
-                    document.getElementById('stat-success').textContent = r.new_count.toLocaleString();
+                    document.getElementById('stat-success').textContent = (r.added || 0).toLocaleString();
                     document.querySelector('#stat-success').previousElementSibling.textContent = 'Streams Added';
                     
-                    document.getElementById('stat-failed').textContent = r.previous_count.toLocaleString();
+                    document.getElementById('stat-failed').textContent = (r.removed || 0).toLocaleString();
                     document.querySelector('#stat-failed').previousElementSibling.textContent = 'Streams Removed';
                     document.querySelector('#stat-failed').classList.remove('failed');
                     document.querySelector('#stat-failed').style.color = '#718096';
@@ -662,18 +656,6 @@
                         breakdownCard.style.display = 'none';
                     }
                     
-                    // Add filter info if present
-                    if (r.include_filter || r.exclude_filter) {
-                        const filterCard = document.createElement('div');
-                        filterCard.className = 'card';
-                        filterCard.innerHTML = `
-                            <h2>🔍 Filters Applied</h2>
-                            ${r.include_filter ? `<p><strong>Include:</strong> ${r.include_filter}</p>` : ''}
-                            ${r.exclude_filter ? `<p><strong>Exclude:</strong> ${r.exclude_filter}</p>` : ''}
-                        `;
-                        document.querySelectorAll('.card')[0].after(filterCard);
-                    }
-
                     renderRefreshBreakdown(r);
 
                     return;

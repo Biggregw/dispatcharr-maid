@@ -847,15 +847,6 @@ def _build_config_from_job(job):
     return Config('config.yaml')
 
 
-def _build_exclude_filter(exclude_filter, exclude_plus_one):
-    filters = [item.strip() for item in (exclude_filter or '').split(',') if item.strip()]
-    if exclude_plus_one:
-        plus_one_pattern = r'\+ ?1'
-        if plus_one_pattern not in filters:
-            filters.append(plus_one_pattern)
-    return ','.join(filters) if filters else None
-
-
 def _ensure_provider_map(api, config):
     """
     Ensure provider_map.json exists in the workspace.
@@ -2199,12 +2190,6 @@ def run_job_worker(job, api, config):
                 # Avoid N calls to /api/channels/channels/ by caching channel metadata once.
                 all_channels = api.fetch_channels()
 
-                # Use global config default regex for refresh (if set); job may override.
-                filters = config.get('filters') or {}
-                stream_name_regex = getattr(job, 'stream_name_regex', None)
-                if stream_name_regex is None and isinstance(filters, dict):
-                    stream_name_regex = filters.get('refresh_stream_name_regex')
-
                 for idx, channel_id in enumerate(channels_to_refresh, start=1):
                     if job.cancel_requested:
                         job.status = 'cancelled'
@@ -2214,9 +2199,7 @@ def run_job_worker(job, api, config):
                     # Only apply per-channel base/include/exclude overrides when refreshing a single channel.
                     base_search_text = job.base_search_text if (len(channels_to_refresh) == 1) else None
                     include_filter = job.include_filter if (len(channels_to_refresh) == 1) else None
-                    exclude_filter = None
-                    if len(channels_to_refresh) == 1:
-                        exclude_filter = _build_exclude_filter(job.exclude_filter, job.exclude_plus_one)
+                    exclude_filter = job.exclude_filter if (len(channels_to_refresh) == 1) else None
                     result = refresh_channel_streams(
                         api,
                         config,
@@ -2226,8 +2209,6 @@ def run_job_worker(job, api, config):
                         exclude_filter=exclude_filter,
                         allowed_stream_ids=None,
                         preview=False,
-                        stream_name_regex=stream_name_regex,
-                        stream_name_regex_override=getattr(job, 'stream_name_regex_override', None),
                         all_streams_override=all_streams,
                         all_channels_override=all_channels,
                     )
@@ -2584,22 +2565,14 @@ def run_job_worker(job, api, config):
             
             job.current_step = 'Searching all providers for matching streams...'
             _job_set_stage(job, 'refresh', 'Refresh', total=1)
-            effective_exclude_filter = _build_exclude_filter(job.exclude_filter, job.exclude_plus_one)
-            filters = config.get('filters') or {}
-            stream_name_regex = getattr(job, 'stream_name_regex', None)
-            if stream_name_regex is None and isinstance(filters, dict):
-                stream_name_regex = filters.get('refresh_stream_name_regex')
-
             refresh_result = refresh_channel_streams(
                 api,
                 config,
                 channel_id,
                 job.base_search_text,
                 job.include_filter,
-                effective_exclude_filter,
-                job.selected_stream_ids,
-                stream_name_regex=stream_name_regex,
-                stream_name_regex_override=job.stream_name_regex_override
+                job.exclude_filter,
+                job.selected_stream_ids
             )
             
             if 'error' in refresh_result:
@@ -2610,21 +2583,20 @@ def run_job_worker(job, api, config):
             # Done - just report what happened
             removed = refresh_result.get('removed', 0)
             added = refresh_result.get('added', 0)
-            job.current_step = f"Replaced {removed} old streams with {added} matching streams"
+            new_count = refresh_result.get('new_count', 0)
+            job.current_step = f"Updated channel streams: {new_count} matching stream(s) (removed {removed}, added {added})"
             _job_update_stage_progress(job, processed=1, total=1, failed=job.failed)
             
             # Store refresh-specific summary (skip CSV-based summary)
             job.result_summary = {
                 'job_type': 'refresh',
                 'channel_id': channel_id,
-                'previous_count': removed,
-                'new_count': added,
+                'previous_count': refresh_result.get('previous_count', 0),
+                'new_count': refresh_result.get('new_count', 0),
+                'added': refresh_result.get('added', 0),
+                'removed': refresh_result.get('removed', 0),
                 'total_matching': refresh_result.get('total_matching', 0),
-                'include_filter': job.include_filter,
-                'exclude_filter': effective_exclude_filter,
                 'base_search_text': refresh_result.get('base_search_text'),
-                'stream_name_regex': getattr(job, 'stream_name_regex', None),
-                'stream_name_regex_override': job.stream_name_regex_override,
                 'previous_streams': refresh_result.get('previous_streams'),
                 'final_streams': refresh_result.get('final_streams'),
                 'final_stream_ids': refresh_result.get('final_stream_ids'),
@@ -3444,9 +3416,6 @@ def api_refresh_preview():
         base_search_text = data.get('base_search_text')
         include_filter = data.get('include_filter')
         exclude_filter = data.get('exclude_filter')
-        exclude_plus_one = data.get('exclude_plus_one', False)
-        stream_name_regex = data.get('stream_name_regex')
-        stream_name_regex_override = data.get('stream_name_regex_override')
 
         if not channel_id:
             return jsonify({'success': False, 'error': 'Channel ID is required'}), 400
@@ -3456,22 +3425,14 @@ def api_refresh_preview():
         config = Config('config.yaml')
         provider_names = _load_provider_names(config)
 
-        if stream_name_regex is None:
-            filters = config.get('filters') or {}
-            if isinstance(filters, dict):
-                stream_name_regex = filters.get('refresh_stream_name_regex')
-
-        effective_exclude_filter = _build_exclude_filter(exclude_filter, exclude_plus_one)
         preview = refresh_channel_streams(
             api,
             config,
             int(channel_id),
             base_search_text,
             include_filter,
-            effective_exclude_filter,
+            exclude_filter,
             preview=True,
-            stream_name_regex=stream_name_regex,
-            stream_name_regex_override=stream_name_regex_override,
             provider_names=provider_names
         )
 
