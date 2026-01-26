@@ -2846,12 +2846,11 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         and selector.get('text').strip()
     ]
     injected_excludes = _load_refresh_exclusions(refresh_settings_config, channel_id)
-    has_explicit_excluded = bool(excluded_stream_names)
+    has_explicit_excluded = isinstance(excluded_stream_names, list) and len(excluded_stream_names) > 0
     if excluded_stream_names:
         _add_refresh_exclusions(refresh_settings_config, channel_id, excluded_stream_names)
         injected_excludes = _load_refresh_exclusions(refresh_settings_config, channel_id)
     elif allowed_stream_ids is not None:
-        excluded_stream_names = []
 
     def _stream_snapshot(stream):
         if not isinstance(stream, dict):
