@@ -2835,7 +2835,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             continue
         injected_includes.append(name)
 
-    selectors = _load_refresh_selectors(config, channel_id)
+    refresh_settings_config = Config('config.yaml')
+    selectors = _load_refresh_selectors(refresh_settings_config, channel_id)
     confirmed_selectors = [
         selector.get('text')
         for selector in selectors
@@ -2844,10 +2845,11 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         and isinstance(selector.get('text'), str)
         and selector.get('text').strip()
     ]
-    injected_excludes = _load_refresh_exclusions(config, channel_id)
+    injected_excludes = _load_refresh_exclusions(refresh_settings_config, channel_id)
+    has_explicit_excluded = excluded_stream_names is not None
     if excluded_stream_names:
-        _add_refresh_exclusions(config, channel_id, excluded_stream_names)
-        injected_excludes = _load_refresh_exclusions(config, channel_id)
+        _add_refresh_exclusions(refresh_settings_config, channel_id, excluded_stream_names)
+        injected_excludes = _load_refresh_exclusions(refresh_settings_config, channel_id)
     elif allowed_stream_ids is not None:
         excluded_stream_names = []
 
@@ -3183,7 +3185,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     previous_streams = [_stream_snapshot(s) for s in (current_streams or [])]
     final_streams = filtered_streams if not preview else preview_streams
 
-    if allowed_set is not None and excluded_stream_names is None:
+    if allowed_set is not None and has_explicit_excluded:
         rejected_names = []
         for stream in matching_streams:
             stream_id = stream.get('id')
@@ -3194,7 +3196,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             if not accepted:
                 rejected_names.append(stream_name)
         if rejected_names:
-            _add_refresh_exclusions(config, channel_id, rejected_names)
+            _add_refresh_exclusions(refresh_settings_config, channel_id, rejected_names)
     
     if (not preview and not final_stream_ids) or (preview and filtered_count == 0):
         logging.info("No streams remaining after filtering - channel will be emptied")
