@@ -2906,6 +2906,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
     matching_streams = []
+    excluded_streams = []
     matched_keys = set()
     selector_values = [str(s) for s in confirmed_selectors if isinstance(s, str)]
     selector_count = len(selector_values)
@@ -3016,6 +3017,18 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         else:
             filtered_streams.append(detailed_stream)
 
+    def _record_excluded_stream(stream, stream_name, stream_id, provider_id, provider_name, match_source):
+        if not preview:
+            return
+        excluded_streams.append({
+            'id': stream_id,
+            'name': stream_name,
+            'provider_id': provider_id,
+            'provider_name': provider_name,
+            'match_source': match_source,
+            'reason': 'excluded'
+        })
+
     def _matches_any_selector(stream_name):
         if not selector_values:
             return False
@@ -3043,6 +3056,14 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if not match_source:
             continue
         if stream_name.casefold() in injected_exclude_set:
+            _record_excluded_stream(
+                stream,
+                stream_name,
+                stream_id,
+                provider_id,
+                provider_name,
+                match_source,
+            )
             continue
 
         _add_matched_stream(
@@ -3060,15 +3081,23 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             stream_name = stream.get('name', '')
             if not isinstance(stream_name, str):
                 continue
-            if stream_name.casefold() not in injected_include_set:
-                continue
-            if stream_name.casefold() in injected_exclude_set:
-                continue
             stream_id = stream.get('id')
             provider_id = stream.get('m3u_account')
             provider_name = stream.get('m3u_account_name')
             if provider_name is None and provider_lookup and provider_id is not None:
                 provider_name = provider_lookup.get(str(provider_id))
+            if stream_name.casefold() not in injected_include_set:
+                continue
+            if stream_name.casefold() in injected_exclude_set:
+                _record_excluded_stream(
+                    stream,
+                    stream_name,
+                    stream_id,
+                    provider_id,
+                    provider_name,
+                    'include',
+                )
+                continue
             _add_matched_stream(
                 stream,
                 stream_name,
@@ -3124,7 +3153,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         'no_change': no_change,
         'injected_includes': injected_includes if preview else None,
         'injected_excludes': injected_excludes if preview else None,
-        'selector_count': selector_count if preview else None
+        'selector_count': selector_count if preview else None,
+        'excluded_streams': excluded_streams if preview else None
     }
 
     if preview:

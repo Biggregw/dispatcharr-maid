@@ -1230,7 +1230,8 @@
                     <button type="button" class="btn btn-back" id="refresh-select-all">Select all</button>
                     <button type="button" class="btn btn-back" id="refresh-deselect-all">Deselect all</button>
                 </div>
-                <div id="refresh-preview-exclusions" class="preview-meta" style="margin-bottom: 10px;"></div>
+                <div id="refresh-preview-exclusions" class="preview-meta" style="margin-bottom: 6px;"></div>
+                <div id="refresh-preview-excluded-matches" class="preview-meta" style="margin-bottom: 10px;"></div>
                 <div class="preview-list" id="refresh-preview-list"></div>
                 <div id="refresh-progress-container" class="alert alert-info hidden" style="margin-top: 15px;">
                     <div style="display: flex; align-items: center; gap: 10px;">
@@ -1935,6 +1936,7 @@
             const description = document.getElementById('refresh-preview-description');
             const summary = document.getElementById('refresh-preview-summary');
             const exclusionsContainer = document.getElementById('refresh-preview-exclusions');
+            const excludedMatchesContainer = document.getElementById('refresh-preview-excluded-matches');
 
             const selectorCount = Number(preview.selector_count || 0);
             const selectorLine = selectorCount
@@ -1957,6 +1959,23 @@
                 } else {
                     const label = exclusions.length === 1 ? 'exclusion' : 'exclusions';
                     exclusionsContainer.innerHTML = `<strong>${exclusions.length}</strong> ${label} applied (exact name match): ${exclusions.map(name => escapeHtml(name)).join(', ')}`;
+                }
+            }
+
+            if (excludedMatchesContainer) {
+                const excludedMatches = Array.isArray(preview.excluded_streams) ? preview.excluded_streams.filter(item => item && item.name) : [];
+                if (!excludedMatches.length) {
+                    excludedMatchesContainer.textContent = 'No matching streams were filtered out by exclusions.';
+                } else {
+                    const label = excludedMatches.length === 1 ? 'match' : 'matches';
+                    const rendered = excludedMatches.slice(0, 6).map(item => {
+                        const provider = item.provider_name || (item.provider_id ? `Provider ID ${item.provider_id}` : 'Unknown provider');
+                        return `${escapeHtml(item.name)} (${escapeHtml(provider)})`;
+                    });
+                    const remainder = excludedMatches.length > rendered.length
+                        ? ` +${excludedMatches.length - rendered.length} more`
+                        : '';
+                    excludedMatchesContainer.innerHTML = `<strong>${excludedMatches.length}</strong> ${label} excluded: ${rendered.join(', ')}${remainder}`;
                 }
             }
 
