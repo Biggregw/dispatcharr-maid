@@ -2939,9 +2939,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     selector_values = [str(s) for s in confirmed_selectors if isinstance(s, str)]
     selector_count = len(selector_values)
     injected_include_set = {name.casefold() for name in injected_includes if isinstance(name, str)}
-    injected_exclude_set = {name.casefold() for name in injected_excludes if isinstance(name, str)}
+    injected_exclude_set = {name for name in injected_excludes if isinstance(name, str)}
     pending_exclude_set = {
-        name.casefold()
+        name
         for name in (excluded_stream_names or [])
         if isinstance(name, str)
     }
@@ -3088,7 +3088,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
         if not match_source:
             continue
-        if stream_name.casefold() in injected_exclude_set:
+        if stream_name in injected_exclude_set:
             if allowed_set is not None:
                 if stream_id_key is not None and stream_id_key in allowed_set:
                     pass
@@ -3139,7 +3139,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
                     continue
             if stream_name.casefold() not in injected_include_set:
                 continue
-            if stream_name.casefold() in injected_exclude_set:
+            if stream_name in injected_exclude_set:
                 if allowed_set is not None:
                     if stream_id_key is not None and stream_id_key in allowed_set:
                         pass
