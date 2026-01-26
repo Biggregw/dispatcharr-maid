@@ -48,6 +48,10 @@ from api_utils import DispatcharrAPI
 from provider_data import refresh_provider_data
 from stream_analysis import (
     refresh_channel_streams,
+    _load_refresh_selectors,
+    _save_refresh_selectors,
+    _load_refresh_exclusions,
+    _remove_refresh_exclusion,
     Config,
     fetch_streams,
     analyze_streams,
@@ -1624,7 +1628,7 @@ def _get_job_results(job_id):
 class Job:
     """Represents a running or completed job"""
 
-    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, stream_name_regex=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None):
+    def __init__(self, job_id, job_type, groups, channels=None, base_search_text=None, include_filter=None, exclude_filter=None, exclude_plus_one=False, group_names=None, channel_names=None, workspace=None, selected_stream_ids=None, excluded_stream_names=None, stream_name_regex=None, stream_name_regex_override=None, selection_pattern_id=None, selection_pattern_name=None, regex_preset_id=None, regex_preset_name=None):
         self.job_id = job_id
         self.job_type = job_type  # 'full', 'full_cleanup', 'fetch', 'analyze', etc.
         self.groups = groups
@@ -1636,6 +1640,7 @@ class Job:
         self.exclude_filter = exclude_filter
         self.exclude_plus_one = exclude_plus_one
         self.selected_stream_ids = selected_stream_ids
+        self.excluded_stream_names = excluded_stream_names
         self.stream_name_regex = stream_name_regex
         self.stream_name_regex_override = stream_name_regex_override
         self.selection_pattern_id = selection_pattern_id
@@ -1680,6 +1685,7 @@ class Job:
             'stream_name_regex': self.stream_name_regex,
             'stream_name_regex_override': self.stream_name_regex_override,
             'selected_stream_ids': self.selected_stream_ids,
+            'excluded_stream_names': self.excluded_stream_names,
             'exclude_plus_one': self.exclude_plus_one,
             'status': self.status,
             'progress': self.progress,
@@ -2572,7 +2578,8 @@ def run_job_worker(job, api, config):
                 job.base_search_text,
                 job.include_filter,
                 job.exclude_filter,
-                job.selected_stream_ids
+                job.selected_stream_ids,
+                excluded_stream_names=job.excluded_stream_names
             )
             
             if 'error' in refresh_result:
@@ -3444,6 +3451,41 @@ def api_refresh_preview():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/refresh-settings', methods=['GET', 'POST'])
+@login_required
+def api_refresh_settings():
+    """Load or persist per-channel refresh selectors and exclusions."""
+    try:
+        if request.method == 'GET':
+            channel_id = request.args.get('channel_id')
+        else:
+            data = request.get_json() or {}
+            channel_id = data.get('channel_id')
+
+        if not channel_id:
+            return jsonify({'success': False, 'error': 'Channel ID is required'}), 400
+
+        config = Config('config.yaml')
+
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            if 'selectors' in data:
+                selectors = data.get('selectors') or []
+                if not isinstance(selectors, list):
+                    return jsonify({'success': False, 'error': '"selectors" must be a list'}), 400
+                if len(selectors) > 4:
+                    return jsonify({'success': False, 'error': 'At most 4 selectors are allowed'}), 400
+                _save_refresh_selectors(config, channel_id, selectors)
+            elif 'remove_exclusion' in data:
+                _remove_refresh_exclusion(config, channel_id, data.get('remove_exclusion'))
+
+        selectors = _load_refresh_selectors(config, channel_id)
+        exclusions = _load_refresh_exclusions(config, channel_id)
+        return jsonify({'success': True, 'selectors': selectors, 'exclusions': exclusions})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/start-job', methods=['POST'])
 @login_required
 def api_start_job():
@@ -3466,6 +3508,7 @@ def api_start_job():
         exclude_filter = data.get('exclude_filter')
         exclude_plus_one = data.get('exclude_plus_one', False)
         selected_stream_ids = data.get('selected_stream_ids')
+        excluded_stream_names = data.get('excluded_stream_names')
         stream_name_regex = data.get('stream_name_regex')
         stream_name_regex_override = data.get('stream_name_regex_override')
 
@@ -3544,6 +3587,9 @@ def api_start_job():
         if not groups:
             return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
 
+        if excluded_stream_names is not None and not isinstance(excluded_stream_names, list):
+            return jsonify({'success': False, 'error': '"excluded_stream_names" must be a list or null'}), 400
+
         if stream_name_regex is None:
             try:
                 filters = Config('config.yaml').get('filters') or {}
@@ -3568,6 +3614,7 @@ def api_start_job():
             channel_names,
             str(workspace),
             selected_stream_ids,
+            excluded_stream_names,
             stream_name_regex,
             stream_name_regex_override,
             selection_pattern_id=selection_pattern_id,

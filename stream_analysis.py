@@ -2179,11 +2179,188 @@ def _ensure_refresh_learning_db(config):
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS refresh_selectors (
+                channel_id TEXT NOT NULL,
+                selector_index INTEGER NOT NULL,
+                selector_text TEXT NOT NULL,
+                source TEXT NOT NULL,
+                confirmed INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (channel_id, selector_index)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS refresh_exclusions (
+                channel_id TEXT NOT NULL,
+                stream_name TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                PRIMARY KEY (channel_id, stream_name)
+            )
+            """
+        )
         conn.commit()
     except Exception:
         conn.close()
         raise
-    return conn
+
+
+def _load_refresh_selectors(config, channel_id):
+    selectors = []
+    try:
+        conn = _ensure_refresh_learning_db(config)
+        rows = conn.execute(
+            """
+            SELECT selector_index, selector_text, source, confirmed
+            FROM refresh_selectors
+            WHERE channel_id = ?
+            ORDER BY selector_index ASC
+            """,
+            (str(channel_id),)
+        ).fetchall()
+        for row in rows:
+            selectors.append({
+                'text': row[1],
+                'source': row[2],
+                'confirmed': bool(row[3]),
+            })
+    except Exception as exc:
+        logging.warning("Failed to load refresh selectors: %s", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return selectors
+
+
+def _save_refresh_selectors(config, channel_id, selectors):
+    cleaned = []
+    for selector in selectors or []:
+        if not isinstance(selector, dict):
+            continue
+        text = selector.get('text')
+        if not isinstance(text, str) or not text.strip():
+            continue
+        source = selector.get('source') if selector.get('source') in ('user', 'system') else 'user'
+        confirmed = bool(selector.get('confirmed'))
+        cleaned.append({
+            'text': text,
+            'source': source,
+            'confirmed': confirmed,
+        })
+        if len(cleaned) >= 4:
+            break
+    try:
+        conn = _ensure_refresh_learning_db(config)
+        conn.execute(
+            "DELETE FROM refresh_selectors WHERE channel_id = ?",
+            (str(channel_id),)
+        )
+        now = datetime.now().isoformat()
+        for idx, selector in enumerate(cleaned):
+            conn.execute(
+                """
+                INSERT INTO refresh_selectors (
+                    channel_id, selector_index, selector_text, source, confirmed, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(channel_id),
+                    idx,
+                    selector['text'],
+                    selector['source'],
+                    1 if selector['confirmed'] else 0,
+                    now,
+                )
+            )
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logging.warning("Failed to persist refresh selectors: %s", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _load_refresh_exclusions(config, channel_id):
+    exclusions = []
+    try:
+        conn = _ensure_refresh_learning_db(config)
+        rows = conn.execute(
+            """
+            SELECT stream_name
+            FROM refresh_exclusions
+            WHERE channel_id = ?
+            ORDER BY LOWER(stream_name), stream_name
+            """,
+            (str(channel_id),)
+        ).fetchall()
+        exclusions = [row[0] for row in rows if row and isinstance(row[0], str)]
+    except Exception as exc:
+        logging.warning("Failed to load refresh exclusions: %s", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return exclusions
+
+
+def _add_refresh_exclusions(config, channel_id, stream_names):
+    names = [name for name in (stream_names or []) if isinstance(name, str) and name.strip()]
+    if not names:
+        return
+    try:
+        conn = _ensure_refresh_learning_db(config)
+        now = datetime.now().isoformat()
+        for name in names:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO refresh_exclusions (
+                    channel_id, stream_name, added_at
+                ) VALUES (?, ?, ?)
+                """,
+                (
+                    str(channel_id),
+                    name,
+                    now,
+                )
+            )
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logging.warning("Failed to persist refresh exclusions: %s", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _remove_refresh_exclusion(config, channel_id, stream_name):
+    if not isinstance(stream_name, str) or not stream_name.strip():
+        return
+    try:
+        conn = _ensure_refresh_learning_db(config)
+        conn.execute(
+            "DELETE FROM refresh_exclusions WHERE channel_id = ? AND stream_name = ?",
+            (str(channel_id), stream_name)
+        )
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logging.warning("Failed to remove refresh exclusion: %s", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _load_refresh_learning_stats(config, channel_id):
@@ -2596,22 +2773,22 @@ def _record_refresh_learning_decisions(config, channel_id, matching_streams, all
     finally:
         conn.close()
 
-def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None):
+def refresh_channel_streams(api, config, channel_id, base_search_text=None, include_filter=None, exclude_filter=None, allowed_stream_ids=None, preview=False, stream_name_regex=None, stream_name_regex_override=None, all_streams_override=None, all_channels_override=None, provider_names=None, excluded_stream_names=None):
     """
     Find and add all matching streams from all providers for a specific channel.
 
-    Refresh matching follows a strict baseline recall with optional regex-derived proposals.
-    Baseline stream names are recalled exactly (normalized) across providers, with regex
-    patterns derived mechanically from the baseline used only to propose additional candidates.
+    Refresh matching uses per-channel wildcard selectors and injected includes/excludes.
+    Confirmed selectors are ORed together and unioned, injected includes are added,
+    and injected excludes are subtracted last.
 
     Args:
         api: DispatcharrAPI instance
         config: Config instance
         channel_id: ID of the channel to refresh
-        base_search_text: Optional literal search text supplied by the user
-        include_filter: Unused (legacy)
-        exclude_filter: Unused (legacy)
-        allowed_stream_ids: Optional explicit selection from a prior preview.
+        base_search_text: Optional literal search text supplied by the user (unused).
+        include_filter: Unused (legacy).
+        exclude_filter: Unused (legacy).
+        allowed_stream_ids: Optional explicit selection from a prior preview (legacy).
     Returns:
         dict with stats about streams found/added
     """
@@ -2655,40 +2832,21 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             continue
         injected_includes.append(name)
 
-    baseline = _load_refresh_baseline(config, channel_id)
-    if not baseline:
-        _add_refresh_baseline_entries(config, channel_id, injected_includes)
-        baseline = _load_refresh_baseline(config, channel_id)
-
-    implicit_added_signatures = set()
-    implicit_added_names = []
-    for stream in current_streams or []:
-        name = stream.get('name')
-        if not isinstance(name, str) or not name:
-            continue
-        signature = _normalize_refresh_signature(name)
-        if not signature:
-            continue
-        if signature not in baseline:
-            implicit_added_signatures.add(signature)
-            implicit_added_names.append(name)
-
-    if implicit_added_names:
-        _add_refresh_baseline_entries(config, channel_id, implicit_added_names)
-        for name in implicit_added_names:
-            signature = _normalize_refresh_signature(name)
-            if signature:
-                baseline.setdefault(signature, name)
-
-    baseline_signatures = set(baseline.keys())
-    baseline_names = list(baseline.values())
-    rejected_signatures = _load_refresh_rejections(config, channel_id)
-    regex_trust = _load_refresh_regex_trust(config, channel_id)
-    regex_patterns = _build_refresh_regex_patterns(baseline_names, regex_trust)
-
-    literal_terms = set()
-    if isinstance(search_name, str) and search_name.strip():
-        literal_terms.add(search_name)
+    selectors = _load_refresh_selectors(config, channel_id)
+    confirmed_selectors = [
+        selector.get('text')
+        for selector in selectors
+        if isinstance(selector, dict)
+        and selector.get('confirmed')
+        and isinstance(selector.get('text'), str)
+        and selector.get('text').strip()
+    ]
+    injected_excludes = _load_refresh_exclusions(config, channel_id)
+    if excluded_stream_names:
+        _add_refresh_exclusions(config, channel_id, excluded_stream_names)
+        injected_excludes = _load_refresh_exclusions(config, channel_id)
+    elif allowed_stream_ids is not None:
+        excluded_stream_names = []
 
     def _stream_snapshot(stream):
         if not isinstance(stream, dict):
@@ -2726,7 +2884,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     
     logging.info(f"Checking {len(all_streams)} streams from all providers...")
     
-    # Preview responses should list all candidates that pass base matching.
+    # Preview responses should list all candidates that pass selector matching.
     _PREVIEW_STREAM_LIMIT = None
 
     total_matching = 0
@@ -2734,9 +2892,6 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
     allowed_set = None
     if allowed_stream_ids is not None:
-        # Even when the caller supplies a hand-picked list, we still iterate all streams so the
-        # selection is revalidated against the current channel filters and the preview counts are
-        # recomputed from the filtered universe.
         allowed_set = {int(sid) for sid in allowed_stream_ids}
 
     # Build filtered streams (used for actual update) and a capped list of
@@ -2749,6 +2904,16 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     provider_lookup = provider_names if isinstance(provider_names, dict) else None
     matching_streams = []
     matched_keys = set()
+    selector_values = [str(s) for s in confirmed_selectors if isinstance(s, str)]
+    selector_count = len(selector_values)
+    injected_include_set = {name.casefold() for name in injected_includes if isinstance(name, str)}
+    injected_exclude_set = {name.casefold() for name in injected_excludes if isinstance(name, str)}
+    pending_exclude_set = {
+        name.casefold()
+        for name in (excluded_stream_names or [])
+        if isinstance(name, str)
+    }
+    injected_exclude_set |= pending_exclude_set
 
     all_stream_ids = {stream.get('id') for stream in all_streams if stream.get('id') is not None}
     extra_current_streams = [
@@ -2758,46 +2923,52 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     if extra_current_streams:
         all_streams = list(all_streams) + extra_current_streams
 
-    def _tokenize_refresh_name(stream_name):
-        if not isinstance(stream_name, str):
-            return []
-        cleaned = stream_name.strip().lower()
-        cleaned = re.sub(r'[^a-z0-9\\s]', ' ', cleaned)
-        cleaned = re.sub(r'\\s+', ' ', cleaned).strip()
-        return [token for token in cleaned.split(' ') if token]
-
-    quality_tokens = {
-        'uhd',
-        'hd',
-        'fhd',
-        'sd',
-        '4k',
-        'hdr',
-        'hlg',
-        'dv',
-        'dolby',
-        'vision',
-        'hevc',
-        'h265',
-    }
-    region_tokens = {
-        'uk',
-        'us',
-        'usa',
-        'gb',
-        'eu',
-        'au',
-        'nz',
-        'ca',
-    }
-    allowed_extra_tokens = quality_tokens | region_tokens
+    def _wildcard_match(value, pattern):
+        if not isinstance(value, str) or not isinstance(pattern, str):
+            return False
+        value_cf = value.casefold()
+        pattern_cf = pattern.casefold()
+        if pattern_cf == '':
+            return value_cf == ''
+        if '*' not in pattern_cf:
+            return value_cf == pattern_cf
+        if pattern_cf == '*':
+            return True
+        parts = pattern_cf.split('*')
+        if not pattern_cf.startswith('*'):
+            first = parts.pop(0)
+            if not value_cf.startswith(first):
+                return False
+            start = len(first)
+        else:
+            start = 0
+        end_required = None
+        if not pattern_cf.endswith('*'):
+            end_required = parts.pop() if parts else ''
+        for part in parts:
+            if part == '':
+                continue
+            idx = value_cf.find(part, start)
+            if idx == -1:
+                return False
+            start = idx + len(part)
+        if end_required is not None:
+            if end_required == '':
+                return True
+            idx = value_cf.rfind(end_required)
+            if idx == -1:
+                return False
+            if idx < start:
+                return False
+            return value_cf.endswith(end_required)
+        return True
 
     def _stream_match_key(stream_id, stream_name, provider_id, provider_name):
         if stream_id is not None:
             return ('id', str(stream_id))
         return ('fallback', str(stream_name), str(provider_id), str(provider_name))
 
-    def _add_matched_stream(stream, stream_name, stream_id, provider_id, provider_name, signature, match_source, matched_pattern=None, regex_trusted=False):
+    def _add_matched_stream(stream, stream_name, stream_id, provider_id, provider_name, match_source):
         nonlocal total_matching, filtered_count, preview_truncated
         key = _stream_match_key(stream_id, stream_name, provider_id, provider_name)
         if key in matched_keys:
@@ -2808,17 +2979,8 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         matching_streams.append({
             'id': stream_id,
             'name': stream_name,
-            'signature': signature,
             'match_source': match_source,
-            'regex_pattern': matched_pattern,
         })
-
-        if match_source in ('literal', 'regex') and allowed_set is not None and (stream_id is None or int(stream_id) not in allowed_set):
-            return
-
-        filtered_count += 1
-        if stream_id is not None:
-            filtered_ids.append(stream_id)
 
         detailed_stream = {
             'id': stream_id,
@@ -2829,11 +2991,11 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             'resolution': stream.get('resolution'),
             'bitrate_kbps': stream.get('bitrate_kbps') or stream.get('ffmpeg_output_bitrate'),
             'match_source': match_source,
-            'regex_pattern': matched_pattern,
-            'regex_trusted': regex_trusted,
-            'checked_default': regex_trusted if match_source == 'regex' else True,
         }
 
+        filtered_count += 1
+        if stream_id is not None:
+            filtered_ids.append(stream_id)
         if preview:
             if _PREVIEW_STREAM_LIMIT is None or len(preview_streams) < _PREVIEW_STREAM_LIMIT:
                 preview_streams.append(detailed_stream)
@@ -2842,45 +3004,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         else:
             filtered_streams.append(detailed_stream)
 
-    provider_token_sets = [
-        set(_tokenize_refresh_name(stream.get('name', '')))
-        for stream in all_streams
-    ]
+    def _matches_any_selector(stream_name):
+        if not selector_values:
+            return False
+        return any(_wildcard_match(stream_name, selector) for selector in selector_values)
 
-    # PHASE 1: BASELINE RECALL
-    for baseline_name in baseline_names:
-        baseline_tokens = set(_tokenize_refresh_name(baseline_name))
-        if not baseline_tokens:
-            continue
-        for stream, provider_tokens in zip(all_streams, provider_token_sets):
-            if not provider_tokens:
-                continue
-            if not baseline_tokens.issubset(provider_tokens):
-                continue
-            extra_tokens = provider_tokens - baseline_tokens
-            if extra_tokens and not extra_tokens.issubset(allowed_extra_tokens):
-                continue
-            stream_name = stream.get('name', '')
-            stream_id = stream.get('id')
-            provider_id = stream.get('m3u_account')
-            provider_name = stream.get('m3u_account_name')
-
-            if provider_name is None and provider_lookup and provider_id is not None:
-                provider_name = provider_lookup.get(str(provider_id))
-
-            signature = _normalize_refresh_signature(stream_name)
-            match_source = 'implicit' if signature in implicit_added_signatures else 'baseline'
-            _add_matched_stream(
-                stream,
-                stream_name,
-                stream_id,
-                provider_id,
-                provider_name,
-                signature,
-                match_source,
-            )
-
-    # PHASE 2: PROVIDER SWEEP
+    # PHASE 1: SELECTOR MATCHES
     for stream in all_streams:
         stream_name = stream.get('name', '')
         stream_id = stream.get('id')
@@ -2890,32 +3019,18 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if provider_name is None and provider_lookup and provider_id is not None:
             provider_name = provider_lookup.get(str(provider_id))
 
-        signature = _normalize_refresh_signature(stream_name)
-        if _stream_match_key(stream_id, stream_name, provider_id, provider_name) in matched_keys:
+        if not isinstance(stream_name, str):
             continue
 
         match_source = None
-        matched_pattern = None
-        regex_trusted = False
-
-        if signature and signature in baseline_signatures:
-            match_source = 'implicit' if signature in implicit_added_signatures else 'baseline'
-        elif isinstance(stream_name, str) and stream_name in literal_terms:
-            if signature and signature in rejected_signatures:
-                continue
-            match_source = 'literal'
-        elif isinstance(stream_name, str) and stream_name:
-            for pattern in regex_patterns:
-                if pattern['regex'].match(stream_name):
-                    if signature and signature in rejected_signatures:
-                        match_source = None
-                        break
-                    match_source = 'regex'
-                    matched_pattern = pattern['pattern']
-                    regex_trusted = bool(pattern.get('trusted'))
-                    break
+        if _matches_any_selector(stream_name):
+            match_source = 'selector'
+        elif injected_include_set and stream_name.casefold() in injected_include_set:
+            match_source = 'include'
 
         if not match_source:
+            continue
+        if stream_name.casefold() in injected_exclude_set:
             continue
 
         _add_matched_stream(
@@ -2924,11 +3039,32 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             stream_id,
             provider_id,
             provider_name,
-            signature,
             match_source,
-            matched_pattern,
-            regex_trusted,
         )
+
+    # PHASE 2: ENSURE INJECTED INCLUDES
+    if injected_include_set:
+        for stream in all_streams:
+            stream_name = stream.get('name', '')
+            if not isinstance(stream_name, str):
+                continue
+            if stream_name.casefold() not in injected_include_set:
+                continue
+            if stream_name.casefold() in injected_exclude_set:
+                continue
+            stream_id = stream.get('id')
+            provider_id = stream.get('m3u_account')
+            provider_name = stream.get('m3u_account_name')
+            if provider_name is None and provider_lookup and provider_id is not None:
+                provider_name = provider_lookup.get(str(provider_id))
+            _add_matched_stream(
+                stream,
+                stream_name,
+                stream_id,
+                provider_id,
+                provider_name,
+                'include',
+            )
 
     logging.info(f"Found {total_matching} matching streams")
 
@@ -2941,32 +3077,18 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     previous_streams = [_stream_snapshot(s) for s in (current_streams or [])]
     final_streams = filtered_streams if not preview else preview_streams
 
-    if allowed_set is not None:
+    if allowed_set is not None and excluded_stream_names is None:
         rejected_names = []
-        regex_accept_counts = {}
-        baseline_additions = []
         for stream in matching_streams:
             stream_id = stream.get('id')
             stream_name = stream.get('name')
-            signature = stream.get('signature')
             if not isinstance(stream_name, str) or not stream_name:
                 continue
             accepted = stream_id is not None and int(stream_id) in allowed_set
             if not accepted:
                 rejected_names.append(stream_name)
-                continue
-            if stream.get('match_source') == 'regex':
-                pattern = stream.get('regex_pattern')
-                if pattern:
-                    regex_accept_counts[pattern] = regex_accept_counts.get(pattern, 0) + 1
-                if signature and signature not in baseline_signatures:
-                    baseline_additions.append(stream_name)
-                    baseline_signatures.add(signature)
-
-        _record_refresh_rejections(config, channel_id, rejected_names)
-        _record_refresh_regex_accepts(config, channel_id, regex_accept_counts)
-        if baseline_additions:
-            _add_refresh_baseline_entries(config, channel_id, baseline_additions)
+        if rejected_names:
+            _add_refresh_exclusions(config, channel_id, rejected_names)
     
     if (not preview and not final_stream_ids) or (preview and filtered_count == 0):
         logging.info("No streams remaining after filtering - channel will be emptied")
@@ -2988,7 +3110,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         'final_streams': final_streams,
         'final_stream_ids': final_stream_ids,
         'no_change': no_change,
-        'injected_includes': injected_includes if preview else None
+        'injected_includes': injected_includes if preview else None,
+        'injected_excludes': injected_excludes if preview else None,
+        'selector_count': selector_count if preview else None
     }
 
     if preview:

@@ -1020,14 +1020,24 @@
                 </label>
 
                 <div style="margin-bottom: 16px;">
-                    <label style="display: block; margin-bottom: 5px; color: #1f2937; font-weight: 700;">
-                        Literal search text
+                    <label style="display: block; margin-bottom: 6px; color: #1f2937; font-weight: 700;">
+                        Stream selectors (up to 4)
                     </label>
-                    <input type="text" id="baseSearchText" placeholder="Exact stream name to match (literal)"
-                           style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1em;">
-                    <span style="display: block; margin-top: 5px; color: #4b5563; font-size: 0.9em;">
-                        Used verbatim. Leave blank to match only the existing stream names.
-                    </span>
+                    <div id="refresh-selectors-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+                    <div style="margin-top: 6px; color: #4b5563; font-size: 0.9em;">
+                        Each selector is literal with <code>*</code> wildcards. Matching is case-insensitive.
+                    </div>
+                    <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button class="btn btn-next" id="refresh-selectors-confirm" type="button">Confirm changes</button>
+                        <button class="btn btn-back" id="refresh-selectors-cancel" type="button">Cancel edits</button>
+                    </div>
+                    <div id="refresh-selectors-status" style="margin-top: 6px; color: #6b7280; font-size: 0.9em;"></div>
+                    <div id="refresh-suggested-selectors" style="margin-top: 12px; padding: 10px 12px; border: 1px dashed #e5e7eb; border-radius: 8px; background: #f9fafb;">
+                        <div style="font-weight: 600; color: #374151; margin-bottom: 6px;">Suggested selectors</div>
+                        <div id="refresh-suggested-list" style="color: #4b5563; font-size: 0.9em;">
+                            No suggestions yet.
+                        </div>
+                    </div>
                 </div>
 
                 <details id="refresh-injected-includes" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
@@ -1040,8 +1050,18 @@
                     </div>
                 </details>
 
+                <details id="refresh-injected-excludes" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
+                    <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
+                        <span style="font-weight: 700; color: #1f2937;">Injected excludes</span>
+                        <span style="color: #4b5563; font-size: 0.9em;">Exact stream names excluded after selectors and includes.</span>
+                    </summary>
+                    <div id="refresh-injected-excludes-list" style="padding: 12px 14px; border-top: 1px solid #e5e7eb; color: #4b5563; font-size: 0.9em;">
+                        No injected excludes.
+                    </div>
+                </details>
+
                 <div style="margin-top: 10px; padding: 12px; background: #fef2f2; border-left: 3px solid #ef4444; border-radius: 4px; font-size: 0.9em; color: #991b1b;">
-                    <strong>⚠️ Note:</strong> This input only applies when clicking "Refresh Channel Streams"
+                    <strong>⚠️ Note:</strong> Selectors only apply after confirming changes.
                 </div>
             </div>
 
@@ -1058,7 +1078,7 @@
                             <span>Refresh Channel Streams</span>
                         </button>
                         <div class="action-help action-help--orange">
-                            Updates the selected channel using literal stream names and existing channel entries.
+                            Uses confirmed selectors and injected includes, then applies injected excludes.
                         </div>
                     </div>
                 </div>
@@ -1075,7 +1095,7 @@
                             <span>Quality Check (Apply Changes)</span>
                         </button>
 
-                        <button class="action-btn primary" onclick="startJob('full_cleanup_plan', null, event)"
+                        <button class="action-btn primary" onclick="startJob('full_cleanup_plan', null, null, event)"
                                 style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
                             <span>🔎</span>
                             <span>Quality Check (Read-Only)</span>
@@ -1267,6 +1287,14 @@
         const lastRenderedStatuses = {};
         let hasRunPreviewPlan = false;
         let pendingApplyButton = null;
+        let refreshSelectorState = {
+            channelId: null,
+            persistedSelectors: [],
+            draftSelectors: [],
+            suggestedSelectors: [],
+            exclusions: []
+        };
+        let refreshSelectorsDirty = false;
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
@@ -1334,6 +1362,14 @@
             }
             if (deselectAllBtn) {
                 deselectAllBtn.addEventListener('click', () => setRefreshSelection(false));
+            }
+            const confirmSelectorsBtn = document.getElementById('refresh-selectors-confirm');
+            const cancelSelectorsBtn = document.getElementById('refresh-selectors-cancel');
+            if (confirmSelectorsBtn) {
+                confirmSelectorsBtn.addEventListener('click', saveRefreshSelectors);
+            }
+            if (cancelSelectorsBtn) {
+                cancelSelectorsBtn.addEventListener('click', resetRefreshSelectors);
             }
 
             // Check for active jobs periodically
@@ -1545,15 +1581,10 @@
                 document.getElementById('selected-channels-count').textContent = count;
             }
 
-            const baseSearchInput = document.getElementById('baseSearchText');
-            if (baseSearchInput) {
-                if (selectedChannels && selectedChannels.length === 1) {
-                    const selectedChannelId = selectedChannels[0];
-                    const channelElement = document.querySelector(`.channel-item[data-channel-id="${selectedChannelId}"]`);
-                    baseSearchInput.value = channelElement?.dataset.baseSearchText || '';
-                } else {
-                    baseSearchInput.value = '';
-                }
+            if (selectedChannels && selectedChannels.length === 1) {
+                loadRefreshSettings(selectedChannels[0]);
+            } else {
+                resetRefreshSelectors();
             }
 
             // Show/hide refresh filters based on selection
@@ -1616,6 +1647,276 @@
             document.getElementById('step-3').classList.add('hidden');
         }
 
+        function getSelectedChannelName(channelId) {
+            for (const groupId in allChannels) {
+                const channel = allChannels[groupId].find(ch => ch.id === channelId);
+                if (channel) return channel.name;
+            }
+            return null;
+        }
+
+        function buildSuggestedSelectors(channelId, currentSelectors) {
+            const suggestions = [];
+            const channelName = getSelectedChannelName(channelId);
+            if (channelName) {
+                const normalized = channelName.trim();
+                if (normalized) {
+                    const existingValues = new Set(
+                        (currentSelectors || []).map(sel => String(sel?.text || '').trim().toLowerCase())
+                    );
+                    if (!existingValues.has(normalized.toLowerCase())) {
+                        suggestions.push(normalized);
+                    }
+                }
+            }
+            return suggestions;
+        }
+
+        async function loadRefreshSettings(channelId) {
+            if (!channelId) return;
+            try {
+                const response = await fetch(`/api/refresh-settings?channel_id=${encodeURIComponent(channelId)}`);
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.error || 'Unable to load refresh settings.');
+                }
+                refreshSelectorState.channelId = channelId;
+                refreshSelectorState.persistedSelectors = Array.isArray(data.selectors) ? data.selectors : [];
+                refreshSelectorState.draftSelectors = refreshSelectorState.persistedSelectors.map(sel => ({ ...sel }));
+                refreshSelectorState.exclusions = Array.isArray(data.exclusions) ? data.exclusions : [];
+                refreshSelectorState.suggestedSelectors = buildSuggestedSelectors(channelId, refreshSelectorState.persistedSelectors);
+                refreshSelectorsDirty = false;
+                renderRefreshSelectors();
+                renderRefreshSuggestedSelectors();
+                renderRefreshExclusions();
+            } catch (error) {
+                console.error('Failed to load refresh settings:', error);
+                const status = document.getElementById('refresh-selectors-status');
+                if (status) {
+                    status.textContent = `Failed to load selectors: ${error.message}`;
+                }
+            }
+        }
+
+        function resetRefreshSelectors() {
+            refreshSelectorState.draftSelectors = refreshSelectorState.persistedSelectors.map(sel => ({ ...sel }));
+            refreshSelectorState.suggestedSelectors = refreshSelectorState.channelId
+                ? buildSuggestedSelectors(refreshSelectorState.channelId, refreshSelectorState.persistedSelectors)
+                : [];
+            refreshSelectorsDirty = false;
+            renderRefreshSelectors();
+            renderRefreshSuggestedSelectors();
+            renderRefreshExclusions();
+        }
+
+        function ensureSelectorSlots(selectors) {
+            const slots = selectors.map(sel => ({ ...sel }));
+            while (slots.length < 4) {
+                slots.push({ text: '', source: 'user', confirmed: false });
+            }
+            return slots.slice(0, 4);
+        }
+
+        function renderRefreshSelectors() {
+            const list = document.getElementById('refresh-selectors-list');
+            if (!list) return;
+            const slots = ensureSelectorSlots(refreshSelectorState.draftSelectors || []);
+            list.innerHTML = slots.map((selector, idx) => {
+                const text = escapeHtml(selector?.text || '');
+                const source = selector?.source === 'system' ? 'Suggested' : 'User';
+                const confirmed = selector?.confirmed ? 'checked' : '';
+                return `
+                    <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+                        <input type="text" class="refresh-selector-input" data-index="${idx}"
+                               value="${text}" placeholder="*channel*5*"
+                               style="flex: 1 1 240px; padding: 8px 10px; border: 2px solid #e2e8f0; border-radius: 6px;">
+                        <label style="display: flex; align-items: center; gap: 6px; color: #374151; font-weight: 600;">
+                            <input type="checkbox" class="refresh-selector-confirmed" data-index="${idx}" ${confirmed}>
+                            Confirmed
+                        </label>
+                        <span style="padding: 4px 8px; border-radius: 999px; background: #e5e7eb; color: #374151; font-size: 0.8em;">
+                            ${source}
+                        </span>
+                    </div>
+                `;
+            }).join('');
+
+            list.querySelectorAll('.refresh-selector-input').forEach(input => {
+                input.addEventListener('input', (event) => {
+                    const index = parseInt(event.target.dataset.index, 10);
+                    const text = event.target.value;
+                    const slotsNow = ensureSelectorSlots(refreshSelectorState.draftSelectors || []);
+                    if (!slotsNow[index]) return;
+                    if (slotsNow[index].source === 'system' && slotsNow[index].text !== text) {
+                        slotsNow[index].source = 'user';
+                    }
+                    slotsNow[index].text = text;
+                    refreshSelectorState.draftSelectors = slotsNow;
+                    markRefreshSelectorsDirty();
+                });
+            });
+
+            list.querySelectorAll('.refresh-selector-confirmed').forEach(input => {
+                input.addEventListener('change', (event) => {
+                    const index = parseInt(event.target.dataset.index, 10);
+                    const slotsNow = ensureSelectorSlots(refreshSelectorState.draftSelectors || []);
+                    if (!slotsNow[index]) return;
+                    slotsNow[index].confirmed = event.target.checked;
+                    refreshSelectorState.draftSelectors = slotsNow;
+                    markRefreshSelectorsDirty();
+                });
+            });
+
+            updateRefreshSelectorStatus();
+        }
+
+        function renderRefreshSuggestedSelectors() {
+            const container = document.getElementById('refresh-suggested-list');
+            if (!container) return;
+            const suggestions = refreshSelectorState.suggestedSelectors || [];
+            const currentCount = (refreshSelectorState.draftSelectors || []).filter(sel => sel?.text && String(sel.text).trim()).length;
+            if (!suggestions.length) {
+                container.textContent = 'No suggestions available.';
+                return;
+            }
+            container.innerHTML = suggestions.map((text, idx) => {
+                const disabled = currentCount >= 4;
+                const buttonLabel = disabled ? 'Limit reached' : 'Add';
+                return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px;">
+                        <span>${escapeHtml(text)}</span>
+                        <button class="btn btn-back refresh-suggested-add" type="button"
+                                data-index="${idx}" ${disabled ? 'disabled' : ''}>${buttonLabel}</button>
+                    </div>
+                `;
+            }).join('');
+
+            container.querySelectorAll('.refresh-suggested-add').forEach(button => {
+                button.addEventListener('click', () => {
+                    const index = parseInt(button.dataset.index, 10);
+                    const suggestion = suggestions[index];
+                    if (!suggestion) return;
+                    const slots = ensureSelectorSlots(refreshSelectorState.draftSelectors || []);
+                    const emptyIndex = slots.findIndex(sel => !sel.text || !String(sel.text).trim());
+                    if (emptyIndex === -1) return;
+                    slots[emptyIndex] = {
+                        text: suggestion,
+                        source: 'system',
+                        confirmed: false
+                    };
+                    refreshSelectorState.draftSelectors = slots;
+                    refreshSelectorState.suggestedSelectors = suggestions.filter((_, i) => i !== index);
+                    markRefreshSelectorsDirty();
+                    renderRefreshSelectors();
+                    renderRefreshSuggestedSelectors();
+                });
+            });
+        }
+
+        function renderRefreshExclusions() {
+            const container = document.getElementById('refresh-injected-excludes-list');
+            if (!container) return;
+            const exclusions = refreshSelectorState.exclusions || [];
+            if (!exclusions.length) {
+                container.textContent = 'No injected excludes.';
+                return;
+            }
+            container.innerHTML = exclusions.map(name => `
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px;">
+                    <span>${escapeHtml(name)}</span>
+                    <button class="btn btn-back refresh-exclusion-remove" type="button" data-name="${escapeHtml(name)}">🗑️</button>
+                </div>
+            `).join('');
+
+            container.querySelectorAll('.refresh-exclusion-remove').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const name = btn.dataset.name;
+                    if (!name) return;
+                    removeRefreshExclusion(name);
+                });
+            });
+        }
+
+        function markRefreshSelectorsDirty() {
+            refreshSelectorsDirty = true;
+            updateRefreshSelectorStatus();
+        }
+
+        function updateRefreshSelectorStatus() {
+            const status = document.getElementById('refresh-selectors-status');
+            if (!status) return;
+            if (!refreshSelectorState.channelId) {
+                status.textContent = 'Select a channel to edit selectors.';
+                return;
+            }
+            if (refreshSelectorsDirty) {
+                status.textContent = 'Edits are not applied until you confirm changes.';
+            } else {
+                status.textContent = 'Selectors are up to date.';
+            }
+        }
+
+        async function saveRefreshSelectors() {
+            if (!refreshSelectorState.channelId) return;
+            const selectors = (refreshSelectorState.draftSelectors || [])
+                .filter(sel => sel && sel.text && String(sel.text).trim())
+                .slice(0, 4)
+                .map(sel => ({
+                    text: sel.text,
+                    source: sel.source === 'system' ? 'system' : 'user',
+                    confirmed: !!sel.confirmed
+                }));
+            try {
+                const response = await fetch('/api/refresh-settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        channel_id: refreshSelectorState.channelId,
+                        selectors
+                    })
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.error || 'Unable to save selectors.');
+                }
+                refreshSelectorState.persistedSelectors = selectors.map(sel => ({ ...sel }));
+                refreshSelectorState.draftSelectors = selectors.map(sel => ({ ...sel }));
+                refreshSelectorState.exclusions = Array.isArray(data.exclusions) ? data.exclusions : refreshSelectorState.exclusions;
+                refreshSelectorState.suggestedSelectors = buildSuggestedSelectors(refreshSelectorState.channelId, selectors);
+                refreshSelectorsDirty = false;
+                renderRefreshSelectors();
+                renderRefreshSuggestedSelectors();
+                updateRefreshSelectorStatus();
+            } catch (error) {
+                const status = document.getElementById('refresh-selectors-status');
+                if (status) {
+                    status.textContent = `Failed to save selectors: ${error.message}`;
+                }
+            }
+        }
+
+        async function removeRefreshExclusion(name) {
+            if (!refreshSelectorState.channelId) return;
+            try {
+                const response = await fetch('/api/refresh-settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        channel_id: refreshSelectorState.channelId,
+                        remove_exclusion: name
+                    })
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.error || 'Unable to remove exclusion.');
+                }
+                refreshSelectorState.exclusions = Array.isArray(data.exclusions) ? data.exclusions : [];
+                renderRefreshExclusions();
+            } catch (error) {
+                console.error('Failed to remove exclusion:', error);
+            }
+        }
+
         // Refresh preview helpers
         function closeRefreshPreview() {
             document.getElementById('refresh-preview-modal').classList.add('hidden');
@@ -1633,10 +1934,13 @@
             const description = document.getElementById('refresh-preview-description');
             const summary = document.getElementById('refresh-preview-summary');
 
-            const baseSearchText = preview.base_search_text ? `Literal search text: "${preview.base_search_text}". ` : '';
+            const selectorCount = Number(preview.selector_count || 0);
+            const selectorLine = selectorCount
+                ? `${selectorCount} confirmed selector(s) applied. `
+                : 'No confirmed selectors. Only injected includes are applied. ';
             description.textContent = (preview.channel_name
-                ? `Streams found for ${preview.channel_name}. Uncheck any you want removed.`
-                : 'Streams found for the selected channel.') + ` ${baseSearchText}`;
+                ? `Streams found for ${preview.channel_name}. Uncheck any you want excluded. `
+                : 'Streams found for the selected channel. ') + selectorLine;
 
             if (preview.preview_truncated) {
                 const limit = preview.preview_limit || refreshPreviewStreams.length;
@@ -1647,13 +1951,17 @@
             if (!refreshPreviewStreams.length) {
                 list.innerHTML = '<div class="alert alert-warning">No streams matched. Proceeding will clear current streams for this channel.</div>';
                 updateInjectedIncludes(preview.injected_includes || []);
+                if (Array.isArray(preview.injected_excludes)) {
+                    refreshSelectorState.exclusions = preview.injected_excludes;
+                    renderRefreshExclusions();
+                }
                 updateRefreshSelectionState();
                 return;
             }
 
             list.innerHTML = refreshPreviewStreams.map(stream => `
                 <label class="preview-item">
-                    <input type="checkbox" class="refresh-stream-checkbox" value="${stream.id}" checked>
+                    <input type="checkbox" class="refresh-stream-checkbox" value="${stream.id}" data-stream-name="${escapeHtml(stream.name)}" checked>
                     <div>
                         <div class="preview-name">${stream.name}</div>
                         <div class="preview-meta">
@@ -1677,6 +1985,10 @@
             `).join('');
 
             updateInjectedIncludes(preview.injected_includes || []);
+            if (Array.isArray(preview.injected_excludes)) {
+                refreshSelectorState.exclusions = preview.injected_excludes;
+                renderRefreshExclusions();
+            }
             document.querySelectorAll('.refresh-stream-checkbox').forEach(cb => {
                 cb.addEventListener('change', updateRefreshSelectionState);
             });
@@ -1745,8 +2057,7 @@
 
             try {
                 const payload = {
-                    channel_id: selectedChannels[0],
-                    base_search_text: document.getElementById('baseSearchText')?.value ?? null
+                    channel_id: selectedChannels[0]
                 };
 
                 const response = await fetch('/api/refresh-preview', {
@@ -1805,6 +2116,10 @@
             }
             const checkboxes = Array.from(document.querySelectorAll('.refresh-stream-checkbox'));
             const selected = checkboxes.filter(cb => cb.checked).map(cb => parseInt(cb.value));
+            const excludedNames = Array.from(new Set(checkboxes
+                .filter(cb => !cb.checked)
+                .map(cb => cb.dataset.streamName)
+                .filter(name => name && name.trim())));
             const submitButton = document.getElementById('refresh-submit-button');
 
             if (refreshPreviewMeta?.no_change && checkboxes.length > 0 && selected.length === checkboxes.length) {
@@ -1824,7 +2139,7 @@
             submitButton.textContent = 'Applying...';
             showRefreshProgress('Please wait while we apply refresh changes...');
 
-            const jobId = await startJob('refresh_optimize', selected);
+            const jobId = await startJob('refresh_optimize', selected, excludedNames);
 
             if (!jobId) {
                 submitButton.disabled = false;
@@ -1868,7 +2183,7 @@
         function confirmApplyWithoutPreview() {
             const clickedBtn = pendingApplyButton;
             closeApplyConfirmModal();
-            return startJob('full_cleanup', null, clickedBtn ? { currentTarget: clickedBtn } : null);
+            return startJob('full_cleanup', null, null, clickedBtn ? { currentTarget: clickedBtn } : null);
         }
 
         function startApplyQualityJob(event) {
@@ -1878,7 +2193,7 @@
             }
             const clickedBtn = getClickedButton(event);
             if (hasRunPreviewPlan) {
-                return startJob('full_cleanup', null, clickedBtn ? { currentTarget: clickedBtn } : event);
+                return startJob('full_cleanup', null, null, clickedBtn ? { currentTarget: clickedBtn } : event);
             }
             return showApplyConfirmModal(clickedBtn);
         }
@@ -1926,7 +2241,7 @@
             });
         }
 
-        async function startJob(jobType, selectedStreamIds = null, event = null) {
+        async function startJob(jobType, selectedStreamIds = null, excludedStreamNames = null, event = null) {
             const clickedBtn = getClickedButton(event);
             try {
                 // Get group names
@@ -1967,8 +2282,8 @@
                     group_names: groupNames,
                     channel_names: channelNames,
                     analysis_profile: document.getElementById('analysisProfile')?.value || 'balanced',
-                    base_search_text: document.getElementById('baseSearchText')?.value ?? null,
-                    selected_stream_ids: selectedStreamIds
+                    selected_stream_ids: selectedStreamIds,
+                    excluded_stream_names: excludedStreamNames
                 };
 
                 // Button loading state (best-effort)
