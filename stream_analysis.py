@@ -3183,19 +3183,6 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     previous_streams = [_stream_snapshot(s) for s in (current_streams or [])]
     final_streams = filtered_streams if not preview else preview_streams
 
-    if allowed_set is not None and has_explicit_excluded:
-        rejected_names = []
-        for stream in matching_streams:
-            stream_id = stream.get('id')
-            stream_name = stream.get('name')
-            if not isinstance(stream_name, str) or not stream_name:
-                continue
-            accepted = stream_id is not None and int(stream_id) in allowed_set
-            if not accepted:
-                rejected_names.append(stream_name)
-        if rejected_names:
-            _add_refresh_exclusions(refresh_settings_config, channel_id, rejected_names)
-    
     if (not preview and not final_stream_ids) or (preview and filtered_count == 0):
         logging.info("No streams remaining after filtering - channel will be emptied")
     else:
