@@ -2203,6 +2203,7 @@ def _ensure_refresh_learning_db(config):
             """
         )
         conn.commit()
+        return conn
     except Exception:
         conn.close()
         raise
@@ -2254,6 +2255,7 @@ def _save_refresh_selectors(config, channel_id, selectors):
         })
         if len(cleaned) >= 4:
             break
+    conn = None
     try:
         conn = _ensure_refresh_learning_db(config)
         conn.execute(
@@ -2279,7 +2281,8 @@ def _save_refresh_selectors(config, channel_id, selectors):
             )
         conn.commit()
     except Exception as exc:
-        conn.rollback()
+        if conn is not None:
+            conn.rollback()  # rollback only when the connection was created
         logging.warning("Failed to persist refresh selectors: %s", exc)
     finally:
         try:
