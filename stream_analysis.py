@@ -2846,7 +2846,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         and selector.get('text').strip()
     ]
     injected_excludes = _load_refresh_exclusions(refresh_settings_config, channel_id)
-    has_explicit_excluded = excluded_stream_names is not None
+    has_explicit_excluded = bool(excluded_stream_names)
     if excluded_stream_names:
         _add_refresh_exclusions(refresh_settings_config, channel_id, excluded_stream_names)
         injected_excludes = _load_refresh_exclusions(refresh_settings_config, channel_id)
