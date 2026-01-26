@@ -2970,7 +2970,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         # Deduplicate per-provider only: same channel name/ID from different
         # providers should both be retained, while duplicates within a provider
         # collapse to a single match.
-        provider_key = ('provider_id', str(provider_id)) if provider_id is not None else ('provider_name', str(provider_name))
+        provider_id_value = None
+        if provider_id is not None:
+            provider_id_str = str(provider_id).strip()
+            if provider_id_str:
+                provider_id_value = provider_id_str
+        provider_key = ('provider_id', provider_id_value) if provider_id_value is not None else ('provider_name', str(provider_name))
         if stream_id is not None:
             return ('id', str(stream_id), provider_key)
         return ('fallback', str(stream_name), provider_key)

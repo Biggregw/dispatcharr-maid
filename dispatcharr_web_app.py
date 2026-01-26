@@ -2170,6 +2170,7 @@ def run_job_worker(job, api, config):
                 # Fetch all streams once for reuse across per-channel refresh calls.
                 job.current_step = 'Refresh: preparing provider streams cache...'
                 _job_set_stage(job, 'refresh', 'Refresh', total=len(job.channels or []))
+                provider_names = _load_provider_names(config)
                 all_streams = []
                 next_url = '/api/channels/streams/?limit=100'
                 while next_url:
@@ -2217,6 +2218,7 @@ def run_job_worker(job, api, config):
                         preview=False,
                         all_streams_override=all_streams,
                         all_channels_override=all_channels,
+                        provider_names=provider_names,
                     )
                     if isinstance(result, dict) and result.get('error'):
                         refresh_stats['channels_failed'] += 1
@@ -2561,8 +2563,9 @@ def run_job_worker(job, api, config):
                 job.status = 'failed'
                 job.current_step = 'Error: Must select exactly 1 channel'
                 return
-            
+
             channel_id = job.channels[0]
+            provider_names = _load_provider_names(config)
             
             # ONLY refresh - find and replace all streams with matching ones
             if job.cancel_requested:
@@ -2579,7 +2582,8 @@ def run_job_worker(job, api, config):
                 job.include_filter,
                 job.exclude_filter,
                 job.selected_stream_ids,
-                excluded_stream_names=job.excluded_stream_names
+                excluded_stream_names=job.excluded_stream_names,
+                provider_names=provider_names
             )
             
             if 'error' in refresh_result:
