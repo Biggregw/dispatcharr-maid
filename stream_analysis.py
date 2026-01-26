@@ -2893,9 +2893,37 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     total_matching = 0
     preview_truncated = False
 
+    def _normalize_stream_id(value):
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            if isinstance(value, float) and not value.is_integer():
+                cleaned = str(value).strip()
+                return cleaned or None
+            return str(int(value))
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                return None
+            if cleaned.isdigit():
+                return str(int(cleaned))
+            return cleaned
+        cleaned = str(value).strip()
+        return cleaned or None
+
     allowed_set = None
+    explicit_empty_selection = isinstance(allowed_stream_ids, list) and len(allowed_stream_ids) == 0
     if allowed_stream_ids is not None:
-        allowed_set = {int(sid) for sid in allowed_stream_ids}
+        allowed_set = set()
+        for sid in allowed_stream_ids:
+            normalized = _normalize_stream_id(sid)
+            if normalized is None:
+                continue
+            allowed_set.add(normalized)
+        if not allowed_set and not explicit_empty_selection:
+            allowed_set = None
 
     # Build filtered streams (used for actual update) and a capped list of
     # detailed streams for preview/UI.
@@ -3048,7 +3076,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             continue
 
         match_source = None
-        if _matches_any_selector(stream_name):
+        stream_id_key = _normalize_stream_id(stream_id)
+        if allowed_set is not None:
+            if stream_id_key is None or stream_id_key not in allowed_set:
+                continue
+            match_source = 'selected'
+        elif _matches_any_selector(stream_name):
             match_source = 'selector'
         elif injected_include_set and stream_name.casefold() in injected_include_set:
             match_source = 'include'
@@ -3056,15 +3089,29 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         if not match_source:
             continue
         if stream_name.casefold() in injected_exclude_set:
-            _record_excluded_stream(
-                stream,
-                stream_name,
-                stream_id,
-                provider_id,
-                provider_name,
-                match_source,
-            )
-            continue
+            if allowed_set is not None:
+                if stream_id_key is not None and stream_id_key in allowed_set:
+                    pass
+                else:
+                    _record_excluded_stream(
+                        stream,
+                        stream_name,
+                        stream_id,
+                        provider_id,
+                        provider_name,
+                        match_source,
+                    )
+                    continue
+            else:
+                _record_excluded_stream(
+                    stream,
+                    stream_name,
+                    stream_id,
+                    provider_id,
+                    provider_name,
+                    match_source,
+                )
+                continue
 
         _add_matched_stream(
             stream,
@@ -3086,18 +3133,36 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             provider_name = stream.get('m3u_account_name')
             if provider_name is None and provider_lookup and provider_id is not None:
                 provider_name = provider_lookup.get(str(provider_id))
+            stream_id_key = _normalize_stream_id(stream_id)
+            if allowed_set is not None:
+                if stream_id_key is None or stream_id_key not in allowed_set:
+                    continue
             if stream_name.casefold() not in injected_include_set:
                 continue
             if stream_name.casefold() in injected_exclude_set:
-                _record_excluded_stream(
-                    stream,
-                    stream_name,
-                    stream_id,
-                    provider_id,
-                    provider_name,
-                    'include',
-                )
-                continue
+                if allowed_set is not None:
+                    if stream_id_key is not None and stream_id_key in allowed_set:
+                        pass
+                    else:
+                        _record_excluded_stream(
+                            stream,
+                            stream_name,
+                            stream_id,
+                            provider_id,
+                            provider_name,
+                            'include',
+                        )
+                        continue
+                else:
+                    _record_excluded_stream(
+                        stream,
+                        stream_name,
+                        stream_id,
+                        provider_id,
+                        provider_name,
+                        'include',
+                    )
+                    continue
             _add_matched_stream(
                 stream,
                 stream_name,
