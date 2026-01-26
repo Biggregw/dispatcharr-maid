@@ -3593,6 +3593,8 @@ def api_start_job():
 
         if excluded_stream_names is not None and not isinstance(excluded_stream_names, list):
             return jsonify({'success': False, 'error': '"excluded_stream_names" must be a list or null'}), 400
+        if excluded_stream_names is None:
+            excluded_stream_names = []
 
         if stream_name_regex is None:
             try:

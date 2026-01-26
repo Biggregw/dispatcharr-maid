@@ -1943,7 +1943,7 @@
                 ? `${selectorCount} confirmed selector(s) applied. `
                 : 'No confirmed selectors. Only injected includes are applied. ';
             description.textContent = (preview.channel_name
-                ? `Streams found for ${preview.channel_name}. Uncheck any you want excluded. `
+                ? `Streams found for ${preview.channel_name}. Uncheck any stream to explicitly exclude it. `
                 : 'Streams found for the selected channel. ') + selectorLine;
 
             if (preview.preview_truncated) {
@@ -2147,10 +2147,9 @@
             }
             const checkboxes = Array.from(document.querySelectorAll('.refresh-stream-checkbox'));
             const selected = checkboxes.filter(cb => cb.checked).map(cb => parseInt(cb.value));
-            const excludedNames = Array.from(new Set(checkboxes
+            const excludedNames = checkboxes
                 .filter(cb => !cb.checked)
-                .map(cb => cb.dataset.streamName)
-                .filter(name => name && name.trim())));
+                .map(cb => cb.dataset.streamName);
             const submitButton = document.getElementById('refresh-submit-button');
 
             if (refreshPreviewMeta?.no_change && checkboxes.length > 0 && selected.length === checkboxes.length) {
