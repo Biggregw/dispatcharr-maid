@@ -2967,9 +2967,13 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         return True
 
     def _stream_match_key(stream_id, stream_name, provider_id, provider_name):
+        # Deduplicate per-provider only: same channel name/ID from different
+        # providers should both be retained, while duplicates within a provider
+        # collapse to a single match.
+        provider_key = ('provider_id', str(provider_id)) if provider_id is not None else ('provider_name', str(provider_name))
         if stream_id is not None:
-            return ('id', str(stream_id))
-        return ('fallback', str(stream_name), str(provider_id), str(provider_name))
+            return ('id', str(stream_id), provider_key)
+        return ('fallback', str(stream_name), provider_key)
 
     def _add_matched_stream(stream, stream_name, stream_id, provider_id, provider_name, match_source):
         nonlocal total_matching, filtered_count, preview_truncated
