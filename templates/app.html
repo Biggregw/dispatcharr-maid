@@ -1230,6 +1230,7 @@
                     <button type="button" class="btn btn-back" id="refresh-select-all">Select all</button>
                     <button type="button" class="btn btn-back" id="refresh-deselect-all">Deselect all</button>
                 </div>
+                <div id="refresh-preview-exclusions" class="preview-meta" style="margin-bottom: 10px;"></div>
                 <div class="preview-list" id="refresh-preview-list"></div>
                 <div id="refresh-progress-container" class="alert alert-info hidden" style="margin-top: 15px;">
                     <div style="display: flex; align-items: center; gap: 10px;">
@@ -1933,6 +1934,7 @@
             const list = document.getElementById('refresh-preview-list');
             const description = document.getElementById('refresh-preview-description');
             const summary = document.getElementById('refresh-preview-summary');
+            const exclusionsContainer = document.getElementById('refresh-preview-exclusions');
 
             const selectorCount = Number(preview.selector_count || 0);
             const selectorLine = selectorCount
@@ -1946,6 +1948,16 @@
                 const limit = preview.preview_limit || refreshPreviewStreams.length;
                 const shown = Math.min(limit, refreshPreviewStreams.length);
                 description.textContent += ` Showing first ${shown} result(s).`;
+            }
+
+            if (exclusionsContainer) {
+                const exclusions = Array.isArray(preview.injected_excludes) ? preview.injected_excludes.filter(Boolean) : [];
+                if (!exclusions.length) {
+                    exclusionsContainer.textContent = 'No exclusions are applied to this refresh.';
+                } else {
+                    const label = exclusions.length === 1 ? 'exclusion' : 'exclusions';
+                    exclusionsContainer.innerHTML = `<strong>${exclusions.length}</strong> ${label} applied (exact name match): ${exclusions.map(name => escapeHtml(name)).join(', ')}`;
+                }
             }
 
             if (!refreshPreviewStreams.length) {
