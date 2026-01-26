@@ -2850,7 +2850,6 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     if excluded_stream_names:
         _add_refresh_exclusions(refresh_settings_config, channel_id, excluded_stream_names)
         injected_excludes = _load_refresh_exclusions(refresh_settings_config, channel_id)
-    elif allowed_stream_ids is not None:
 
     def _stream_snapshot(stream):
         if not isinstance(stream, dict):
