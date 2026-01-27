@@ -2202,6 +2202,16 @@ def _ensure_refresh_learning_db(config):
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS refresh_injected_state (
+                channel_id TEXT NOT NULL PRIMARY KEY,
+                injected_includes TEXT,
+                injected_excludes TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
         return conn
     except Exception:
@@ -2339,6 +2349,86 @@ def _add_refresh_exclusions(config, channel_id, stream_names):
     except Exception as exc:
         conn.rollback()
         logging.warning("Failed to persist refresh exclusions: %s", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _load_refresh_injected_state(config, channel_id):
+    payload = {
+        'injected_includes': [],
+        'injected_excludes': [],
+    }
+    try:
+        conn = _ensure_refresh_learning_db(config)
+        row = conn.execute(
+            """
+            SELECT injected_includes, injected_excludes
+            FROM refresh_injected_state
+            WHERE channel_id = ?
+            """,
+            (str(channel_id),)
+        ).fetchone()
+        if row:
+            for key, value in zip(payload.keys(), row):
+                if isinstance(value, str) and value:
+                    try:
+                        parsed = json.loads(value)
+                    except json.JSONDecodeError:
+                        parsed = []
+                    payload[key] = [
+                        name for name in parsed if isinstance(name, str) and name
+                    ]
+    except Exception as exc:
+        logging.warning("Failed to load refresh injected state: %s", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return payload
+
+
+def _save_refresh_injected_state(config, channel_id, injected_includes=None, injected_excludes=None):
+    includes = [
+        name for name in (injected_includes or [])
+        if isinstance(name, str) and name
+    ]
+    excludes = [
+        name for name in (injected_excludes or [])
+        if isinstance(name, str) and name
+    ]
+    now = datetime.now().isoformat()
+    conn = None
+    try:
+        conn = _ensure_refresh_learning_db(config)
+        conn.execute(
+            """
+            INSERT INTO refresh_injected_state (
+                channel_id, injected_includes, injected_excludes, updated_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(channel_id) DO UPDATE SET
+                injected_includes = excluded.injected_includes,
+                injected_excludes = excluded.injected_excludes,
+                updated_at = excluded.updated_at
+            """,
+            (
+                str(channel_id),
+                json.dumps(includes, ensure_ascii=False),
+                json.dumps(excludes, ensure_ascii=False),
+                now,
+            )
+        )
+        conn.commit()
+    except Exception as exc:
+        logging.warning("Failed to persist refresh injected state: %s", exc)
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
     finally:
         try:
             conn.close()
@@ -2850,6 +2940,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
     if has_explicit_excluded:
         _add_refresh_exclusions(refresh_settings_config, channel_id, excluded_stream_names)
         injected_excludes = _load_refresh_exclusions(refresh_settings_config, channel_id)
+    _save_refresh_injected_state(
+        refresh_settings_config,
+        channel_id,
+        injected_includes=injected_includes,
+        injected_excludes=injected_excludes,
+    )
 
     def _stream_snapshot(stream):
         if not isinstance(stream, dict):

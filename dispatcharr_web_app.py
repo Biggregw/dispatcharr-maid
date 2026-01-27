@@ -51,6 +51,8 @@ from stream_analysis import (
     _load_refresh_selectors,
     _save_refresh_selectors,
     _load_refresh_exclusions,
+    _load_refresh_injected_state,
+    _save_refresh_injected_state,
     _remove_refresh_exclusion,
     Config,
     fetch_streams,
@@ -162,8 +164,11 @@ def _append_dispatcharr_snapshot():
         return
 
 
-def _get_refresh_injected_includes(channel_id):
+def _get_refresh_injected_includes(channel_id, config=None, injected_excludes=None):
     """Return injected includes for a channel based on its current stream names."""
+    cached_state = None
+    if config is not None:
+        cached_state = _load_refresh_injected_state(config, channel_id)
     try:
         api = DispatcharrAPI()
         api.login()
@@ -174,6 +179,8 @@ def _get_refresh_injected_includes(channel_id):
             channel_id,
             exc,
         )
+        if cached_state:
+            return cached_state.get('injected_includes', [])
         return []
 
     injected_includes = []
@@ -181,6 +188,15 @@ def _get_refresh_injected_includes(channel_id):
         name = stream.get('name') if isinstance(stream, dict) else None
         if isinstance(name, str) and name:
             injected_includes.append(name)
+    if config is not None:
+        _save_refresh_injected_state(
+            config,
+            channel_id,
+            injected_includes=injected_includes,
+            injected_excludes=injected_excludes
+            if injected_excludes is not None
+            else (cached_state or {}).get('injected_excludes'),
+        )
     return injected_includes
 
 
@@ -3507,7 +3523,11 @@ def api_refresh_settings():
 
         selectors = _load_refresh_selectors(config, channel_id)
         exclusions = _load_refresh_exclusions(config, channel_id)
-        injected_includes = _get_refresh_injected_includes(channel_id)
+        injected_includes = _get_refresh_injected_includes(
+            channel_id,
+            config=config,
+            injected_excludes=exclusions,
+        )
         return jsonify({
             'success': True,
             'selectors': selectors,
