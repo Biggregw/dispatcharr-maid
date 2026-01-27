@@ -218,6 +218,9 @@ ls -lh csv/
 # Logs and checkpoints
 ls -lh logs/
 
+# Refresh learning data (selectors + injected excludes)
+ls -lh data/
+
 # Config
 cat config.yaml
 ```
@@ -364,7 +367,7 @@ docker inspect dispatcharr-maid-web | grep -A 10 Mounts
 pwd  # Should be ~/dispatcharr-maid
 
 # Check local folders exist
-ls -la csv/ logs/
+ls -la csv/ logs/ data/
 ```
 
 ---
@@ -377,6 +380,7 @@ The following folders are **bind-mounted** from your host to the containers:
 |-----------|----------------|---------|
 | `./csv/` | `/app/csv/` | All CSV data files |
 | `./logs/` | `/app/logs/` | Logs and checkpoints |
+| `./data/` | `/app/data/` | Refresh learning (selectors + injected excludes) |
 | `./config.yaml` | `/app/config.yaml` | Configuration |
 | `./.env` | `/app/.env` | Credentials |
 

@@ -15,6 +15,7 @@ services:
       - ./csv:/app/csv           # CSV data files
       - ./logs:/app/logs         # Logs and checkpoints
       - ./jobs:/app/jobs         # Per-job workspaces (persist results)
+      - ./data:/app/data         # Refresh selector learning + injected excludes
       - ./config.yaml:/app/config.yaml  # Configuration
       # Optional: mount reverse-proxy access logs for provider usage stats
       # (e.g. Nginx Proxy Manager /data/logs). Update config.yaml usage.access_log_dir accordingly.

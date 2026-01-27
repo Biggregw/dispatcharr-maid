@@ -32,6 +32,7 @@ provider_map.json
 provider_metadata.json
 jobs/
 csv/
+data/
 
 # User-specific configuration
 config.yaml
