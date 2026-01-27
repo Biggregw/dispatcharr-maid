@@ -3344,8 +3344,8 @@ def api_create_quality_check_schedule():
                 return jsonify({'success': False, 'error': f'Invalid group id: {g}'}), 400
 
         observe_only = data.get('observe_only')
-        if observe_only is False:
-            return jsonify({'success': False, 'error': 'Scheduled Quality Checks must be observe-only.'}), 400
+        if observe_only is True:
+            return jsonify({'success': False, 'error': 'Scheduled Quality Checks always reorder streams.'}), 400
 
         schedule_type = (data.get('schedule_type') or '').strip().lower()
         if schedule_type not in ('once', 'recurring'):
@@ -3355,7 +3355,6 @@ def api_create_quality_check_schedule():
             'id': str(uuid.uuid4()),
             'schedule_type': schedule_type,
             'groups': group_ids,
-            'observe_only': True,
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat(),
             'last_run_at': None,
@@ -3463,7 +3462,7 @@ def api_run_due_quality_check_schedules():
         workspace, config_path = create_job_workspace(job_id)
         job = Job(
             job_id,
-            'full_cleanup_plan',
+            'full_cleanup',
             groups,
             channels,
             None,
