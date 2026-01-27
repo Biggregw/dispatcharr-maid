@@ -1032,12 +1032,6 @@
                         <button class="btn btn-back" id="refresh-selectors-cancel" type="button">Cancel edits</button>
                     </div>
                     <div id="refresh-selectors-status" style="margin-top: 6px; color: #6b7280; font-size: 0.9em;"></div>
-                    <div id="refresh-suggested-selectors" style="margin-top: 12px; padding: 10px 12px; border: 1px dashed #e5e7eb; border-radius: 8px; background: #f9fafb;">
-                        <div style="font-weight: 600; color: #374151; margin-bottom: 6px;">Suggested selectors</div>
-                        <div id="refresh-suggested-list" style="color: #4b5563; font-size: 0.9em;">
-                            No suggestions yet.
-                        </div>
-                    </div>
                 </div>
 
                 <details id="refresh-injected-includes" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
@@ -1293,7 +1287,6 @@
             channelId: null,
             persistedSelectors: [],
             draftSelectors: [],
-            suggestedSelectors: [],
             exclusions: [],
             injectedIncludes: []
         };
@@ -1658,23 +1651,6 @@
             return null;
         }
 
-        function buildSuggestedSelectors(channelId, currentSelectors) {
-            const suggestions = [];
-            const channelName = getSelectedChannelName(channelId);
-            if (channelName) {
-                const normalized = channelName.trim();
-                if (normalized) {
-                    const existingValues = new Set(
-                        (currentSelectors || []).map(sel => String(sel?.text || '').trim().toLowerCase())
-                    );
-                    if (!existingValues.has(normalized.toLowerCase())) {
-                        suggestions.push(normalized);
-                    }
-                }
-            }
-            return suggestions;
-        }
-
         async function loadRefreshSettings(channelId) {
             if (!channelId) return;
             try {
@@ -1688,10 +1664,8 @@
                 refreshSelectorState.draftSelectors = refreshSelectorState.persistedSelectors.map(sel => ({ ...sel }));
                 refreshSelectorState.exclusions = Array.isArray(data.exclusions) ? data.exclusions : [];
                 refreshSelectorState.injectedIncludes = Array.isArray(data.injected_includes) ? data.injected_includes : [];
-                refreshSelectorState.suggestedSelectors = buildSuggestedSelectors(channelId, refreshSelectorState.persistedSelectors);
                 refreshSelectorsDirty = false;
                 renderRefreshSelectors();
-                renderRefreshSuggestedSelectors();
                 renderRefreshExclusions();
                 updateInjectedIncludes(refreshSelectorState.injectedIncludes);
             } catch (error) {
@@ -1705,12 +1679,8 @@
 
         function resetRefreshSelectors() {
             refreshSelectorState.draftSelectors = refreshSelectorState.persistedSelectors.map(sel => ({ ...sel }));
-            refreshSelectorState.suggestedSelectors = refreshSelectorState.channelId
-                ? buildSuggestedSelectors(refreshSelectorState.channelId, refreshSelectorState.persistedSelectors)
-                : [];
             refreshSelectorsDirty = false;
             renderRefreshSelectors();
-            renderRefreshSuggestedSelectors();
             renderRefreshExclusions();
             updateInjectedIncludes(refreshSelectorState.injectedIncludes);
         }
@@ -1727,22 +1697,31 @@
             const list = document.getElementById('refresh-selectors-list');
             if (!list) return;
             const slots = ensureSelectorSlots(refreshSelectorState.draftSelectors || []);
+            const committedSlots = ensureSelectorSlots(refreshSelectorState.persistedSelectors || []);
             list.innerHTML = slots.map((selector, idx) => {
                 const text = escapeHtml(selector?.text || '');
-                const source = selector?.source === 'system' ? 'Suggested' : 'User';
-                const confirmed = selector?.confirmed ? 'checked' : '';
+                const committedText = committedSlots[idx]?.confirmed ? (committedSlots[idx]?.text || '') : '';
+                const isCommitted = committedText && committedText === (selector?.text || '');
+                const hasEdit = (selector?.text || '') !== committedText;
+                const statusLabel = isCommitted ? 'Committed' : hasEdit && (selector?.text || committedText) ? 'Uncommitted edit' : '';
+                const statusStyle = isCommitted
+                    ? 'background: #ecfdf5; color: #065f46; border: 1px solid #10b981;'
+                    : hasEdit && (selector?.text || committedText)
+                        ? 'background: #fff7ed; color: #9a3412; border: 1px solid #fb923c;'
+                        : 'background: #e5e7eb; color: #6b7280; border: 1px solid #e5e7eb;';
+                const inputStyle = isCommitted
+                    ? 'border: 2px solid #10b981; font-weight: 700; background: #ecfdf5;'
+                    : hasEdit && (selector?.text || committedText)
+                        ? 'border: 2px solid #fb923c; background: #fff7ed;'
+                        : 'border: 2px solid #e2e8f0;';
                 return `
                     <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
                         <input type="text" class="refresh-selector-input" data-index="${idx}"
                                value="${text}" placeholder="*channel*5*"
-                               style="flex: 1 1 240px; padding: 8px 10px; border: 2px solid #e2e8f0; border-radius: 6px;">
-                        <label style="display: flex; align-items: center; gap: 6px; color: #374151; font-weight: 600;">
-                            <input type="checkbox" class="refresh-selector-confirmed" data-index="${idx}" ${confirmed}>
-                            Confirmed
-                        </label>
-                        <span style="padding: 4px 8px; border-radius: 999px; background: #e5e7eb; color: #374151; font-size: 0.8em;">
-                            ${source}
-                        </span>
+                               style="flex: 1 1 240px; padding: 8px 10px; border-radius: 6px; ${inputStyle}">
+                        ${statusLabel ? `<span style="padding: 4px 8px; border-radius: 999px; font-size: 0.8em; ${statusStyle}">
+                            ${statusLabel}
+                        </span>` : ''}
                     </div>
                 `;
             }).join('');
@@ -1762,61 +1741,7 @@
                 });
             });
 
-            list.querySelectorAll('.refresh-selector-confirmed').forEach(input => {
-                input.addEventListener('change', (event) => {
-                    const index = parseInt(event.target.dataset.index, 10);
-                    const slotsNow = ensureSelectorSlots(refreshSelectorState.draftSelectors || []);
-                    if (!slotsNow[index]) return;
-                    slotsNow[index].confirmed = event.target.checked;
-                    refreshSelectorState.draftSelectors = slotsNow;
-                    markRefreshSelectorsDirty();
-                });
-            });
-
             updateRefreshSelectorStatus();
-        }
-
-        function renderRefreshSuggestedSelectors() {
-            const container = document.getElementById('refresh-suggested-list');
-            if (!container) return;
-            const suggestions = refreshSelectorState.suggestedSelectors || [];
-            const currentCount = (refreshSelectorState.draftSelectors || []).filter(sel => sel?.text && String(sel.text).trim()).length;
-            if (!suggestions.length) {
-                container.textContent = 'No suggestions available.';
-                return;
-            }
-            container.innerHTML = suggestions.map((text, idx) => {
-                const disabled = currentCount >= 4;
-                const buttonLabel = disabled ? 'Limit reached' : 'Add';
-                return `
-                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px;">
-                        <span>${escapeHtml(text)}</span>
-                        <button class="btn btn-back refresh-suggested-add" type="button"
-                                data-index="${idx}" ${disabled ? 'disabled' : ''}>${buttonLabel}</button>
-                    </div>
-                `;
-            }).join('');
-
-            container.querySelectorAll('.refresh-suggested-add').forEach(button => {
-                button.addEventListener('click', () => {
-                    const index = parseInt(button.dataset.index, 10);
-                    const suggestion = suggestions[index];
-                    if (!suggestion) return;
-                    const slots = ensureSelectorSlots(refreshSelectorState.draftSelectors || []);
-                    const emptyIndex = slots.findIndex(sel => !sel.text || !String(sel.text).trim());
-                    if (emptyIndex === -1) return;
-                    slots[emptyIndex] = {
-                        text: suggestion,
-                        source: 'system',
-                        confirmed: false
-                    };
-                    refreshSelectorState.draftSelectors = slots;
-                    refreshSelectorState.suggestedSelectors = suggestions.filter((_, i) => i !== index);
-                    markRefreshSelectorsDirty();
-                    renderRefreshSelectors();
-                    renderRefreshSuggestedSelectors();
-                });
-            });
         }
 
         function renderRefreshExclusions() {
@@ -1870,7 +1795,7 @@
                 .map(sel => ({
                     text: sel.text,
                     source: sel.source === 'system' ? 'system' : 'user',
-                    confirmed: !!sel.confirmed
+                    confirmed: true
                 }));
             try {
                 const response = await fetch('/api/refresh-settings', {
@@ -1891,10 +1816,8 @@
                 refreshSelectorState.injectedIncludes = Array.isArray(data.injected_includes)
                     ? data.injected_includes
                     : refreshSelectorState.injectedIncludes;
-                refreshSelectorState.suggestedSelectors = buildSuggestedSelectors(refreshSelectorState.channelId, selectors);
                 refreshSelectorsDirty = false;
                 renderRefreshSelectors();
-                renderRefreshSuggestedSelectors();
                 renderRefreshExclusions();
                 updateInjectedIncludes(refreshSelectorState.injectedIncludes);
                 updateRefreshSelectorStatus();
