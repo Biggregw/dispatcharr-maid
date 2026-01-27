@@ -1001,9 +1001,9 @@
                         <div class="schedule-panel" id="quality-schedule-panel">
                             <h4>Scheduled Quality Checks</h4>
                             <div class="schedule-list" id="quality-schedule-list"></div>
-                            <div class="schedule-note">
-                                Scheduled runs are triggered while this page is open and no other job is running.
-                            </div>
+                        <div class="schedule-note">
+                            Scheduled runs are checked while this page is open and no other job is running.
+                        </div>
                         </div>
                     </div>
                     <button class="btn btn-next" id="btn-next-1" onclick="goToStep2()" disabled>
@@ -1376,14 +1376,12 @@
                     </div>
                 </div>
 
-                <div style="margin-bottom: 16px;">
-                    <label style="font-weight: 700; color: #1f2937;">
-                        <input type="checkbox" id="schedule-observe-only" checked disabled>
-                        Record quality results only, do not reorder streams
-                    </label>
-                </div>
-                <div class="alert alert-warning" style="margin-top: 6px;">
-                    Scheduled Quality Checks are observe-only and never reorder streams.
+                <div class="alert alert-info" style="margin-top: 6px;">
+                    <strong>Scheduled Quality Checks will:</strong>
+                    <ul style="margin: 6px 0 0 18px; color: #374151;">
+                        <li>Perform full quality checks.</li>
+                        <li>Reorder streams automatically based on results.</li>
+                    </ul>
                 </div>
             </div>
             <div class="modal-actions">
@@ -1921,8 +1919,7 @@
             const scheduleType = document.querySelector('input[name="schedule-type"]:checked')?.value || 'once';
             const payload = {
                 schedule_type: scheduleType,
-                groups: selectedGroups,
-                observe_only: true
+                groups: selectedGroups
             };
 
             if (scheduleType === 'once') {
