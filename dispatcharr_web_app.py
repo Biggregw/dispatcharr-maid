@@ -379,6 +379,7 @@ job_lock = threading.Lock()
 _patterns_lock = threading.Lock()
 _regex_presets_lock = threading.Lock()
 _quality_schedule_lock = threading.Lock()
+_quality_schedule_run_lock = threading.Lock()
 
 
 def _channel_selection_patterns_path():
@@ -3311,6 +3312,102 @@ def _has_active_jobs():
         return any(job.status in ('queued', 'running') for job in jobs.values())
 
 
+def _run_due_quality_check_schedules(now=None):
+    if now is None:
+        now = datetime.now()
+    with _quality_schedule_run_lock:
+        with _quality_schedule_lock:
+            schedules = _load_quality_check_schedules()
+
+        due_schedule = None
+        due_time = None
+        for schedule in schedules:
+            if not isinstance(schedule, dict):
+                continue
+            next_run = _compute_next_quality_check_run(schedule, now=now)
+            if not next_run:
+                continue
+            if next_run <= now:
+                if due_time is None or next_run < due_time:
+                    due_time = next_run
+                    due_schedule = schedule
+
+        if not due_schedule:
+            return {'ran': False}
+
+        if _has_active_jobs():
+            return {'ran': False, 'reason': 'job_running'}
+
+        api = DispatcharrAPI()
+        api.login()
+        channels = _resolve_channels_for_groups(api, due_schedule.get('groups') or [])
+        if not channels:
+            return {'ran': False, 'error': 'No channels matched the scheduled groups.'}
+
+        groups = due_schedule.get('groups') or []
+        group_names = []
+        try:
+            all_groups = api.fetch_channel_groups()
+            group_lookup = {g.get('id'): g.get('name') for g in all_groups if isinstance(g, dict)}
+            for gid in groups:
+                group_names.append(group_lookup.get(gid) or f'Group {gid}')
+        except Exception:
+            group_names = [f'Group {gid}' for gid in groups]
+
+        channel_names = f'{len(channels)} channels (scheduled)'
+
+        job_id = str(uuid.uuid4())
+        workspace, config_path = create_job_workspace(job_id)
+        job = Job(
+            job_id,
+            'full_cleanup',
+            groups,
+            channels,
+            None,
+            None,
+            None,
+            False,
+            ', '.join(group_names),
+            channel_names,
+            str(workspace)
+        )
+
+        config = Config(config_path, working_dir=workspace)
+        job.thread = threading.Thread(
+            target=run_job_worker,
+            args=(job, api, config),
+            daemon=True
+        )
+
+        with job_lock:
+            jobs[job_id] = job
+
+        job.thread.start()
+
+        due_schedule['last_run_at'] = now.isoformat()
+        due_schedule['updated_at'] = now.isoformat()
+        next_run_at = _compute_next_quality_check_run(due_schedule, now=now)
+        due_schedule['next_run_at'] = next_run_at.isoformat() if next_run_at else None
+
+        with _quality_schedule_lock:
+            _save_quality_check_schedules(schedules)
+
+        return {'ran': True, 'schedule_id': due_schedule.get('id'), 'job_id': job_id}
+
+
+def _run_quality_schedule_loop(interval_seconds=60):
+    logging.info("Starting quality schedule loop (interval=%s seconds).", interval_seconds)
+    try:
+        while True:
+            try:
+                _run_due_quality_check_schedules()
+            except Exception as exc:
+                logging.warning("Quality schedule loop error: %s", exc)
+            time.sleep(interval_seconds)
+    except KeyboardInterrupt:
+        logging.info("Quality schedule loop stopped.")
+
+
 @app.route('/api/quality-check-schedules', methods=['GET'])
 @login_required
 def api_list_quality_check_schedules():
@@ -3417,84 +3514,10 @@ def api_delete_quality_check_schedule(schedule_id):
 @login_required
 def api_run_due_quality_check_schedules():
     try:
-        now = datetime.now()
-        with _quality_schedule_lock:
-            schedules = _load_quality_check_schedules()
-
-        due_schedule = None
-        due_time = None
-        for schedule in schedules:
-            if not isinstance(schedule, dict):
-                continue
-            next_run = _compute_next_quality_check_run(schedule, now=now)
-            if not next_run:
-                continue
-            if next_run <= now:
-                if due_time is None or next_run < due_time:
-                    due_time = next_run
-                    due_schedule = schedule
-
-        if not due_schedule:
-            return jsonify({'success': True, 'ran': False})
-
-        if _has_active_jobs():
-            return jsonify({'success': True, 'ran': False, 'reason': 'job_running'})
-
-        api = DispatcharrAPI()
-        api.login()
-        channels = _resolve_channels_for_groups(api, due_schedule.get('groups') or [])
-        if not channels:
-            return jsonify({'success': False, 'error': 'No channels matched the scheduled groups.'}), 400
-
-        groups = due_schedule.get('groups') or []
-        group_names = []
-        try:
-            all_groups = api.fetch_channel_groups()
-            group_lookup = {g.get('id'): g.get('name') for g in all_groups if isinstance(g, dict)}
-            for gid in groups:
-                group_names.append(group_lookup.get(gid) or f'Group {gid}')
-        except Exception:
-            group_names = [f'Group {gid}' for gid in groups]
-
-        channel_names = f'{len(channels)} channels (scheduled)'
-
-        job_id = str(uuid.uuid4())
-        workspace, config_path = create_job_workspace(job_id)
-        job = Job(
-            job_id,
-            'full_cleanup',
-            groups,
-            channels,
-            None,
-            None,
-            None,
-            False,
-            ', '.join(group_names),
-            channel_names,
-            str(workspace)
-        )
-
-        config = Config(config_path, working_dir=workspace)
-        job.thread = threading.Thread(
-            target=run_job_worker,
-            args=(job, api, config),
-            daemon=True
-        )
-
-        with job_lock:
-            jobs[job_id] = job
-
-        job.thread.start()
-
-        due_schedule['last_run_at'] = now.isoformat()
-        due_schedule['updated_at'] = now.isoformat()
-        next_run_at = _compute_next_quality_check_run(due_schedule, now=now)
-        due_schedule['next_run_at'] = next_run_at.isoformat() if next_run_at else None
-
-        with _quality_schedule_lock:
-            _save_quality_check_schedules(schedules)
-
-        return jsonify({'success': True, 'ran': True, 'schedule_id': due_schedule.get('id'), 'job_id': job_id})
+        result = _run_due_quality_check_schedules()
+        if result.get('error'):
+            return jsonify({'success': False, 'error': result['error']}), 400
+        return jsonify({'success': True, **result})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -5354,5 +5377,11 @@ if __name__ == '__main__':
     print("\nPress Ctrl+C to stop")
     print("="*70 + "\n")
     
+    schedule_thread = threading.Thread(
+        target=_run_quality_schedule_loop,
+        daemon=True
+    )
+    schedule_thread.start()
+
     # Run on all interfaces
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
