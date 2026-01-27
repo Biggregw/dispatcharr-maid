@@ -905,6 +905,51 @@
             color: #764ba2;
         }
 
+        .schedule-panel {
+            margin-top: 10px;
+            padding: 12px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 0.9em;
+        }
+
+        .schedule-panel h4 {
+            margin: 0 0 8px 0;
+            font-size: 0.95em;
+            color: #1f2937;
+        }
+
+        .schedule-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .schedule-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 8px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+        }
+
+        .schedule-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            color: #374151;
+        }
+
+        .schedule-note {
+            color: #6b7280;
+            font-size: 0.85em;
+            margin-top: 8px;
+        }
+
     </style>
 </head>
 <body>
@@ -949,7 +994,18 @@
                 </div>
                 <div class="group-grid" id="group-grid"></div>
                 <div class="nav-buttons">
-                    <div></div>
+                    <div>
+                        <button class="btn btn-back" id="btn-schedule-quality" type="button" onclick="openQualityScheduleModal()" disabled>
+                            Schedule Quality Check
+                        </button>
+                        <div class="schedule-panel" id="quality-schedule-panel">
+                            <h4>Scheduled Quality Checks</h4>
+                            <div class="schedule-list" id="quality-schedule-list"></div>
+                            <div class="schedule-note">
+                                Scheduled runs are triggered while this page is open and no other job is running.
+                            </div>
+                        </div>
+                    </div>
                     <button class="btn btn-next" id="btn-next-1" onclick="goToStep2()" disabled>
                         Next: Select Channels →
                     </button>
@@ -1266,6 +1322,77 @@
         </div>
     </div>
 
+    <div id="quality-schedule-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">Schedule Quality Check</div>
+                <button class="btn btn-back" onclick="closeQualityScheduleModal()">✖</button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info" style="margin-bottom: 12px;">
+                    Selected groups are read-only here. Close this window to change the selection.
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <label style="font-weight: 700; color: #1f2937;">Selected Channel Groups</label>
+                    <div id="quality-schedule-groups" style="margin-top: 6px; color: #374151;"></div>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label style="font-weight: 700; color: #1f2937;">Schedule type</label>
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px;">
+                        <label><input type="radio" name="schedule-type" value="once" checked> Run once</label>
+                        <label><input type="radio" name="schedule-type" value="recurring"> Run on a schedule</label>
+                    </div>
+                </div>
+
+                <div id="schedule-once-fields" style="margin-bottom: 16px;">
+                    <label style="font-weight: 700; color: #1f2937;">Run once</label>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px;">
+                        <input type="date" id="schedule-once-date">
+                        <input type="time" id="schedule-once-time">
+                    </div>
+                </div>
+
+                <div id="schedule-recurring-fields" class="hidden" style="margin-bottom: 16px;">
+                    <label style="font-weight: 700; color: #1f2937;">Run on a schedule</label>
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px;">
+                        <label><input type="radio" name="schedule-frequency" value="daily" checked> Daily</label>
+                        <label><input type="radio" name="schedule-frequency" value="weekly"> Weekly</label>
+                    </div>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px;">
+                        <input type="time" id="schedule-recurring-time">
+                    </div>
+                    <div id="schedule-weekly-days" class="hidden" style="margin-top: 10px;">
+                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">Days</div>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <label><input type="checkbox" value="0"> Sun</label>
+                            <label><input type="checkbox" value="1"> Mon</label>
+                            <label><input type="checkbox" value="2"> Tue</label>
+                            <label><input type="checkbox" value="3"> Wed</label>
+                            <label><input type="checkbox" value="4"> Thu</label>
+                            <label><input type="checkbox" value="5"> Fri</label>
+                            <label><input type="checkbox" value="6"> Sat</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label style="font-weight: 700; color: #1f2937;">
+                        <input type="checkbox" id="schedule-observe-only" checked disabled>
+                        Record quality results only, do not reorder streams
+                    </label>
+                </div>
+                <div class="alert alert-warning" style="margin-top: 6px;">
+                    Scheduled Quality Checks are observe-only and never reorder streams.
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-back" onclick="closeQualityScheduleModal()">Cancel</button>
+                <button class="btn btn-next" onclick="saveQualitySchedule()">Save schedule</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Global state
         let selectedGroups = [];
@@ -1291,6 +1418,8 @@
             injectedIncludes: []
         };
         let refreshSelectorsDirty = false;
+        let qualitySchedules = [];
+        let lastScheduleRunCheck = 0;
 
         // One-shot auto-scroll: when a user starts a job, scroll the "Current Job"
         // card into the center of the viewport once (and only once).
@@ -1351,6 +1480,7 @@
             loadGroups();
             loadJobHistory();
             loadProviderRanking();
+            loadQualitySchedules();
             const selectAllBtn = document.getElementById('refresh-select-all');
             const deselectAllBtn = document.getElementById('refresh-deselect-all');
             if (selectAllBtn) {
@@ -1367,6 +1497,12 @@
             if (cancelSelectorsBtn) {
                 cancelSelectorsBtn.addEventListener('click', resetRefreshSelectors);
             }
+            document.querySelectorAll('input[name="schedule-type"]').forEach(radio => {
+                radio.addEventListener('change', updateQualityScheduleFields);
+            });
+            document.querySelectorAll('input[name="schedule-frequency"]').forEach(radio => {
+                radio.addEventListener('change', updateQualityScheduleFields);
+            });
 
             // Check for active jobs periodically
             setInterval(checkActiveJobs, 2000);
@@ -1381,6 +1517,7 @@
                 if (data.success) {
                     allGroups = data.groups;
                     renderGroups();
+                    renderQualitySchedules();
                     document.getElementById('group-loading').classList.add('hidden');
                     document.getElementById('group-container').classList.remove('hidden');
                 } else {
@@ -1435,7 +1572,12 @@
         // Update step 1 button
         function updateStep1Button() {
             const btn = document.getElementById('btn-next-1');
-            btn.disabled = selectedGroups.length === 0;
+            const scheduleBtn = document.getElementById('btn-schedule-quality');
+            const disabled = selectedGroups.length === 0;
+            btn.disabled = disabled;
+            if (scheduleBtn) {
+                scheduleBtn.disabled = disabled;
+            }
         }
         
         // Go to step 2
@@ -1641,6 +1783,229 @@
             document.getElementById('step-1').classList.remove('hidden');
             document.getElementById('step-2').classList.add('hidden');
             document.getElementById('step-3').classList.add('hidden');
+        }
+
+        function openQualityScheduleModal() {
+            renderQualityScheduleGroups();
+            resetQualityScheduleForm();
+            updateQualityScheduleFields();
+            document.getElementById('quality-schedule-modal').classList.remove('hidden');
+        }
+
+        function closeQualityScheduleModal() {
+            document.getElementById('quality-schedule-modal').classList.add('hidden');
+        }
+
+        function renderQualityScheduleGroups() {
+            const container = document.getElementById('quality-schedule-groups');
+            if (!container) return;
+            if (!selectedGroups.length) {
+                container.textContent = 'No groups selected.';
+                return;
+            }
+            const names = selectedGroups.map(id => {
+                const group = allGroups.find(g => g.id === id);
+                return group ? group.name : `Group ${id}`;
+            });
+            container.textContent = names.join(', ');
+        }
+
+        function resetQualityScheduleForm() {
+            const scheduleType = document.querySelector('input[name="schedule-type"][value="once"]');
+            if (scheduleType) scheduleType.checked = true;
+            const frequency = document.querySelector('input[name="schedule-frequency"][value="daily"]');
+            if (frequency) frequency.checked = true;
+            const onceDate = document.getElementById('schedule-once-date');
+            const onceTime = document.getElementById('schedule-once-time');
+            const recurringTime = document.getElementById('schedule-recurring-time');
+            if (onceDate) onceDate.value = '';
+            if (onceTime) onceTime.value = '';
+            if (recurringTime) recurringTime.value = '';
+            document.querySelectorAll('#schedule-weekly-days input[type="checkbox"]').forEach(cb => {
+                cb.checked = false;
+            });
+        }
+
+        function updateQualityScheduleFields() {
+            const scheduleType = document.querySelector('input[name="schedule-type"]:checked')?.value || 'once';
+            const isRecurring = scheduleType === 'recurring';
+            const frequency = document.querySelector('input[name="schedule-frequency"]:checked')?.value || 'daily';
+
+            const onceFields = document.getElementById('schedule-once-fields');
+            const recurringFields = document.getElementById('schedule-recurring-fields');
+            const weeklyDays = document.getElementById('schedule-weekly-days');
+
+            if (onceFields) onceFields.classList.toggle('hidden', isRecurring);
+            if (recurringFields) recurringFields.classList.toggle('hidden', !isRecurring);
+            if (weeklyDays) weeklyDays.classList.toggle('hidden', !isRecurring || frequency !== 'weekly');
+        }
+
+        async function loadQualitySchedules() {
+            const list = document.getElementById('quality-schedule-list');
+            if (!list) return;
+            list.innerHTML = '<div class="alert alert-info">Loading schedules...</div>';
+            try {
+                const response = await fetch('/api/quality-check-schedules', { cache: 'no-store' });
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.error || 'Failed to load schedules.');
+                }
+                qualitySchedules = data.schedules || [];
+                renderQualitySchedules();
+            } catch (error) {
+                list.innerHTML = `<div class="alert alert-error">Unable to load schedules: ${escapeHtml(error.message)}</div>`;
+            }
+        }
+
+        function renderQualitySchedules() {
+            const list = document.getElementById('quality-schedule-list');
+            if (!list) return;
+            if (!qualitySchedules.length) {
+                list.innerHTML = '<div class="alert alert-info">No Quality Check schedules yet.</div>';
+                return;
+            }
+            list.innerHTML = qualitySchedules.map(schedule => {
+                const typeLabel = schedule.schedule_type === 'once'
+                    ? 'Run once'
+                    : schedule.frequency === 'weekly'
+                        ? 'Weekly'
+                        : 'Daily';
+                const groupNames = (schedule.groups || []).map(id => {
+                    const group = allGroups.find(g => g.id === id);
+                    return group ? group.name : `Group ${id}`;
+                }).join(', ') || 'Unknown groups';
+                const nextRun = formatScheduleNextRun(schedule);
+                return `
+                    <div class="schedule-item">
+                        <div class="schedule-meta">
+                            <div><strong>${escapeHtml(typeLabel)}</strong></div>
+                            <div>Groups: ${escapeHtml(groupNames)}</div>
+                            <div>Next run: ${escapeHtml(nextRun)}</div>
+                        </div>
+                        <button class="btn btn-back" type="button" onclick="deleteQualitySchedule('${schedule.id}')">Delete</button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function formatScheduleNextRun(schedule) {
+            if (schedule.schedule_type === 'once' && schedule.last_run_at) {
+                return `Completed (${formatDateTime(schedule.last_run_at)})`;
+            }
+            if (schedule.next_run_at) {
+                const nextDate = new Date(schedule.next_run_at);
+                if (!isNaN(nextDate.getTime())) {
+                    const now = new Date();
+                    if (nextDate <= now) {
+                        return `Due now (${formatDateTime(schedule.next_run_at)})`;
+                    }
+                }
+                return formatDateTime(schedule.next_run_at);
+            }
+            return 'Not scheduled';
+        }
+
+        function formatDateTime(value) {
+            const date = new Date(value);
+            if (isNaN(date.getTime())) {
+                return String(value || '');
+            }
+            return date.toLocaleString();
+        }
+
+        async function saveQualitySchedule() {
+            if (!selectedGroups.length) {
+                alert('Select at least one channel group before scheduling.');
+                return;
+            }
+            const scheduleType = document.querySelector('input[name="schedule-type"]:checked')?.value || 'once';
+            const payload = {
+                schedule_type: scheduleType,
+                groups: selectedGroups,
+                observe_only: true
+            };
+
+            if (scheduleType === 'once') {
+                const dateValue = document.getElementById('schedule-once-date')?.value;
+                const timeValue = document.getElementById('schedule-once-time')?.value;
+                if (!dateValue || !timeValue) {
+                    alert('Choose both a date and time for the run-once schedule.');
+                    return;
+                }
+                payload.run_date = dateValue;
+                payload.run_time = timeValue;
+            } else {
+                const frequency = document.querySelector('input[name="schedule-frequency"]:checked')?.value || 'daily';
+                const timeValue = document.getElementById('schedule-recurring-time')?.value;
+                if (!timeValue) {
+                    alert('Choose a time for the recurring schedule.');
+                    return;
+                }
+                payload.frequency = frequency;
+                payload.run_time = timeValue;
+                if (frequency === 'weekly') {
+                    const days = Array.from(document.querySelectorAll('#schedule-weekly-days input[type="checkbox"]:checked'))
+                        .map(cb => parseInt(cb.value, 10))
+                        .filter(Number.isFinite);
+                    if (!days.length) {
+                        alert('Select at least one day for a weekly schedule.');
+                        return;
+                    }
+                    payload.days_of_week = days;
+                }
+            }
+
+            try {
+                const response = await fetch('/api/quality-check-schedules', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.error || 'Unable to save schedule.');
+                }
+                closeQualityScheduleModal();
+                await loadQualitySchedules();
+            } catch (error) {
+                alert(`Failed to save schedule: ${error.message}`);
+            }
+        }
+
+        async function deleteQualitySchedule(scheduleId) {
+            if (!scheduleId) return;
+            if (!confirm('Delete this scheduled Quality Check?')) return;
+            try {
+                const response = await fetch(`/api/quality-check-schedules/${scheduleId}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.error || 'Unable to delete schedule.');
+                }
+                await loadQualitySchedules();
+            } catch (error) {
+                alert(`Failed to delete schedule: ${error.message}`);
+            }
+        }
+
+        async function runDueQualitySchedules() {
+            const now = Date.now();
+            if (now - lastScheduleRunCheck < 60000) {
+                return;
+            }
+            lastScheduleRunCheck = now;
+            try {
+                const response = await fetch('/api/quality-check-schedules/run-due', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (data.success && data.ran) {
+                    await loadQualitySchedules();
+                }
+            } catch (error) {
+                // Silently ignore schedule runner errors.
+            }
         }
 
         function getSelectedChannelName(channelId) {
@@ -2672,6 +3037,7 @@
         // Check for active jobs
         async function checkActiveJobs() {
             try {
+                runDueQualitySchedules();
                 const response = await fetch('/api/jobs');
                 const data = await response.json();
                 
