@@ -22,7 +22,7 @@ import fcntl
 import requests
 from urllib.parse import urlparse
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from queue import Queue
 
@@ -378,6 +378,7 @@ job_lock = threading.Lock()
 
 _patterns_lock = threading.Lock()
 _regex_presets_lock = threading.Lock()
+_quality_schedule_lock = threading.Lock()
 
 
 def _channel_selection_patterns_path():
@@ -388,6 +389,10 @@ def _channel_selection_patterns_path():
 def _stream_name_regex_presets_path():
     # Persisted UI state for stream-name regex overrides.
     return Path('logs/stream_name_regex_presets.json')
+
+
+def _quality_check_schedules_path():
+    return Path('logs/quality_check_schedules.json')
 
 
 def _load_stream_name_regex_presets():
@@ -406,6 +411,23 @@ def _load_stream_name_regex_presets():
         return []
     except Exception:
         return []
+
+
+def _load_quality_check_schedules():
+    path = _quality_check_schedules_path()
+    if not path.exists():
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_quality_check_schedules(schedules):
+    path = _quality_check_schedules_path()
+    _atomic_json_write(path, schedules)
 
 
 def _atomic_json_write(path: Path, payload):
@@ -451,6 +473,79 @@ def _normalize_id_list(values):
 
 def _normalize_text(value):
     return str(value or '').strip()
+
+
+def _parse_time_of_day(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.strptime(value.strip(), '%H:%M').time()
+    except ValueError:
+        return None
+
+
+def _parse_run_once_datetime(date_str, time_str):
+    if not isinstance(date_str, str) or not isinstance(time_str, str):
+        return None
+    try:
+        return datetime.strptime(f'{date_str.strip()} {time_str.strip()}', '%Y-%m-%d %H:%M')
+    except ValueError:
+        return None
+
+
+def _compute_next_quality_check_run(schedule, now=None):
+    if now is None:
+        now = datetime.now()
+    schedule_type = schedule.get('schedule_type')
+    last_run_at = schedule.get('last_run_at')
+    if last_run_at:
+        try:
+            last_run_at = datetime.fromisoformat(last_run_at)
+        except ValueError:
+            last_run_at = None
+
+    if schedule_type == 'once':
+        run_once_at = schedule.get('run_once_at')
+        if not run_once_at:
+            return None
+        try:
+            run_once_at = datetime.fromisoformat(run_once_at)
+        except ValueError:
+            return None
+        if last_run_at:
+            return None
+        return run_once_at
+
+    if schedule_type == 'recurring':
+        frequency = schedule.get('frequency')
+        time_of_day = _parse_time_of_day(schedule.get('time_of_day'))
+        if not time_of_day:
+            return None
+
+        candidate = datetime.combine(now.date(), time_of_day)
+        if frequency == 'daily':
+            if candidate <= now:
+                candidate = candidate + timedelta(days=1)
+            return candidate
+
+        if frequency == 'weekly':
+            days = schedule.get('days_of_week') or []
+            if not isinstance(days, list) or not days:
+                return None
+            try:
+                days_set = {(int(day) + 6) % 7 for day in days}
+            except Exception:
+                return None
+            for offset in range(7):
+                day_candidate = now.date() + timedelta(days=offset)
+                if day_candidate.weekday() not in days_set:
+                    continue
+                candidate = datetime.combine(day_candidate, time_of_day)
+                if candidate > now:
+                    return candidate
+            return datetime.combine(now.date() + timedelta(days=7), time_of_day)
+
+    return None
 
 
 def _regex_preset_identity(groups=None, channels=None, base_search_text=None, regex=None, regex_mode=None):
@@ -777,6 +872,19 @@ def _resolve_channels_for_pattern(api, pattern):
     details.sort(key=_sort_key)
     channel_ids = [d['id'] for d in details]
     return channel_ids, details
+
+
+def _resolve_channels_for_groups(api, group_ids):
+    allowed_groups = {int(g) for g in (group_ids or []) if g is not None}
+    all_channels = api.fetch_channels()
+    channels = [
+        ch for ch in all_channels
+        if isinstance(ch, dict)
+        and ch.get('id') is not None
+        and ch.get('channel_group_id') in allowed_groups
+    ]
+    channels.sort(key=lambda x: (x.get('channel_group_id', 0), x.get('channel_number', 0)))
+    return [int(ch['id']) for ch in channels if ch.get('id') is not None]
 
 
 def _resolve_channels_for_preset(api, preset):
@@ -3187,6 +3295,207 @@ def api_channels():
         
         return jsonify({'success': True, 'channels': channels_by_group})
 
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _quality_schedule_payload(schedule, now=None):
+    payload = dict(schedule)
+    next_run = _compute_next_quality_check_run(schedule, now=now)
+    payload['next_run_at'] = next_run.isoformat() if next_run else None
+    return _make_json_safe(payload)
+
+
+def _has_active_jobs():
+    with job_lock:
+        return any(job.status in ('queued', 'running') for job in jobs.values())
+
+
+@app.route('/api/quality-check-schedules', methods=['GET'])
+@login_required
+def api_list_quality_check_schedules():
+    try:
+        with _quality_schedule_lock:
+            schedules = _load_quality_check_schedules()
+        now = datetime.now()
+        payloads = []
+        for schedule in schedules:
+            if not isinstance(schedule, dict):
+                continue
+            payloads.append(_quality_schedule_payload(schedule, now=now))
+        return jsonify({'success': True, 'schedules': payloads})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/quality-check-schedules', methods=['POST'])
+@login_required
+def api_create_quality_check_schedule():
+    try:
+        data = request.get_json() or {}
+        groups = data.get('groups') or []
+        if not isinstance(groups, list) or not groups:
+            return jsonify({'success': False, 'error': '"groups" must be a non-empty list'}), 400
+        group_ids = []
+        for g in groups:
+            try:
+                group_ids.append(int(g))
+            except Exception:
+                return jsonify({'success': False, 'error': f'Invalid group id: {g}'}), 400
+
+        observe_only = data.get('observe_only')
+        if observe_only is False:
+            return jsonify({'success': False, 'error': 'Scheduled Quality Checks must be observe-only.'}), 400
+
+        schedule_type = (data.get('schedule_type') or '').strip().lower()
+        if schedule_type not in ('once', 'recurring'):
+            return jsonify({'success': False, 'error': '"schedule_type" must be "once" or "recurring"'}), 400
+
+        schedule = {
+            'id': str(uuid.uuid4()),
+            'schedule_type': schedule_type,
+            'groups': group_ids,
+            'observe_only': True,
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat(),
+            'last_run_at': None,
+        }
+
+        if schedule_type == 'once':
+            run_date = data.get('run_date')
+            run_time = data.get('run_time')
+            run_once_at = _parse_run_once_datetime(run_date, run_time)
+            if not run_once_at:
+                return jsonify({'success': False, 'error': 'Valid "run_date" and "run_time" are required.'}), 400
+            schedule['run_once_at'] = run_once_at.isoformat()
+        else:
+            frequency = (data.get('frequency') or '').strip().lower()
+            if frequency not in ('daily', 'weekly'):
+                return jsonify({'success': False, 'error': '"frequency" must be "daily" or "weekly".'}), 400
+            time_of_day = data.get('run_time')
+            if not _parse_time_of_day(time_of_day):
+                return jsonify({'success': False, 'error': 'Valid "run_time" is required.'}), 400
+            schedule['frequency'] = frequency
+            schedule['time_of_day'] = time_of_day
+            if frequency == 'weekly':
+                days = data.get('days_of_week') or []
+                if not isinstance(days, list) or not days:
+                    return jsonify({'success': False, 'error': 'Select at least one day for weekly schedules.'}), 400
+                try:
+                    schedule['days_of_week'] = [int(day) for day in days]
+                except Exception:
+                    return jsonify({'success': False, 'error': 'Weekly days must be integers.'}), 400
+
+        next_run = _compute_next_quality_check_run(schedule)
+        schedule['next_run_at'] = next_run.isoformat() if next_run else None
+
+        with _quality_schedule_lock:
+            schedules = _load_quality_check_schedules()
+            schedules.insert(0, schedule)
+            _save_quality_check_schedules(schedules)
+
+        return jsonify({'success': True, 'schedule': _quality_schedule_payload(schedule)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/quality-check-schedules/<schedule_id>', methods=['DELETE'])
+@login_required
+def api_delete_quality_check_schedule(schedule_id):
+    try:
+        with _quality_schedule_lock:
+            schedules = _load_quality_check_schedules()
+            remaining = [s for s in schedules if isinstance(s, dict) and str(s.get('id')) != str(schedule_id)]
+            if len(remaining) == len(schedules):
+                return jsonify({'success': False, 'error': 'Schedule not found.'}), 404
+            _save_quality_check_schedules(remaining)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/quality-check-schedules/run-due', methods=['POST'])
+@login_required
+def api_run_due_quality_check_schedules():
+    try:
+        now = datetime.now()
+        with _quality_schedule_lock:
+            schedules = _load_quality_check_schedules()
+
+        due_schedule = None
+        due_time = None
+        for schedule in schedules:
+            if not isinstance(schedule, dict):
+                continue
+            next_run = _compute_next_quality_check_run(schedule, now=now)
+            if not next_run:
+                continue
+            if next_run <= now:
+                if due_time is None or next_run < due_time:
+                    due_time = next_run
+                    due_schedule = schedule
+
+        if not due_schedule:
+            return jsonify({'success': True, 'ran': False})
+
+        if _has_active_jobs():
+            return jsonify({'success': True, 'ran': False, 'reason': 'job_running'})
+
+        api = DispatcharrAPI()
+        api.login()
+        channels = _resolve_channels_for_groups(api, due_schedule.get('groups') or [])
+        if not channels:
+            return jsonify({'success': False, 'error': 'No channels matched the scheduled groups.'}), 400
+
+        groups = due_schedule.get('groups') or []
+        group_names = []
+        try:
+            all_groups = api.fetch_channel_groups()
+            group_lookup = {g.get('id'): g.get('name') for g in all_groups if isinstance(g, dict)}
+            for gid in groups:
+                group_names.append(group_lookup.get(gid) or f'Group {gid}')
+        except Exception:
+            group_names = [f'Group {gid}' for gid in groups]
+
+        channel_names = f'{len(channels)} channels (scheduled)'
+
+        job_id = str(uuid.uuid4())
+        workspace, config_path = create_job_workspace(job_id)
+        job = Job(
+            job_id,
+            'full_cleanup_plan',
+            groups,
+            channels,
+            None,
+            None,
+            None,
+            False,
+            ', '.join(group_names),
+            channel_names,
+            str(workspace)
+        )
+
+        config = Config(config_path, working_dir=workspace)
+        job.thread = threading.Thread(
+            target=run_job_worker,
+            args=(job, api, config),
+            daemon=True
+        )
+
+        with job_lock:
+            jobs[job_id] = job
+
+        job.thread.start()
+
+        due_schedule['last_run_at'] = now.isoformat()
+        due_schedule['updated_at'] = now.isoformat()
+        next_run_at = _compute_next_quality_check_run(due_schedule, now=now)
+        due_schedule['next_run_at'] = next_run_at.isoformat() if next_run_at else None
+
+        with _quality_schedule_lock:
+            _save_quality_check_schedules(schedules)
+
+        return jsonify({'success': True, 'ran': True, 'schedule_id': due_schedule.get('id'), 'job_id': job_id})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
