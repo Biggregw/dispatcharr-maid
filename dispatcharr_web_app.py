@@ -162,6 +162,28 @@ def _append_dispatcharr_snapshot():
         return
 
 
+def _get_refresh_injected_includes(channel_id):
+    """Return injected includes for a channel based on its current stream names."""
+    try:
+        api = DispatcharrAPI()
+        api.login()
+        current_streams = api.fetch_channel_streams(channel_id)
+    except Exception as exc:
+        logging.warning(
+            "Failed to load injected includes for channel %s: %s",
+            channel_id,
+            exc,
+        )
+        return []
+
+    injected_includes = []
+    for stream in current_streams or []:
+        name = stream.get('name') if isinstance(stream, dict) else None
+        if isinstance(name, str) and name:
+            injected_includes.append(name)
+    return injected_includes
+
+
 def _parse_snapshot_interval_seconds(default_seconds=1800):
     env_value = os.getenv("DISPATCHARR_SNAPSHOT_INTERVAL_SECONDS")
     if env_value:
@@ -3485,7 +3507,13 @@ def api_refresh_settings():
 
         selectors = _load_refresh_selectors(config, channel_id)
         exclusions = _load_refresh_exclusions(config, channel_id)
-        return jsonify({'success': True, 'selectors': selectors, 'exclusions': exclusions})
+        injected_includes = _get_refresh_injected_includes(channel_id)
+        return jsonify({
+            'success': True,
+            'selectors': selectors,
+            'exclusions': exclusions,
+            'injected_includes': injected_includes
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

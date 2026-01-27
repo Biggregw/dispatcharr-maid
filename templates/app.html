@@ -1294,7 +1294,8 @@
             persistedSelectors: [],
             draftSelectors: [],
             suggestedSelectors: [],
-            exclusions: []
+            exclusions: [],
+            injectedIncludes: []
         };
         let refreshSelectorsDirty = false;
 
@@ -1686,11 +1687,13 @@
                 refreshSelectorState.persistedSelectors = Array.isArray(data.selectors) ? data.selectors : [];
                 refreshSelectorState.draftSelectors = refreshSelectorState.persistedSelectors.map(sel => ({ ...sel }));
                 refreshSelectorState.exclusions = Array.isArray(data.exclusions) ? data.exclusions : [];
+                refreshSelectorState.injectedIncludes = Array.isArray(data.injected_includes) ? data.injected_includes : [];
                 refreshSelectorState.suggestedSelectors = buildSuggestedSelectors(channelId, refreshSelectorState.persistedSelectors);
                 refreshSelectorsDirty = false;
                 renderRefreshSelectors();
                 renderRefreshSuggestedSelectors();
                 renderRefreshExclusions();
+                updateInjectedIncludes(refreshSelectorState.injectedIncludes);
             } catch (error) {
                 console.error('Failed to load refresh settings:', error);
                 const status = document.getElementById('refresh-selectors-status');
@@ -1709,6 +1712,7 @@
             renderRefreshSelectors();
             renderRefreshSuggestedSelectors();
             renderRefreshExclusions();
+            updateInjectedIncludes(refreshSelectorState.injectedIncludes);
         }
 
         function ensureSelectorSlots(selectors) {
@@ -1884,10 +1888,15 @@
                 refreshSelectorState.persistedSelectors = selectors.map(sel => ({ ...sel }));
                 refreshSelectorState.draftSelectors = selectors.map(sel => ({ ...sel }));
                 refreshSelectorState.exclusions = Array.isArray(data.exclusions) ? data.exclusions : refreshSelectorState.exclusions;
+                refreshSelectorState.injectedIncludes = Array.isArray(data.injected_includes)
+                    ? data.injected_includes
+                    : refreshSelectorState.injectedIncludes;
                 refreshSelectorState.suggestedSelectors = buildSuggestedSelectors(refreshSelectorState.channelId, selectors);
                 refreshSelectorsDirty = false;
                 renderRefreshSelectors();
                 renderRefreshSuggestedSelectors();
+                renderRefreshExclusions();
+                updateInjectedIncludes(refreshSelectorState.injectedIncludes);
                 updateRefreshSelectorStatus();
             } catch (error) {
                 const status = document.getElementById('refresh-selectors-status');
