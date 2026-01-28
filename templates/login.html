@@ -10,10 +10,10 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--app-bg);
             min-height: 100vh;
             padding: 20px;
-            color: #111827;
+            color: var(--text-primary);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -21,27 +21,27 @@
         .card {
             width: 100%;
             max-width: 460px;
-            background: rgba(255, 255, 255, 0.96);
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.25);
-            padding: 22px;
+            background: var(--surface-raised);
+            border-radius: 18px;
+            box-shadow: var(--shadow-raised);
+            padding: 24px;
         }
         .title {
             text-align: center;
             margin-top: 8px;
             margin-bottom: 16px;
-            color: #111827;
+            color: var(--accent-strong);
             font-weight: 800;
             font-size: 1.25em;
         }
         .error {
             margin: 10px 0 14px 0;
             padding: 10px 12px;
-            border-radius: 10px;
-            background: #fff5f5;
-            border: 1px solid #fed7d7;
-            color: #742a2a;
+            border-radius: 12px;
+            background: var(--danger-soft);
+            color: var(--danger);
             font-weight: 600;
+            box-shadow: var(--shadow-inset);
         }
         .form {
             display: grid;
@@ -50,43 +50,45 @@
         label {
             font-size: 0.95em;
             font-weight: 700;
-            color: #374151;
+            color: var(--text-muted);
             margin-bottom: 6px;
             display: inline-block;
         }
         input {
             width: 100%;
             padding: 12px 12px;
-            border: 2px solid #e5e7eb;
-            border-radius: 10px;
+            border: none;
+            border-radius: 12px;
             font-size: 1em;
-            background: #fff;
+            background: var(--surface-inset);
+            box-shadow: var(--shadow-inset);
+            color: var(--text-primary);
         }
         input:focus {
             outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.18);
+            box-shadow: var(--shadow-inset), 0 0 0 3px rgba(107, 91, 209, 0.2);
         }
         .btn {
             margin-top: 6px;
             width: 100%;
             padding: 12px 14px;
             border: none;
-            border-radius: 10px;
+            border-radius: 12px;
             font-weight: 800;
             font-size: 1em;
             cursor: pointer;
-            color: #fff;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: var(--accent-strong);
+            background: var(--accent-soft);
+            box-shadow: var(--shadow-soft);
             transition: transform 0.15s ease, box-shadow 0.15s ease;
         }
         .btn:hover {
             transform: translateY(-1px);
-            box-shadow: 0 10px 24px rgba(0,0,0,0.18);
+            box-shadow: var(--shadow-raised);
         }
         .hint {
             margin-top: 14px;
-            color: #6b7280;
+            color: var(--text-muted);
             text-align: center;
             font-size: 0.92em;
             line-height: 1.35;
@@ -97,9 +99,9 @@
     <div class="card">
         <div class="brand" aria-label="Dispatcharr Maid">
             <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="Dispatcharr Maid">
-            <div class="brand-text" style="color:#111827;">
+            <div class="brand-text" style="color:var(--text-primary);">
                 <h1 style="font-size:1.6em;">Dispatcharr Maid</h1>
-                <p style="color:#4b5563;">Sign in</p>
+                <p style="color:var(--text-muted);">Sign in</p>
             </div>
         </div>
 

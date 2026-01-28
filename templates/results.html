@@ -8,39 +8,43 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='brand.css') }}">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; color: #333; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto; background: var(--app-bg); min-height: 100vh; padding: 20px; color: var(--text-primary); }
         .container { max-width: 1600px; margin: 0 auto; }
-        .header { text-align: center; color: white; margin-bottom: 30px; }
-        .header h1 { font-size: 2.5em; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        .header { text-align: center; color: var(--text-primary); margin-bottom: 30px; }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; color: var(--accent-strong); text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.9); }
         .nav-buttons { text-align: center; margin-bottom: 20px; }
-        .btn { padding: 12px 30px; border: none; border-radius: 8px; font-size: 1em; font-weight: 600; cursor: pointer; background: white; color: #667eea; margin: 0 10px; transition: all 0.3s; text-decoration: none; display: inline-block; }
-        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
-        .card { background: white; border-radius: 15px; padding: 25px; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
-        .card h2 { color: #667eea; margin-bottom: 20px; font-size: 1.5em; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
+        .btn { padding: 12px 30px; border: none; border-radius: 12px; font-size: 1em; font-weight: 700; cursor: pointer; background: var(--surface-raised); color: var(--accent-strong); margin: 0 10px; transition: all 0.3s; text-decoration: none; display: inline-block; box-shadow: var(--shadow-soft); }
+        .btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-raised); }
+        .card { background: var(--surface-raised); border-radius: 18px; padding: 25px; margin-bottom: 20px; box-shadow: var(--shadow-raised); }
+        .card h2 { color: var(--accent-strong); margin-bottom: 20px; font-size: 1.5em; border-bottom: 1px solid rgba(86, 70, 194, 0.2); padding-bottom: 10px; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
-        .stat-box { background: #f7fafc; padding: 20px; border-radius: 10px; border-left: 4px solid #667eea; }
-        .stat-label { color: #718096; font-size: 0.9em; margin-bottom: 5px; }
-        .stat-value { font-size: 2em; font-weight: bold; color: #2d3748; }
-        .stat-value.success { color: #38a169; }
-        .stat-value.failed { color: #e53e3e; }
-        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
-        th { background: #eef2ff; color: #667eea; font-weight: 600; }
-        tr:hover { background: #f7fafc; }
-        .success-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 0.9em; font-weight: 600; }
-        .success-badge.excellent { background: #c6f6d5; color: #22543d; }
-        .success-badge.good { background: #bee3f8; color: #2c5282; }
-        .success-badge.fair { background: #feebc8; color: #7c2d12; }
-        .success-badge.poor { background: #fed7d7; color: #742a2a; }
-        .capacity-warning { margin-top: 12px; color: #97266d; font-weight: 600; }
-        .muted { color: #718096; }
+        .stat-box { background: var(--surface-inset); padding: 20px; border-radius: 14px; box-shadow: var(--shadow-inset); }
+        .stat-label { color: var(--text-muted); font-size: 0.9em; margin-bottom: 5px; }
+        .stat-value { font-size: 2em; font-weight: 700; color: var(--text-primary); }
+        .stat-value.success { color: var(--success); }
+        .stat-value.failed { color: var(--danger); }
+        table { width: 100%; border-collapse: separate; border-spacing: 0 10px; margin: 20px 0; }
+        th, td { padding: 12px 14px; text-align: left; border: none; }
+        th { background: transparent; color: var(--text-muted); font-weight: 700; }
+        tbody tr { box-shadow: var(--shadow-soft); border-radius: 12px; }
+        tbody td { background: var(--surface-raised); }
+        tbody tr td:first-child { border-top-left-radius: 12px; border-bottom-left-radius: 12px; }
+        tbody tr td:last-child { border-top-right-radius: 12px; border-bottom-right-radius: 12px; }
+        tr:hover td { background: var(--surface); }
+        .success-badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 0.85em; font-weight: 700; box-shadow: var(--shadow-soft); }
+        .success-badge.excellent { background: var(--success-soft); color: var(--success); }
+        .success-badge.good { background: rgba(107, 91, 209, 0.12); color: var(--accent-strong); }
+        .success-badge.fair { background: var(--warning-soft); color: var(--warning); }
+        .success-badge.poor { background: var(--danger-soft); color: var(--danger); }
+        .capacity-warning { margin-top: 12px; color: var(--warning); font-weight: 700; }
+        .muted { color: var(--text-muted); }
         .small { font-size: 0.9em; }
-        .pill { display:inline-block; padding: 4px 10px; border-radius: 999px; background: #edf2f7; color:#2d3748; font-weight: 600; font-size: 0.85em; }
-        .btn-sm { padding: 10px 14px; border-radius: 8px; font-size: 0.95em; }
-        .input { width: 100%; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em; }
+        .pill { display:inline-block; padding: 4px 10px; border-radius: 999px; background: var(--surface-inset); color: var(--text-primary); font-weight: 600; font-size: 0.85em; box-shadow: var(--shadow-inset); }
+        .btn-sm { padding: 10px 14px; border-radius: 10px; font-size: 0.95em; }
+        .input { width: 100%; padding: 10px 12px; border: none; border-radius: 10px; font-size: 1em; background: var(--surface-inset); color: var(--text-primary); box-shadow: var(--shadow-inset); }
         .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
         code { word-break: break-word; }
-        .stream-table-wrap { overflow-x: auto; }
+        .stream-table-wrap { overflow-x: auto; background: var(--surface-inset); border-radius: 16px; box-shadow: var(--shadow-inset); padding: 6px; }
         .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     </style>
 </head>
@@ -59,7 +63,7 @@
         <div class="nav-buttons">
             <a href="/" class="btn">← Back to Control Panel</a>
             <a href="/api/results/csv" class="btn" id="export-csv-link">📥 Export CSV</a>
-            <span style="display:inline-block;color:white;font-weight:600;margin-left:10px;">Run:</span>
+            <span class="muted" style="display:inline-block;font-weight:600;margin-left:10px;">Run:</span>
             <select id="job-picker" class="input" style="display:inline-block; width:auto; min-width: 320px; max-width: 520px; margin-left:8px;"></select>
         </div>
         
@@ -171,10 +175,10 @@
 
         function showWarning(title, message) {
             document.body.innerHTML = `
-                <div style="text-align:center;padding:40px;color:white;">
+                <div style="text-align:center;padding:40px;color:var(--text-primary);">
                     <h2>${title}</h2>
                     <p>${message}</p>
-                    <a href="/" style="color:white;">Go Back</a>
+                    <a href="/" style="color:var(--accent-strong);">Go Back</a>
                 </div>
             `;
         }
@@ -453,7 +457,7 @@
             .then(r => r.json())
             .then(data => {
                 if (!data.success) {
-                    document.body.innerHTML = '<div style="text-align:center;padding:40px;color:white;"><h2>No results available</h2><p>Run an analysis first.</p><a href="/" style="color:white;">Go Back</a></div>';
+                    document.body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-primary);"><h2>No results available</h2><p>Run an analysis first.</p><a href="/" style="color:var(--accent-strong);">Go Back</a></div>';
                     return;
                 }
                 
