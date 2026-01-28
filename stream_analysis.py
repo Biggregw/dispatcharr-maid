@@ -1830,19 +1830,196 @@ def order_streams_for_channel(
     if not records:
         return []
 
-    def _score(record):
+    similar_delta = _safe_float(similar_score_delta)
+    if similar_delta is None:
+        similar_delta = 0.0
+
+    def _normalize_codec(codec_value):
+        codec = str(codec_value or '').lower()
+        if 'hevc' in codec or '265' in codec:
+            return 'hevc'
+        if 'h264' in codec or 'avc' in codec:
+            return 'h264'
+        if 'av1' in codec:
+            return 'av1'
+        return codec or 'unknown'
+
+    def _is_failed_stream(validation_value):
+        value = str(validation_value or '').strip().lower()
+        return value in ('fail', 'failed', 'error', 'timeout')
+
+    def _bitrate_ceiling_for_resolution(total_pixels):
+        if not total_pixels:
+            return 20000
+        if total_pixels <= 640 * 360:
+            return 1500
+        if total_pixels <= 854 * 480:
+            return 2500
+        if total_pixels <= 1280 * 720:
+            return 5000
+        if total_pixels <= 1920 * 1080:
+            return 8000
+        if total_pixels <= 2560 * 1440:
+            return 12000
+        return 20000
+
+    scored_records = []
+    for record in records:
         ordering = record.get('ordering_score')
         if ordering in (None, '', 'N/A'):
             ordering = record.get('score')
         score_value = _safe_float(ordering)
         if score_value is None:
-            tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
-            return (0, _stable_tiebreaker(tie_value))
-        tie_value = record.get('stream_id') or record.get('stream_url') or record.get('stream_name') or ''
-        return (1, score_value + _stable_tiebreaker(tie_value))
+            score_value = 0.0
+        scored_records.append((record, score_value))
 
-    ordered = sorted(list(records), key=_score, reverse=True)
-    return [r.get('stream_id') for r in ordered]
+    provider_scores = {}
+    provider_failures = {}
+    for record, score_value in scored_records:
+        provider_id = record.get('m3u_account') or 'unknown'
+        provider_scores.setdefault(provider_id, []).append(score_value)
+        validation_value = record.get('validation_result') or record.get('status')
+        if _is_failed_stream(validation_value):
+            provider_failures[provider_id] = provider_failures.get(provider_id, 0) + 1
+
+    provider_stats = {}
+    for provider_id, scores in provider_scores.items():
+        max_score = max(scores) if scores else 0.0
+        weak_count = sum(1 for score in scores if max_score > 0 and score <= max_score * 0.7)
+        strong_count = sum(1 for score in scores if max_score > 0 and score >= max_score * 0.9)
+        provider_stats[provider_id] = {
+            'max_score': max_score,
+            'weak_count': weak_count,
+            'strong_count': strong_count,
+            'fail_count': provider_failures.get(provider_id, 0),
+            'total': len(scores)
+        }
+
+    duplicate_groups = {}
+    for record, score_value in scored_records:
+        provider_id = record.get('m3u_account') or 'unknown'
+        parsed = _parse_resolution(record.get('resolution'))
+        resolution_key = tuple(parsed) if parsed else None
+        codec_key = _normalize_codec(record.get('video_codec'))
+        bitrate = _safe_float(record.get('avg_bitrate_kbps'))
+        duplicate_groups.setdefault((provider_id, resolution_key, codec_key), []).append(
+            (record, score_value, bitrate)
+        )
+
+    def _record_key(record):
+        stream_id = record.get('stream_id')
+        if stream_id is not None:
+            return str(stream_id)
+        stream_url = record.get('stream_url')
+        if stream_url:
+            return str(stream_url)
+        return str(record.get('stream_name') or '')
+
+    duplicate_penalties = {}
+    for group_key, group_records in duplicate_groups.items():
+        if len(group_records) < 2:
+            continue
+        group_records.sort(
+            key=lambda item: (
+                item[1],
+                _safe_float(item[0].get('avg_bitrate_kbps')) or 0.0,
+                _stable_tiebreaker(item[0].get('stream_id') or item[0].get('stream_url') or '')
+            ),
+            reverse=True
+        )
+        best_record, _best_score, best_bitrate = group_records[0]
+        if best_bitrate is None:
+            continue
+        threshold = max(250.0, best_bitrate * 0.05)
+        for record, _score_value, bitrate in group_records[1:]:
+            if bitrate is None:
+                continue
+            if abs(bitrate - best_bitrate) <= threshold:
+                # Near-duplicate suppression is tiny and deterministic; all streams remain present. (Safe)
+                duplicate_penalties[_record_key(record)] = -0.002
+
+    def _tie_breaker(record, score_value):
+        provider_id = record.get('m3u_account') or 'unknown'
+        stats = provider_stats.get(provider_id, {})
+        tie_bias = 0.0
+
+        # Slot-1 conservatism: prefer efficient codecs and modest bitrate when scores are close. (Safe)
+        codec_key = _normalize_codec(record.get('video_codec'))
+        if codec_key == 'hevc':
+            tie_bias += 0.002
+
+        parsed = _parse_resolution(record.get('resolution'))
+        total_pixels = parsed[0] * parsed[1] if parsed else 0
+        bitrate = _safe_float(record.get('avg_bitrate_kbps'))
+        if bitrate and total_pixels:
+            ceiling = _bitrate_ceiling_for_resolution(total_pixels)
+            normalized_bitrate = min(bitrate, ceiling) / max(ceiling, 1.0)
+            tie_bias += (1.0 - normalized_bitrate) * 0.002
+
+        # Provider variance dampening applies only when a provider shows mixed quality. (Safe)
+        if stats:
+            mixed_quality = (
+                stats.get('strong_count', 0) > 0
+                and (stats.get('weak_count', 0) > 0 or stats.get('fail_count', 0) > 0)
+            )
+            if mixed_quality and score_value >= stats.get('max_score', 0.0) * 0.9:
+                tie_bias -= 0.002
+            elif not mixed_quality:
+                tie_bias += 0.001
+
+        tie_bias += duplicate_penalties.get(_record_key(record), 0.0)
+        return tie_bias
+
+    def _is_close(a, b):
+        if a is None or b is None:
+            return False
+        delta = abs(a - b)
+        threshold = max(0.02, 0.01 * max(a, b))
+        return delta <= threshold and delta <= similar_delta
+
+    sortable = []
+    for record, score_value in scored_records:
+        tie_value = _record_key(record)
+        sortable.append({
+            'record': record,
+            'score_value': score_value,
+            'tie_bias': _tie_breaker(record, score_value),
+            'tie_value': tie_value
+        })
+
+    sortable.sort(
+        key=lambda item: (item['score_value'], _stable_tiebreaker(item['tie_value'])),
+        reverse=True
+    )
+
+    ordered_records = []
+    if sortable:
+        current_group = [sortable[0]]
+        for item in sortable[1:]:
+            if _is_close(current_group[-1]['score_value'], item['score_value']):
+                current_group.append(item)
+            else:
+                current_group.sort(
+                    key=lambda grouped: (
+                        grouped['score_value'] + grouped['tie_bias'],
+                        grouped['score_value'],
+                        _stable_tiebreaker(grouped['tie_value'])
+                    ),
+                    reverse=True
+                )
+                ordered_records.extend(current_group)
+                current_group = [item]
+        current_group.sort(
+            key=lambda grouped: (
+                grouped['score_value'] + grouped['tie_bias'],
+                grouped['score_value'],
+                _stable_tiebreaker(grouped['tie_value'])
+            ),
+            reverse=True
+        )
+        ordered_records.extend(current_group)
+
+    return [item['record'].get('stream_id') for item in ordered_records]
 
 
 def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_changes=True):
