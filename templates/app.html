@@ -990,7 +990,7 @@
             <div id="group-error" class="alert alert-error hidden"></div>
             <div id="group-container" class="hidden">
                 <div class="alert alert-info">
-                    Select at least one group to continue. If none are chosen, the Next step stays disabled.
+                    Select one or more groups to continue. Next and Schedule Quality Check stay disabled until a group is selected.
                 </div>
                 <div class="group-grid" id="group-grid"></div>
                 <div class="nav-buttons">
@@ -1031,7 +1031,7 @@
                 </div>
                 <div class="summary-row">
                     <span class="summary-label">Channels Selected:</span>
-                    <span class="summary-value" id="selected-channels-count">0 (All)</span>
+                    <span class="summary-value" id="selected-channels-count">0 (All in groups)</span>
                 </div>
             </div>
             
@@ -1689,7 +1689,7 @@
             // Update UI
             if (count === 0) {
                 selectedChannels = null; // All channels
-                document.getElementById('selected-channels-count').textContent = '0 (All)';
+                document.getElementById('selected-channels-count').textContent = '0 (All in groups)';
             } else {
                 selectedChannels = Array.from(checkedBoxes).map(cb => {
                     return parseInt(cb.closest('.channel-item').dataset.channelId);

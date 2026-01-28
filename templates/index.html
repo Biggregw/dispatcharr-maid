@@ -354,7 +354,7 @@
                 container.innerHTML = `
                     <div class="no-data">
                         <p>No active job running</p>
-                        <p style="font-size: 0.9em; margin-top: 10px;">Start a job using interactive_maid.py to see progress here</p>
+                        <p style="font-size: 0.9em; margin-top: 10px;">Start a job from the control panel to see live progress here</p>
                     </div>
                 `;
                 return;
@@ -366,12 +366,16 @@
             const isNumericComplete = total !== '?' && processed >= total;
             const percent = isNumericComplete ? 100 : Math.min(100, progress.percent || 0);
             const phase = getPhaseIndicator(progress.current_step);
+            const stepText = progress.current_step ? progress.current_step : 'Processing streams';
             const showIndeterminate = !isNumericComplete && total !== '?' && processed === 0;
             
             container.innerHTML = `
                 <div style="margin-bottom: 10px;">
                     <span class="status-badge status-active">⚡ RUNNING</span>
                     <span style="margin-left: 15px; color: #718096;">Last updated: ${formatTimestamp(progress.timestamp)}</span>
+                </div>
+                <div style="margin-bottom: 12px; color: #4a5568; font-weight: 600;">
+                    Current step: ${stepText}
                 </div>
                 
                 <div class="progress-container">
@@ -383,7 +387,7 @@
                           </div>`
                     }
                 </div>
-                ${isNumericComplete && phase ? `
+                ${phase ? `
                     <div class="phase-indicator phase-indicator--active" aria-live="polite">
                         <span class="phase-indicator__icon">${phase.icon}</span>
                         <span class="phase-indicator__text">${phase.text}</span>
@@ -556,7 +560,7 @@
                         <span class="config-value">${config.workers || 8}</span>
                     </div>
                     <div class="config-item">
-                        <span class="config-label">Analysis Duration:</span>
+                        <span class="config-label">Analysis Duration (per stream):</span>
                         <span class="config-value">${config.duration || 10}s per stream</span>
                     </div>
                 </div>
