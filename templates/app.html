@@ -808,6 +808,36 @@
             font-weight: 700;
             color: var(--text-primary);
         }
+
+        .refresh-removal-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .refresh-removal-item {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(107, 91, 209, 0.18);
+            background: var(--surface);
+        }
+
+        .refresh-removal-item input[type="checkbox"] {
+            margin-top: 4px;
+        }
+
+        .refresh-removal-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .refresh-removal-meta strong {
+            font-size: 0.95em;
+        }
         
         /* Selection summary */
         .selection-summary {
@@ -1438,6 +1468,26 @@
         </div>
     </div>
 
+    <div id="refresh-removal-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">Confirm refresh removals</div>
+                <button class="btn btn-back" type="button" onclick="closeRefreshRemovalModal()">✖</button>
+            </div>
+            <div class="modal-body">
+                <div id="refresh-removal-summary" class="text-muted" style="margin-bottom: 12px;"></div>
+                <div id="refresh-removal-list" class="refresh-removal-list"></div>
+                <div class="text-muted text-small" style="margin-top: 12px;">
+                    Untick any stream you want to exclude from the refresh.
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-back" id="refresh-removal-cancel" type="button">Cancel</button>
+                <button class="btn btn-next" id="refresh-removal-confirm" type="button">Confirm refresh</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Global state
         let selectedGroups = [];
@@ -1458,6 +1508,10 @@
             injectedIncludes: []
         };
         let refreshSelectorsDirty = false;
+        let refreshRemovalState = {
+            channelName: '',
+            removableStreams: []
+        };
         let qualitySchedules = [];
         let lastScheduleRunCheck = 0;
 
@@ -1528,6 +1582,14 @@
             }
             if (cancelSelectorsBtn) {
                 cancelSelectorsBtn.addEventListener('click', resetRefreshSelectors);
+            }
+            const refreshRemovalConfirm = document.getElementById('refresh-removal-confirm');
+            const refreshRemovalCancel = document.getElementById('refresh-removal-cancel');
+            if (refreshRemovalConfirm) {
+                refreshRemovalConfirm.addEventListener('click', confirmRefreshRemoval);
+            }
+            if (refreshRemovalCancel) {
+                refreshRemovalCancel.addEventListener('click', closeRefreshRemovalModal);
             }
             document.querySelectorAll('input[name="schedule-type"]').forEach(radio => {
                 radio.addEventListener('change', updateQualityScheduleFields);
@@ -2240,6 +2302,118 @@
             container.innerHTML = items;
         }
 
+        function normalizeRefreshStreamKey(stream) {
+            if (!stream || typeof stream !== 'object') return null;
+            const rawId = stream.id;
+            if (rawId !== null && rawId !== undefined && String(rawId).trim() !== '') {
+                return `id:${String(rawId)}`;
+            }
+            const name = (stream.name || '').toString().trim().toLowerCase();
+            if (!name) return null;
+            const provider = stream.provider_id ?? stream.provider_name ?? '';
+            return `name:${name}|provider:${String(provider).trim().toLowerCase()}`;
+        }
+
+        function getRefreshRemovalCandidates(preview) {
+            const previous = Array.isArray(preview?.previous_streams) ? preview.previous_streams : [];
+            const finalStreams = Array.isArray(preview?.final_streams) ? preview.final_streams : [];
+            const finalKeys = new Set(
+                finalStreams.map(stream => normalizeRefreshStreamKey(stream)).filter(Boolean)
+            );
+            return previous.filter(stream => {
+                const key = normalizeRefreshStreamKey(stream);
+                return key && !finalKeys.has(key);
+            });
+        }
+
+        function renderRefreshRemovalList(streams) {
+            const list = document.getElementById('refresh-removal-list');
+            if (!list) return;
+            list.innerHTML = '';
+            if (!streams.length) {
+                list.innerHTML = '<div class="text-muted">No streams to remove.</div>';
+                return;
+            }
+            streams.forEach((stream, index) => {
+                const name = stream?.name || 'Unnamed stream';
+                const provider = stream?.provider_name || stream?.provider_id || '';
+                const resolution = stream?.resolution || '';
+                const bitrate = stream?.bitrate_kbps ? `${stream.bitrate_kbps} kbps` : '';
+
+                const item = document.createElement('label');
+                item.className = 'refresh-removal-item';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = true;
+                checkbox.id = `refresh-removal-${index}`;
+                checkbox.dataset.name = name;
+
+                const meta = document.createElement('div');
+                meta.className = 'refresh-removal-meta';
+
+                const title = document.createElement('strong');
+                title.textContent = name;
+                meta.appendChild(title);
+
+                const details = [];
+                if (provider) details.push(`Provider: ${provider}`);
+                if (resolution) details.push(`Resolution: ${resolution}`);
+                if (bitrate) details.push(`Bitrate: ${bitrate}`);
+                if (details.length) {
+                    const detailLine = document.createElement('div');
+                    detailLine.className = 'text-muted text-small';
+                    detailLine.textContent = details.join(' • ');
+                    meta.appendChild(detailLine);
+                }
+
+                item.appendChild(checkbox);
+                item.appendChild(meta);
+                list.appendChild(item);
+            });
+        }
+
+        function openRefreshRemovalModal(channelName, streams) {
+            refreshRemovalState.channelName = channelName || '';
+            refreshRemovalState.removableStreams = streams;
+            const summary = document.getElementById('refresh-removal-summary');
+            if (summary) {
+                const nameText = channelName ? ` for ${channelName}` : '';
+                summary.textContent = `${streams.length} stream(s) will be removed${nameText}. Review and untick any you want to exclude.`;
+            }
+            renderRefreshRemovalList(streams);
+            document.getElementById('refresh-removal-modal').classList.remove('hidden');
+        }
+
+        function closeRefreshRemovalModal() {
+            document.getElementById('refresh-removal-modal').classList.add('hidden');
+            refreshRemovalState.removableStreams = [];
+            refreshRemovalState.channelName = '';
+        }
+
+        function confirmRefreshRemoval() {
+            const list = document.getElementById('refresh-removal-list');
+            const unchecked = list
+                ? Array.from(list.querySelectorAll('input[type="checkbox"]')).filter(cb => !cb.checked)
+                : [];
+            const excludedNames = unchecked.map(cb => cb.dataset.name).filter(Boolean);
+            closeRefreshRemovalModal();
+            startJob('refresh_optimize', null, excludedNames, null);
+        }
+
+        async function fetchRefreshPreview(channelId) {
+            const response = await fetch('/api/refresh-preview', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ channel_id: channelId })
+            });
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.error || 'Unable to preview refresh.');
+            }
+            return data.preview || {};
+        }
+
         function startRefreshJob(event) {
             if (event) {
                 event.preventDefault();
@@ -2249,7 +2423,20 @@
                 alert('Please select exactly 1 channel to refresh.');
                 return;
             }
-            return startJob('refresh_optimize', null, null, event);
+            const channelId = selectedChannels[0];
+            return fetchRefreshPreview(channelId)
+                .then(preview => {
+                    const removable = getRefreshRemovalCandidates(preview);
+                    if (removable.length === 0) {
+                        return startJob('refresh_optimize', null, null, event);
+                    }
+                    openRefreshRemovalModal(preview?.channel_name || '', removable);
+                    return null;
+                })
+                .catch(error => {
+                    alert(`Unable to preview refresh removals: ${error.message}`);
+                    return null;
+                });
         }
 
         // Start a job
