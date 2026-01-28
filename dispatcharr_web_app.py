@@ -51,6 +51,7 @@ from stream_analysis import (
     _load_refresh_selectors,
     _save_refresh_selectors,
     _load_refresh_exclusions,
+    _add_refresh_exclusions,
     _load_refresh_injected_state,
     _save_refresh_injected_state,
     _remove_refresh_exclusion,
@@ -3566,6 +3567,10 @@ def api_refresh_settings():
                 if len(selectors) > 4:
                     return jsonify({'success': False, 'error': 'At most 4 selectors are allowed'}), 400
                 _save_refresh_selectors(config, channel_id, selectors)
+            elif 'add_exclusion' in data:
+                exclusion = data.get('add_exclusion')
+                if isinstance(exclusion, str) and exclusion.strip():
+                    _add_refresh_exclusions(config, channel_id, [exclusion])
             elif 'remove_exclusion' in data:
                 _remove_refresh_exclusion(config, channel_id, data.get('remove_exclusion'))
 

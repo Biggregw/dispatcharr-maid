@@ -106,6 +106,7 @@
                             <th>Bitrate</th>
                             <th>Validation</th>
                             <th>Final Score</th>
+                            <th>Exclude</th>
                         </tr>
                     </thead>
                     <tbody id="final-order-tbody"></tbody>
@@ -408,6 +409,9 @@
                 const validation = row?.validation_result ? escapeHtml(String(row.validation_result)) : '—';
                 const score = row?.final_score;
                 const scoreText = score === null || score === undefined ? '—' : escapeHtml(Number(score).toFixed ? Number(score).toFixed(1) : String(score));
+                const streamName = typeof row?.stream_name === 'string' ? row.stream_name : '';
+                const channelId = row?.channel_id ?? '';
+                const excludeDisabled = !streamName || !channelId;
                 return `
                     <tr>
                         <td>${channelLabelFrom(row)}</td>
@@ -419,9 +423,46 @@
                         <td>${fmtBitrate(row?.bitrate_kbps)}</td>
                         <td>${validation}</td>
                         <td>${scoreText}</td>
+                        <td>
+                            <button class="btn btn-back btn-sm refresh-exclude-btn" type="button"
+                                data-channel-id="${escapeHtml(channelId)}"
+                                data-stream-name="${escapeHtml(streamName)}"
+                                ${excludeDisabled ? 'disabled' : ''}>❌ Exclude</button>
+                        </td>
                     </tr>
                 `;
             }).join('');
+
+            finalBody.querySelectorAll('.refresh-exclude-btn').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const channelId = button.dataset.channelId;
+                    const streamName = button.dataset.streamName;
+                    if (!channelId || !streamName) return;
+                    const row = button.closest('tr');
+                    const parent = row?.parentElement;
+                    const nextSibling = row?.nextSibling || null;
+                    if (row) row.remove();
+                    try {
+                        const response = await fetch('/api/refresh-settings', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                channel_id: channelId,
+                                add_exclusion: streamName
+                            })
+                        });
+                        const data = await response.json();
+                        if (!data.success) {
+                            throw new Error(data.error || 'Unable to add exclusion.');
+                        }
+                    } catch (error) {
+                        if (parent && row) {
+                            parent.insertBefore(row, nextSibling);
+                        }
+                        alert(`Failed to exclude stream: ${error.message}`);
+                    }
+                });
+            });
 
             const sortedExcluded = [...excluded].sort((a, b) => {
                 const chanA = `${a?.channel_number ?? ''}`.padStart(6, '0');
