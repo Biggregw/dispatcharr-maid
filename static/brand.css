@@ -2,30 +2,33 @@
    Intentionally small to avoid overriding existing template CSS. */
 
 :root {
-  --app-bg: #171b20;
-  --surface: linear-gradient(180deg, #252c35 0%, #1d232b 100%);
-  --surface-raised: linear-gradient(180deg, #2e3640 0%, #222a33 100%);
-  --surface-inset: linear-gradient(180deg, #14191f 0%, #1a2027 100%);
-  --text-primary: #d7dde4;
-  --text-muted: #9aa4af;
-  --accent: #4e8cae;
-  --accent-strong: #6bb2c8;
-  --accent-soft: linear-gradient(180deg, #1a2f39 0%, #15252d 100%);
-  --success: #5fbf74;
-  --success-soft: linear-gradient(180deg, #1b2c21 0%, #14211a 100%);
-  --danger: #9b4a4a;
-  --danger-soft: linear-gradient(180deg, #2c1b1b 0%, #221414 100%);
-  --warning: #b07b3d;
-  --warning-soft: linear-gradient(180deg, #2a2115 0%, #22190f 100%);
-  --shadow-raised: 0 10px 18px rgba(0, 0, 0, 0.55),
-    0 1px 0 rgba(255, 255, 255, 0.08) inset,
-    0 -1px 0 rgba(0, 0, 0, 0.6) inset;
-  --shadow-soft: 0 8px 14px rgba(0, 0, 0, 0.45),
-    0 1px 0 rgba(255, 255, 255, 0.06) inset;
-  --shadow-inset: inset 5px 5px 10px rgba(0, 0, 0, 0.6),
-    inset -2px -2px 6px rgba(255, 255, 255, 0.06);
-  --shadow-press: inset 3px 3px 8px rgba(0, 0, 0, 0.7),
-    inset -1px -1px 4px rgba(255, 255, 255, 0.05);
+  --app-bg: #0f1318;
+  --surface: linear-gradient(180deg, #1b222b 0%, #141a22 100%);
+  --surface-raised: linear-gradient(180deg, #232b35 0%, #1c242d 100%);
+  --surface-inset: linear-gradient(180deg, #0d1217 0%, #141b22 100%);
+  --text-primary: #d4dde6;
+  --text-muted: #95a2af;
+  --accent: #4c8fb4;
+  --accent-strong: #7fc5dd;
+  --accent-soft: linear-gradient(180deg, #162934 0%, #112128 100%);
+  --success: #6bc98a;
+  --success-soft: linear-gradient(180deg, #15261c 0%, #101c16 100%);
+  --danger: #d36f6f;
+  --danger-soft: linear-gradient(180deg, #2a1919 0%, #1f1414 100%);
+  --warning: #c5924d;
+  --warning-soft: linear-gradient(180deg, #2a2116 0%, #1f1810 100%);
+  --border-subtle: rgba(148, 163, 184, 0.18);
+  --text-shadow-strong: 0 1px 2px rgba(0, 0, 0, 0.6);
+  --text-shadow-soft: 0 1px 2px rgba(10, 15, 23, 0.35);
+  --shadow-raised: 0 12px 20px rgba(0, 0, 0, 0.6),
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.7) inset;
+  --shadow-soft: 0 8px 14px rgba(0, 0, 0, 0.5),
+    0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  --shadow-inset: inset 6px 6px 12px rgba(0, 0, 0, 0.65),
+    inset -2px -2px 6px rgba(255, 255, 255, 0.04);
+  --shadow-press: inset 3px 3px 8px rgba(0, 0, 0, 0.75),
+    inset -1px -1px 4px rgba(255, 255, 255, 0.04);
 }
 
 .brand {
