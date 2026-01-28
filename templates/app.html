@@ -970,6 +970,9 @@
             --warning-text: #fcd34d;
             --danger-bg: #3b1115;
             --danger-text: #fca5a5;
+            --muted-surface: #162133;
+            --muted-border: #2f3b53;
+            --muted-text: #c3cde0;
         }
 
         body {
@@ -1138,6 +1141,31 @@
             box-shadow: 0 0 0 2px rgba(124, 140, 245, 0.25);
         }
 
+        .history-status {
+            background: var(--surface-soft);
+            color: var(--text-primary) !important;
+        }
+
+        .status-completed {
+            background: var(--success-bg);
+            color: var(--success-text) !important;
+        }
+
+        .status-failed {
+            background: var(--danger-bg);
+            color: var(--danger-text) !important;
+        }
+
+        .status-cancelled {
+            background: var(--warning-bg);
+            color: var(--warning-text) !important;
+        }
+
+        .status-running {
+            background: var(--info-bg);
+            color: var(--info-text) !important;
+        }
+
         .modal {
             background: rgba(2, 6, 23, 0.72);
         }
@@ -1232,6 +1260,54 @@
 
         .provider-table tr:hover {
             background: rgba(30, 41, 59, 0.6);
+        }
+
+        .selection-summary {
+            background: var(--muted-surface);
+            border-color: var(--muted-border);
+        }
+
+        .summary-label {
+            color: var(--muted-text) !important;
+        }
+
+        .summary-value {
+            color: var(--accent-strong) !important;
+        }
+
+        /* Dark theme muted surfaces use explicit colors (no opacity) to preserve contrast. */
+        #refreshFilters,
+        #refresh-injected-includes,
+        #refresh-injected-excludes,
+        #refresh-injected-includes-list,
+        #refresh-injected-excludes-list,
+        #refresh-injected-includes summary,
+        #refresh-injected-excludes summary,
+        .alert-info {
+            background: var(--muted-surface) !important;
+            border-color: var(--muted-border) !important;
+            color: var(--muted-text) !important;
+            opacity: 1;
+        }
+
+        #refreshFilters {
+            border-left-color: var(--warning-text) !important;
+        }
+
+        #refreshFilters > div:last-child {
+            background: var(--muted-surface) !important;
+            color: var(--muted-text) !important;
+            border-left-color: var(--warning-text) !important;
+        }
+
+        #refreshFilters label,
+        #refreshFilters span,
+        #refreshFilters div {
+            color: var(--muted-text) !important;
+        }
+
+        .preview-meta {
+            color: var(--muted-text) !important;
         }
 
         a {
