@@ -950,6 +950,294 @@
             margin-top: 8px;
         }
 
+        :root {
+            --app-bg: #0f172a;
+            --app-bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            --surface: #111827;
+            --surface-elevated: #1f2937;
+            --surface-soft: #0f1a2b;
+            --border-muted: #2a3446;
+            --text-primary: #e5e7eb;
+            --text-muted: #94a3b8;
+            --text-subtle: #64748b;
+            --accent: #7c8cf5;
+            --accent-strong: #a5b4fc;
+            --success-bg: #0f2f24;
+            --success-text: #6ee7b7;
+            --info-bg: #0f2142;
+            --info-text: #93c5fd;
+            --warning-bg: #3a2614;
+            --warning-text: #fcd34d;
+            --danger-bg: #3b1115;
+            --danger-text: #fca5a5;
+        }
+
+        body {
+            background: var(--app-bg-gradient);
+            color: var(--text-primary);
+        }
+
+        body,
+        body * {
+            color: var(--text-primary) !important;
+        }
+
+        .header p,
+        .group-count,
+        .phase-indicator,
+        .phase-indicator__text,
+        .history-time,
+        .schedule-note,
+        .plan-meta,
+        .stat-label {
+            color: var(--text-muted) !important;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border-muted);
+            box-shadow: 0 18px 36px rgba(4, 10, 24, 0.55);
+        }
+
+        .card h2 {
+            color: var(--accent-strong) !important;
+            border-bottom-color: rgba(124, 140, 245, 0.5);
+        }
+
+        .steps .step {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border-muted);
+        }
+
+        .step.active {
+            background: var(--surface);
+            color: var(--accent-strong) !important;
+        }
+
+        .step.completed {
+            background: #14532d;
+            color: #dcfce7 !important;
+        }
+
+        .step-number {
+            background: rgba(148, 163, 184, 0.25);
+        }
+
+        .step.active .step-number {
+            background: var(--accent);
+            color: #f8fafc !important;
+        }
+
+        .step.completed .step-number {
+            background: #dcfce7;
+            color: #166534 !important;
+        }
+
+        .group-item,
+        .channel-group-section,
+        .channel-search input,
+        .channel-group-header,
+        .channel-list,
+        .provider-table,
+        .history-item,
+        .modal-body,
+        .schedule-panel,
+        .schedule-item {
+            border-color: var(--border-muted);
+        }
+
+        .group-item {
+            background: var(--surface);
+        }
+
+        .group-item:hover {
+            border-color: rgba(124, 140, 245, 0.8);
+            background: var(--surface-elevated);
+        }
+
+        .group-item.selected {
+            border-color: rgba(124, 140, 245, 0.9);
+            background: rgba(124, 140, 245, 0.16);
+        }
+
+        .channel-search input,
+        input,
+        select,
+        textarea {
+            background: var(--surface-elevated);
+            border-color: var(--border-muted);
+            color: var(--text-primary) !important;
+        }
+
+        input::placeholder,
+        textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        .channel-group-section,
+        .channel-group-header {
+            background: var(--surface);
+        }
+
+        .channel-item:hover {
+            background: rgba(30, 41, 59, 0.6);
+        }
+
+        .btn,
+        button,
+        .text-btn {
+            background: var(--surface-elevated);
+            border: 1px solid var(--border-muted);
+            color: var(--accent-strong) !important;
+        }
+
+        .btn-primary,
+        .btn-success,
+        .btn-warning {
+            color: #f8fafc !important;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4f5bd5 0%, #6d4ccf 100%);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #15803d 0%, #16a34a 100%);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #b45309 0%, #ea580c 100%);
+        }
+
+        .action-help,
+        .action-help--orange {
+            background: var(--surface-soft);
+            border-left-color: rgba(249, 115, 22, 0.8);
+        }
+
+        .phase-indicator {
+            background: var(--surface-soft);
+            border-left-color: rgba(124, 140, 245, 0.6);
+        }
+
+        .progress-bar {
+            background: linear-gradient(90deg, #4f5bd5 0%, #6d4ccf 100%);
+        }
+
+        .progress-bar::after {
+            background: linear-gradient(90deg, transparent 0%, rgba(226, 232, 240, 0.35) 50%, transparent 100%);
+        }
+
+        .history-item,
+        .history-item--new {
+            background: var(--surface-elevated);
+            border-color: var(--border-muted);
+        }
+
+        .history-item--new {
+            box-shadow: 0 0 0 2px rgba(124, 140, 245, 0.25);
+        }
+
+        .modal {
+            background: rgba(2, 6, 23, 0.72);
+        }
+
+        .modal-content {
+            background: var(--surface);
+            border: 1px solid var(--border-muted);
+        }
+
+        .modal-body {
+            background: var(--surface);
+        }
+
+        .alert-success {
+            background: var(--success-bg);
+            color: var(--success-text) !important;
+        }
+
+        .alert-error {
+            background: var(--danger-bg);
+            color: var(--danger-text) !important;
+        }
+
+        .score-good,
+        .usage-pill-good {
+            background: var(--success-bg);
+            color: var(--success-text) !important;
+        }
+
+        .score-ok,
+        .usage-pill-ok {
+            background: var(--warning-bg);
+            color: var(--warning-text) !important;
+        }
+
+        .score-bad,
+        .usage-pill-bad {
+            background: var(--danger-bg);
+            color: var(--danger-text) !important;
+        }
+
+        .pill,
+        .codebox,
+        .plan-card,
+        .plan-stream,
+        .schedule-panel,
+        .schedule-item {
+            background: var(--surface-soft);
+            border-color: var(--border-muted);
+        }
+
+        .schedule-item {
+            background: var(--surface-elevated);
+        }
+
+        .plan-meta .pill {
+            background: rgba(124, 140, 245, 0.18);
+            color: var(--accent-strong) !important;
+        }
+
+        .badge.added {
+            background: var(--success-bg);
+            color: var(--success-text) !important;
+        }
+
+        .badge.removed {
+            background: var(--danger-bg);
+            color: var(--danger-text) !important;
+        }
+
+        .badge.unchanged {
+            background: var(--surface-soft);
+            color: var(--text-muted) !important;
+        }
+
+        .badge.changed {
+            background: var(--warning-bg);
+            color: var(--warning-text) !important;
+        }
+
+        .provider-table th,
+        th {
+            background: var(--surface-soft);
+            color: var(--text-muted) !important;
+        }
+
+        .provider-table td,
+        td,
+        th {
+            border-bottom-color: var(--border-muted);
+        }
+
+        .provider-table tr:hover {
+            background: rgba(30, 41, 59, 0.6);
+        }
+
+        a {
+            color: var(--accent-strong) !important;
+        }
+
     </style>
 </head>
 <body>
