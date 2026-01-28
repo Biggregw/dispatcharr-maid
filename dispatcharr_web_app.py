@@ -526,7 +526,9 @@ def _compute_next_quality_check_run(schedule, now=None):
         candidate = datetime.combine(now.date(), time_of_day)
         if frequency == 'daily':
             if candidate <= now:
-                candidate = candidate + timedelta(days=1)
+                if not last_run_at or last_run_at < candidate:
+                    return candidate
+                return candidate + timedelta(days=1)
             return candidate
 
         if frequency == 'weekly':
@@ -537,6 +539,17 @@ def _compute_next_quality_check_run(schedule, now=None):
                 days_set = {(int(day) + 6) % 7 for day in days}
             except Exception:
                 return None
+            last_scheduled = None
+            for offset in range(7):
+                day_candidate = now.date() - timedelta(days=offset)
+                if day_candidate.weekday() not in days_set:
+                    continue
+                candidate = datetime.combine(day_candidate, time_of_day)
+                if candidate <= now:
+                    last_scheduled = candidate
+                    break
+            if last_scheduled and (not last_run_at or last_run_at < last_scheduled):
+                return last_scheduled
             for offset in range(7):
                 day_candidate = now.date() + timedelta(days=offset)
                 if day_candidate.weekday() not in days_set:
