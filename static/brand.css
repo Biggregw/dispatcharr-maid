@@ -1,6 +1,32 @@
 /* Shared, minimal brand styling for all pages.
    Intentionally small to avoid overriding existing template CSS. */
 
+:root {
+  --app-bg: #e7ebf2;
+  --surface: #edf1f6;
+  --surface-raised: #f3f5fb;
+  --surface-inset: #e0e5ec;
+  --text-primary: #1f2937;
+  --text-muted: #6b7280;
+  --accent: #6b5bd1;
+  --accent-strong: #5646c2;
+  --accent-soft: #e3def7;
+  --success: #5f9d7a;
+  --success-soft: #d9ede1;
+  --danger: #c76e6e;
+  --danger-soft: #f2d8d8;
+  --warning: #c78d52;
+  --warning-soft: #f3e1cc;
+  --shadow-raised: 12px 12px 22px rgba(163, 177, 198, 0.45),
+    -12px -12px 22px rgba(255, 255, 255, 0.9);
+  --shadow-soft: 8px 8px 16px rgba(163, 177, 198, 0.35),
+    -8px -8px 16px rgba(255, 255, 255, 0.85);
+  --shadow-inset: inset 6px 6px 12px rgba(163, 177, 198, 0.45),
+    inset -6px -6px 12px rgba(255, 255, 255, 0.9);
+  --shadow-press: inset 4px 4px 8px rgba(163, 177, 198, 0.45),
+    inset -4px -4px 8px rgba(255, 255, 255, 0.8);
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -13,7 +39,7 @@
   width: 46px;
   height: 46px;
   flex: 0 0 46px;
-  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.22));
+  filter: drop-shadow(0 8px 16px rgba(120, 129, 155, 0.35));
 }
 
 .brand-text h1 {
@@ -27,7 +53,7 @@
 
 /* Accessible focus ring without clobbering existing styles. */
 :focus-visible {
-  outline: 3px solid rgba(255, 255, 255, 0.9);
+  outline: 3px solid rgba(107, 91, 209, 0.35);
   outline-offset: 2px;
 }
 

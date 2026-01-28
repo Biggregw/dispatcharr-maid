@@ -15,10 +15,10 @@
         
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--app-bg);
             min-height: 100vh;
             padding: 20px;
-            color: #333;
+            color: var(--text-primary);
         }
         
         .container {
@@ -28,73 +28,78 @@
         
         .header {
             text-align: center;
-            color: white;
+            color: var(--text-primary);
             margin-bottom: 30px;
         }
         
         .header h1 {
             font-size: 2.5em;
             margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            color: var(--accent-strong);
+            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.9);
         }
         
         .header p {
             font-size: 1.1em;
-            opacity: 0.9;
+            color: var(--text-muted);
         }
         
         .card {
-            background: white;
-            border-radius: 15px;
+            background: var(--surface-raised);
+            border-radius: 18px;
             padding: 25px;
             margin-bottom: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            box-shadow: var(--shadow-raised);
         }
         
         .card h2 {
-            color: #667eea;
+            color: var(--accent-strong);
             margin-bottom: 20px;
             font-size: 1.5em;
-            border-bottom: 2px solid #667eea;
+            border-bottom: 1px solid rgba(86, 70, 194, 0.2);
             padding-bottom: 10px;
         }
         
         .status-badge {
             display: inline-block;
-            padding: 5px 15px;
-            border-radius: 20px;
-            font-weight: bold;
-            font-size: 0.9em;
+            padding: 6px 16px;
+            border-radius: 999px;
+            font-weight: 700;
+            font-size: 0.85em;
+            box-shadow: var(--shadow-soft);
+            letter-spacing: 0.02em;
         }
         
         .status-active {
-            background: #48bb78;
-            color: white;
+            background: var(--success-soft);
+            color: var(--success);
         }
         
         .status-idle {
-            background: #ed8936;
-            color: white;
+            background: var(--warning-soft);
+            color: var(--warning);
         }
         
         .progress-container {
-            background: #e2e8f0;
-            border-radius: 10px;
-            height: 30px;
+            background: var(--surface-inset);
+            border-radius: 16px;
+            height: 32px;
             margin: 15px 0;
             overflow: hidden;
             position: relative;
+            box-shadow: var(--shadow-inset);
         }
         
         .progress-bar {
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(90deg, rgba(107, 91, 209, 0.8) 0%, rgba(86, 70, 194, 0.95) 100%);
             height: 100%;
             transition: width 0.3s ease;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: white;
-            font-weight: bold;
+            color: #fdfcff;
+            font-weight: 700;
+            text-shadow: 0 1px 2px rgba(40, 34, 98, 0.25);
         }
 
         .progress-bar.muted {
@@ -130,11 +135,11 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            padding: 10px 12px;
-            background: #f7fafc;
-            border-radius: 8px;
-            border-left: 3px solid #a3bffa;
-            color: #4a5568;
+            padding: 10px 14px;
+            background: var(--surface-inset);
+            border-radius: 12px;
+            box-shadow: var(--shadow-inset);
+            color: var(--text-muted);
             font-weight: 600;
         }
 
@@ -164,76 +169,94 @@
         }
         
         .stat-box {
-            background: #f7fafc;
+            background: var(--surface-inset);
             padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #667eea;
+            border-radius: 14px;
+            box-shadow: var(--shadow-inset);
         }
         
         .stat-label {
-            color: #718096;
+            color: var(--text-muted);
             font-size: 0.9em;
             margin-bottom: 5px;
         }
         
         .stat-value {
             font-size: 1.8em;
-            font-weight: bold;
-            color: #2d3748;
+            font-weight: 700;
+            color: var(--text-primary);
         }
         
         .provider-table {
             width: 100%;
-            border-collapse: collapse;
+            border-collapse: separate;
+            border-spacing: 0 10px;
             margin-top: 15px;
         }
         
         .provider-table th {
-            background: #f7fafc;
-            padding: 12px;
+            background: var(--surface);
+            padding: 12px 14px;
             text-align: left;
-            font-weight: 600;
-            color: #4a5568;
-            border-bottom: 2px solid #e2e8f0;
+            font-weight: 700;
+            color: var(--text-muted);
+            border: none;
         }
         
         .provider-table td {
-            padding: 12px;
-            border-bottom: 1px solid #e2e8f0;
+            padding: 12px 14px;
+            background: var(--surface-raised);
+        }
+
+        .provider-table tbody tr {
+            box-shadow: var(--shadow-soft);
+            border-radius: 12px;
+        }
+
+        .provider-table tbody tr td:first-child {
+            border-top-left-radius: 12px;
+            border-bottom-left-radius: 12px;
+        }
+
+        .provider-table tbody tr td:last-child {
+            border-top-right-radius: 12px;
+            border-bottom-right-radius: 12px;
         }
         
-        .provider-table tr:hover {
-            background: #f7fafc;
+        .provider-table tr:hover td {
+            background: var(--surface);
         }
         
         .success-rate {
             display: inline-block;
-            padding: 3px 8px;
-            border-radius: 5px;
-            font-weight: bold;
-            font-size: 0.9em;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-weight: 700;
+            font-size: 0.85em;
+            box-shadow: var(--shadow-soft);
         }
         
-        .rate-good { background: #c6f6d5; color: #22543d; }
-        .rate-ok { background: #feebc8; color: #7c2d12; }
-        .rate-bad { background: #fed7d7; color: #742a2a; }
+        .rate-good { background: var(--success-soft); color: var(--success); }
+        .rate-ok { background: var(--warning-soft); color: var(--warning); }
+        .rate-bad { background: var(--danger-soft); color: var(--danger); }
         
         .refresh-indicator {
             position: fixed;
             top: 20px;
             right: 20px;
-            background: rgba(255,255,255,0.9);
+            background: var(--surface-raised);
             padding: 10px 20px;
-            border-radius: 20px;
+            border-radius: 999px;
             font-size: 0.9em;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            box-shadow: var(--shadow-soft);
+            color: var(--text-muted);
         }
         
         .spinner {
             display: inline-block;
             width: 12px;
             height: 12px;
-            border: 2px solid #667eea;
+            border: 2px solid rgba(107, 91, 209, 0.5);
             border-top-color: transparent;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
@@ -247,15 +270,16 @@
         .no-data {
             text-align: center;
             padding: 40px;
-            color: #718096;
+            color: var(--text-muted);
             font-style: italic;
         }
         
         .config-info {
-            background: #f7fafc;
+            background: var(--surface-inset);
             padding: 15px;
-            border-radius: 10px;
+            border-radius: 14px;
             margin-top: 15px;
+            box-shadow: var(--shadow-inset);
         }
         
         .config-item {
@@ -266,12 +290,43 @@
         
         .config-label {
             font-weight: 600;
-            color: #4a5568;
+            color: var(--text-muted);
         }
         
         .config-value {
-            color: #667eea;
+            color: var(--accent-strong);
             margin-left: 5px;
+        }
+
+        .text-muted {
+            color: var(--text-muted);
+        }
+
+        .text-success {
+            color: var(--success);
+        }
+
+        .text-danger {
+            color: var(--danger);
+        }
+
+        .section-title {
+            margin-top: 25px;
+            margin-bottom: 15px;
+            color: var(--text-primary);
+        }
+
+        .text-small {
+            font-size: 0.9em;
+        }
+
+        .text-semibold {
+            font-weight: 600;
+        }
+
+        .text-mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 0.9em;
         }
     </style>
 </head>
@@ -354,7 +409,7 @@
                 container.innerHTML = `
                     <div class="no-data">
                         <p>No active job running</p>
-                        <p style="font-size: 0.9em; margin-top: 10px;">Start a job from the control panel to see live progress here</p>
+                        <p class="text-muted text-small" style="margin-top: 10px;">Start a job from the control panel to see live progress here</p>
                     </div>
                 `;
                 return;
@@ -372,9 +427,9 @@
             container.innerHTML = `
                 <div style="margin-bottom: 10px;">
                     <span class="status-badge status-active">⚡ RUNNING</span>
-                    <span style="margin-left: 15px; color: #718096;">Last updated: ${formatTimestamp(progress.timestamp)}</span>
+                    <span class="text-muted text-small" style="margin-left: 15px;">Last updated: ${formatTimestamp(progress.timestamp)}</span>
                 </div>
-                <div style="margin-bottom: 12px; color: #4a5568; font-weight: 600;">
+                <div class="text-muted text-semibold" style="margin-bottom: 12px;">
                     Current step: ${stepText}
                 </div>
                 
@@ -405,7 +460,7 @@
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">Failed</div>
-                        <div class="stat-value" style="color: #e53e3e;">${failed.toLocaleString()}</div>
+                        <div class="stat-value text-danger">${failed.toLocaleString()}</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">Remaining</div>
@@ -443,7 +498,7 @@
             let providersHTML = '';
             if (lastRun.top_providers && lastRun.top_providers.length > 0) {
                 providersHTML = `
-                    <h3 style="margin-top: 25px; margin-bottom: 15px; color: #2d3748;">Top Providers</h3>
+                    <h3 class="section-title">Top Providers</h3>
                     <table class="provider-table">
                         <thead>
                             <tr>
@@ -455,7 +510,7 @@
                         <tbody>
                             ${lastRun.top_providers.map(p => `
                                 <tr>
-                                    <td style="font-family: monospace; font-size: 0.9em;">${p.name}</td>
+                                    <td class="text-mono">${p.name}</td>
                                     <td>${p.success.toLocaleString()} / ${p.total.toLocaleString()}</td>
                                     <td>
                                         <span class="success-rate ${getSuccessRateClass(100 - p.fail_rate)}">
@@ -472,7 +527,7 @@
             let problemProvidersHTML = '';
             if (lastRun.problematic_providers && lastRun.problematic_providers.length > 0) {
                 problemProvidersHTML = `
-                    <h3 style="margin-top: 25px; margin-bottom: 15px; color: #2d3748;">⚠️ Problematic Providers (>10% failure)</h3>
+                    <h3 class="section-title">⚠️ Problematic Providers (>10% failure)</h3>
                     <table class="provider-table">
                         <thead>
                             <tr>
@@ -484,7 +539,7 @@
                         <tbody>
                             ${lastRun.problematic_providers.map(p => `
                                 <tr>
-                                    <td style="font-family: monospace; font-size: 0.9em;">${p.name}</td>
+                                    <td class="text-mono">${p.name}</td>
                                     <td>${p.success.toLocaleString()} / ${p.total.toLocaleString()}</td>
                                     <td>
                                         <span class="success-rate rate-bad">
@@ -501,7 +556,7 @@
             container.innerHTML = `
                 <div style="margin-bottom: 10px;">
                     <span class="status-badge status-idle">✓ COMPLETED</span>
-                    <span style="margin-left: 15px; color: #718096;">Finished: ${formatTimestamp(lastRun.timestamp)}</span>
+                    <span class="text-muted text-small" style="margin-left: 15px;">Finished: ${formatTimestamp(lastRun.timestamp)}</span>
                 </div>
                 
                 <div class="stats-grid">
@@ -511,15 +566,15 @@
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">Successful</div>
-                        <div class="stat-value" style="color: #38a169;">${lastRun.successful.toLocaleString()}</div>
+                        <div class="stat-value text-success">${lastRun.successful.toLocaleString()}</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">Failed</div>
-                        <div class="stat-value" style="color: #e53e3e;">${lastRun.failed.toLocaleString()}</div>
+                        <div class="stat-value text-danger">${lastRun.failed.toLocaleString()}</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">Success Rate</div>
-                        <div class="stat-value" style="color: ${successRate >= 95 ? '#38a169' : '#e53e3e'};">${successRate.toFixed(1)}%</div>
+                        <div class="stat-value ${successRate >= 95 ? 'text-success' : 'text-danger'}">${successRate.toFixed(1)}%</div>
                     </div>
                 </div>
                 

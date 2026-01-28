@@ -15,10 +15,10 @@
         
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--app-bg);
             min-height: 100vh;
             padding: 20px;
-            color: #333;
+            color: var(--text-primary);
         }
         
         .container {
@@ -28,34 +28,35 @@
         
         .header {
             text-align: center;
-            color: white;
+            color: var(--text-primary);
             margin-bottom: 30px;
         }
         
         .header h1 {
             font-size: 2.5em;
             margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            color: var(--accent-strong);
+            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.9);
         }
         
         .header p {
             font-size: 1.1em;
-            opacity: 0.9;
+            color: var(--text-muted);
         }
         
         .card {
-            background: white;
-            border-radius: 15px;
+            background: var(--surface-raised);
+            border-radius: 18px;
             padding: 25px;
             margin-bottom: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            box-shadow: var(--shadow-raised);
         }
         
         .card h2 {
-            color: #667eea;
+            color: var(--accent-strong);
             margin-bottom: 20px;
             font-size: 1.5em;
-            border-bottom: 2px solid #667eea;
+            border-bottom: 1px solid rgba(86, 70, 194, 0.2);
             padding-bottom: 10px;
         }
         
@@ -72,41 +73,45 @@
             align-items: center;
             gap: 10px;
             padding: 10px 20px;
-            border-radius: 25px;
-            background: rgba(255,255,255,0.2);
-            color: white;
+            border-radius: 999px;
+            background: var(--surface-inset);
+            color: var(--text-muted);
             font-weight: 600;
+            box-shadow: var(--shadow-inset);
         }
         
         .step.active {
-            background: white;
-            color: #667eea;
+            background: var(--surface-raised);
+            color: var(--accent-strong);
+            box-shadow: var(--shadow-soft);
         }
         
         .step.completed {
-            background: #48bb78;
-            color: white;
+            background: var(--success-soft);
+            color: var(--success);
+            box-shadow: var(--shadow-soft);
         }
         
         .step-number {
             width: 30px;
             height: 30px;
             border-radius: 50%;
-            background: rgba(255,255,255,0.3);
+            background: var(--surface-raised);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: bold;
+            font-weight: 700;
+            box-shadow: var(--shadow-soft);
         }
         
         .step.active .step-number {
-            background: #667eea;
-            color: white;
+            background: var(--accent);
+            color: #fdfcff;
         }
         
         .step.completed .step-number {
-            background: white;
-            color: #48bb78;
+            background: var(--surface-raised);
+            color: var(--success);
         }
         
         /* Group selection */
@@ -118,21 +123,22 @@
         }
         
         .group-item {
-            border: 2px solid #e2e8f0;
-            border-radius: 10px;
+            background: var(--surface-raised);
+            border-radius: 14px;
             padding: 15px;
             cursor: pointer;
             transition: all 0.3s;
+            box-shadow: var(--shadow-soft);
         }
         
         .group-item:hover {
-            border-color: #667eea;
-            background: #f7fafc;
+            background: var(--surface);
+            box-shadow: var(--shadow-raised);
         }
         
         .group-item.selected {
-            border-color: #667eea;
-            background: #eef2ff;
+            background: var(--accent-soft);
+            box-shadow: var(--shadow-raised);
         }
         
         .group-item input[type="checkbox"] {
@@ -143,13 +149,13 @@
         }
         
         .group-name {
-            font-weight: 600;
+            font-weight: 700;
             font-size: 1.1em;
             margin-bottom: 5px;
         }
         
         .group-count {
-            color: #718096;
+            color: var(--text-muted);
             font-size: 0.9em;
         }
         
@@ -161,21 +167,25 @@
         .channel-search input {
             width: 100%;
             padding: 12px 20px;
-            border: 2px solid #e2e8f0;
-            border-radius: 10px;
+            border: none;
+            border-radius: 12px;
             font-size: 1em;
+            background: var(--surface-inset);
+            box-shadow: var(--shadow-inset);
+            color: var(--text-primary);
         }
         
         .channel-search input:focus {
             outline: none;
-            border-color: #667eea;
+            box-shadow: var(--shadow-inset), 0 0 0 2px rgba(107, 91, 209, 0.2);
         }
         
         .channel-group-section {
             margin-bottom: 25px;
-            border: 2px solid #e2e8f0;
-            border-radius: 10px;
+            border-radius: 14px;
             padding: 15px;
+            background: var(--surface-raised);
+            box-shadow: var(--shadow-soft);
         }
         
         .channel-group-header {
@@ -184,13 +194,13 @@
             align-items: center;
             margin-bottom: 15px;
             padding-bottom: 10px;
-            border-bottom: 1px solid #e2e8f0;
+            border-bottom: 1px solid rgba(107, 91, 209, 0.12);
         }
         
         .channel-group-title {
-            font-weight: 600;
+            font-weight: 700;
             font-size: 1.1em;
-            color: #2d3748;
+            color: var(--text-primary);
         }
         
         .channel-group-actions {
@@ -215,7 +225,7 @@
         }
         
         .channel-item:hover {
-            background: #f7fafc;
+            background: var(--surface);
         }
         
         .channel-item input[type="checkbox"] {
@@ -226,14 +236,14 @@
         }
         
         .channel-number {
-            font-weight: 600;
-            color: #667eea;
+            font-weight: 700;
+            color: var(--accent-strong);
             margin-right: 8px;
             min-width: 40px;
         }
         
         .channel-name {
-            color: #2d3748;
+            color: var(--text-primary);
             font-size: 0.95em;
         }
         
@@ -262,21 +272,21 @@
         .action-help {
             margin-top: 4px;
             padding: 12px;
-            background: #f7fafc;
-            border-radius: 10px;
-            border-left: 4px solid #667eea;
-            color: #4a5568;
+            background: var(--surface-inset);
+            border-radius: 12px;
+            color: var(--text-muted);
             font-size: 0.9em;
             line-height: 1.35;
+            box-shadow: var(--shadow-inset);
         }
 
         .action-help--orange {
-            border-left-color: #f97316;
+            color: var(--warning);
         }
 
         .action-section-title {
             font-weight: 700;
-            color: #1f2937;
+            color: var(--text-primary);
             display: inline-flex;
             align-items: center;
             gap: 8px;
@@ -285,9 +295,9 @@
         .action-btn {
             padding: 15px 20px;
             border: none;
-            border-radius: 10px;
+            border-radius: 14px;
             font-size: 1em;
-            font-weight: 600;
+            font-weight: 700;
             cursor: pointer;
             transition: all 0.3s;
             display: flex;
@@ -296,30 +306,34 @@
             gap: 8px;
             width: 100%;
             text-align: center;
+            background: var(--surface-raised);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-soft);
         }
         
         .action-btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            box-shadow: var(--shadow-raised);
         }
         
         .action-btn:active {
             transform: translateY(0);
+            box-shadow: var(--shadow-press);
         }
         
         .action-btn.primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background: var(--accent-soft);
+            color: var(--accent-strong);
         }
         
         .action-btn.secondary {
-            background: #48bb78;
-            color: white;
+            background: var(--success-soft);
+            color: var(--success);
         }
         
         .action-btn.tertiary {
-            background: #ed8936;
-            color: white;
+            background: var(--warning-soft);
+            color: var(--warning);
         }
         
         .action-btn:disabled {
@@ -333,31 +347,37 @@
             display: flex;
             justify-content: space-between;
             margin-top: 20px;
+            gap: 12px;
+            flex-wrap: wrap;
         }
         
         .btn {
             padding: 12px 30px;
             border: none;
-            border-radius: 8px;
+            border-radius: 12px;
             font-size: 1em;
-            font-weight: 600;
+            font-weight: 700;
             cursor: pointer;
             transition: all 0.3s;
+            background: var(--surface-raised);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-soft);
         }
         
         .btn-back {
-            background: #e2e8f0;
-            color: #2d3748;
+            background: var(--surface-inset);
+            color: var(--text-muted);
+            box-shadow: var(--shadow-inset);
         }
         
         .btn-next {
-            background: #667eea;
-            color: white;
+            background: var(--accent-soft);
+            color: var(--accent-strong);
         }
         
         .btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            box-shadow: var(--shadow-raised);
         }
         
         .btn:disabled {
@@ -367,16 +387,17 @@
         
         /* Progress tracking */
         .progress-container {
-            background: #e2e8f0;
-            border-radius: 10px;
-            height: 30px;
+            background: var(--surface-inset);
+            border-radius: 16px;
+            height: 32px;
             margin: 15px 0;
             overflow: hidden;
             position: relative;
+            box-shadow: var(--shadow-inset);
         }
         
         .progress-bar {
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(90deg, rgba(107, 91, 209, 0.8) 0%, rgba(86, 70, 194, 0.95) 100%);
             height: 100%;
             position: absolute;
             left: 0;
@@ -385,8 +406,9 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            color: white;
-            font-weight: bold;
+            color: #fdfcff;
+            font-weight: 700;
+            text-shadow: 0 1px 2px rgba(40, 34, 98, 0.25);
         }
 
         .progress-bar.muted {
@@ -399,11 +421,11 @@
             align-items: center;
             gap: 8px;
             padding: 10px 12px;
-            background: #f7fafc;
-            border-radius: 8px;
-            border-left: 3px solid #a3bffa;
-            color: #4a5568;
+            background: var(--surface-inset);
+            border-radius: 12px;
+            color: var(--text-muted);
             font-weight: 600;
+            box-shadow: var(--shadow-inset);
         }
 
         .phase-indicator--active {
@@ -478,22 +500,22 @@
         }
         
         .stat-box {
-            background: #f7fafc;
+            background: var(--surface-inset);
             padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #667eea;
+            border-radius: 14px;
+            box-shadow: var(--shadow-inset);
         }
         
         .stat-label {
-            color: #718096;
+            color: var(--text-muted);
             font-size: 0.9em;
             margin-bottom: 5px;
         }
         
         .stat-value {
             font-size: 1.8em;
-            font-weight: bold;
-            color: #2d3748;
+            font-weight: 700;
+            color: var(--text-primary);
         }
         
         /* Job history */
@@ -504,16 +526,19 @@
         
         .history-item {
             padding: 15px;
-            border-bottom: 1px solid #e2e8f0;
+            border-radius: 14px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             transition: background-color 0.6s ease, box-shadow 0.4s ease;
+            background: var(--surface-raised);
+            box-shadow: var(--shadow-soft);
+            margin-bottom: 12px;
         }
 
         .history-item--new {
-            background: #f0f4ff;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.12);
+            background: var(--accent-soft);
+            box-shadow: var(--shadow-raised);
         }
 
         .history-item.clickable {
@@ -521,7 +546,7 @@
         }
         
         .history-item:hover {
-            background: #f7fafc;
+            background: var(--surface);
         }
         
         .history-info {
@@ -529,21 +554,22 @@
         }
         
         .history-type {
-            font-weight: 600;
-            color: #2d3748;
+            font-weight: 700;
+            color: var(--text-primary);
             margin-bottom: 5px;
         }
         
         .history-time {
-            color: #718096;
+            color: var(--text-muted);
             font-size: 0.9em;
         }
         
         .history-status {
-            padding: 5px 15px;
-            border-radius: 15px;
-            font-weight: 600;
-            font-size: 0.9em;
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-weight: 700;
+            font-size: 0.85em;
+            box-shadow: var(--shadow-soft);
         }
 
         .history-meta {
@@ -554,56 +580,74 @@
         }
         
         .status-completed {
-            background: #c6f6d5;
-            color: #22543d;
+            background: var(--success-soft);
+            color: var(--success);
         }
         
         .status-failed {
-            background: #fed7d7;
-            color: #742a2a;
+            background: var(--danger-soft);
+            color: var(--danger);
         }
         
         .status-cancelled {
-            background: #feebc8;
-            color: #7c2d12;
+            background: var(--warning-soft);
+            color: var(--warning);
         }
         
         .status-running {
-            background: #bee3f8;
-            color: #2c5282;
+            background: rgba(107, 91, 209, 0.12);
+            color: var(--accent-strong);
         }
 
         /* Provider ranking */
         .ranking-table-wrap {
             overflow-x: auto;
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
+            border-radius: 16px;
+            background: var(--surface-inset);
+            box-shadow: var(--shadow-inset);
+            padding: 6px;
         }
 
         .ranking-table {
             width: 100%;
-            border-collapse: collapse;
+            border-collapse: separate;
+            border-spacing: 0 10px;
             min-width: 720px;
         }
 
         .ranking-table th {
-            background: #f7fafc;
-            padding: 12px;
+            background: transparent;
+            padding: 12px 14px;
             text-align: left;
             font-weight: 700;
-            color: #4a5568;
-            border-bottom: 2px solid #e2e8f0;
+            color: var(--text-muted);
+            border: none;
             white-space: nowrap;
         }
 
         .ranking-table td {
-            padding: 12px;
-            border-bottom: 1px solid #e2e8f0;
+            padding: 12px 14px;
+            background: var(--surface-raised);
             vertical-align: top;
         }
 
-        .ranking-table tr:hover {
-            background: #f7fafc;
+        .ranking-table tbody tr {
+            box-shadow: var(--shadow-soft);
+            border-radius: 12px;
+        }
+
+        .ranking-table tbody tr td:first-child {
+            border-top-left-radius: 12px;
+            border-bottom-left-radius: 12px;
+        }
+
+        .ranking-table tbody tr td:last-child {
+            border-top-right-radius: 12px;
+            border-bottom-right-radius: 12px;
+        }
+
+        .ranking-table tr:hover td {
+            background: var(--surface);
         }
 
         .score-pill {
@@ -616,53 +660,56 @@
             font-size: 0.9em;
             line-height: 1.1;
             white-space: nowrap;
+            box-shadow: var(--shadow-soft);
         }
 
-        .score-good { background: #c6f6d5; color: #22543d; }
-        .score-ok { background: #feebc8; color: #7c2d12; }
-        .score-bad { background: #fed7d7; color: #742a2a; }
+        .score-good { background: var(--success-soft); color: var(--success); }
+        .score-ok { background: var(--warning-soft); color: var(--warning); }
+        .score-bad { background: var(--danger-soft); color: var(--danger); }
 
         .provider-subtle {
             display: block;
             margin-top: 2px;
-            color: #718096;
+            color: var(--text-muted);
             font-size: 0.8em;
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
         }
 
         .provider-note {
             margin-top: 4px;
-            color: #718096;
+            color: var(--text-muted);
             font-size: 0.85em;
         }
 
         .provider-ranking-help code {
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-            background: #f3f4f6;
+            background: var(--surface-inset);
             padding: 2px 6px;
             border-radius: 8px;
+            box-shadow: var(--shadow-inset);
         }
 
         /* Provider usage (from access logs) */
         .usage-meta {
-            color: #718096;
+            color: var(--text-muted);
             font-size: 0.92em;
             line-height: 1.35;
         }
 
         .usage-controls label {
             font-weight: 700;
-            color: #4a5568;
+            color: var(--text-muted);
             font-size: 0.92em;
         }
 
         .usage-controls select,
         .usage-controls input {
             padding: 6px 10px;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            background: #fff;
-            color: #2d3748;
+            border: none;
+            border-radius: 10px;
+            background: var(--surface-inset);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-inset);
         }
 
         .usage-pill {
@@ -673,11 +720,12 @@
             font-weight: 800;
             font-size: 0.9em;
             white-space: nowrap;
+            box-shadow: var(--shadow-soft);
         }
 
-        .usage-pill-good { background: #c6f6d5; color: #22543d; }
-        .usage-pill-ok { background: #feebc8; color: #7c2d12; }
-        .usage-pill-bad { background: #fed7d7; color: #742a2a; }
+        .usage-pill-good { background: var(--success-soft); color: var(--success); }
+        .usage-pill-ok { background: var(--warning-soft); color: var(--warning); }
+        .usage-pill-bad { background: var(--danger-soft); color: var(--danger); }
         
         /* Hidden class */
         .hidden {
@@ -689,8 +737,8 @@
             display: inline-block;
             width: 16px;
             height: 16px;
-            border: 3px solid rgba(255,255,255,0.3);
-            border-top-color: white;
+            border: 3px solid rgba(107, 91, 209, 0.35);
+            border-top-color: transparent;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
         }
@@ -724,17 +772,17 @@
         }
 
         .modal {
-            background: #fff;
-            border-radius: 12px;
+            background: var(--surface-raised);
+            border-radius: 16px;
             max-width: 700px;
             width: 100%;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+            box-shadow: var(--shadow-raised);
             overflow: hidden;
         }
 
         .modal-header {
             padding: 16px 20px;
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid rgba(107, 91, 209, 0.18);
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -751,23 +799,23 @@
             justify-content: flex-end;
             gap: 10px;
             padding: 16px 20px;
-            border-top: 1px solid #e5e7eb;
-            background: #f9fafb;
+            border-top: 1px solid rgba(107, 91, 209, 0.18);
+            background: var(--surface);
         }
 
         .modal-title {
             font-size: 1.2em;
             font-weight: 700;
-            color: #1f2937;
+            color: var(--text-primary);
         }
         
         /* Selection summary */
         .selection-summary {
-            background: #eef2ff;
-            border: 2px solid #667eea;
-            border-radius: 10px;
+            background: var(--surface-inset);
+            border-radius: 14px;
             padding: 15px;
             margin: 20px 0;
+            box-shadow: var(--shadow-inset);
         }
         
         .summary-row {
@@ -778,41 +826,42 @@
         
         .summary-label {
             font-weight: 600;
-            color: #2d3748;
+            color: var(--text-primary);
         }
         
         .summary-value {
-            color: #667eea;
+            color: var(--accent-strong);
             font-weight: 600;
         }
         
         /* Alerts */
         .alert {
             padding: 15px;
-            border-radius: 10px;
+            border-radius: 12px;
             margin-bottom: 20px;
+            box-shadow: var(--shadow-inset);
         }
         
         .alert-info {
-            background: #bee3f8;
-            color: #2c5282;
+            background: var(--surface-inset);
+            color: var(--text-muted);
         }
 
         .alert-success {
-            background: #c6f6d5;
-            color: #22543d;
+            background: var(--success-soft);
+            color: var(--success);
         }
         
         .alert-error {
-            background: #fed7d7;
-            color: #742a2a;
+            background: var(--danger-soft);
+            color: var(--danger);
         }
         
         /* Small text buttons */
         .text-btn {
             background: none;
             border: none;
-            color: #667eea;
+            color: var(--accent-strong);
             cursor: pointer;
             font-weight: 600;
             padding: 5px 10px;
@@ -820,22 +869,22 @@
         }
         
         .text-btn:hover {
-            color: #764ba2;
+            color: var(--accent);
         }
 
         .schedule-panel {
             margin-top: 10px;
             padding: 12px;
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
+            background: var(--surface-inset);
+            border-radius: 12px;
             font-size: 0.9em;
+            box-shadow: var(--shadow-inset);
         }
 
         .schedule-panel h4 {
             margin: 0 0 8px 0;
             font-size: 0.95em;
-            color: #1f2937;
+            color: var(--text-primary);
         }
 
         .schedule-list {
@@ -850,22 +899,199 @@
             align-items: flex-start;
             gap: 10px;
             padding: 8px;
-            background: #ffffff;
-            border: 1px solid #e2e8f0;
-            border-radius: 6px;
+            background: var(--surface-raised);
+            border-radius: 10px;
+            box-shadow: var(--shadow-soft);
         }
 
         .schedule-meta {
             display: flex;
             flex-direction: column;
             gap: 4px;
-            color: #374151;
+            color: var(--text-primary);
         }
 
         .schedule-note {
-            color: #6b7280;
+            color: var(--text-muted);
             font-size: 0.85em;
             margin-top: 8px;
+        }
+
+        input[type="text"],
+        input[type="date"],
+        input[type="time"] {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 10px;
+            background: var(--surface-inset);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-inset);
+        }
+
+        .refresh-selector-input {
+            flex: 1 1 240px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: none;
+            background: var(--surface-inset);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-inset);
+        }
+
+        .text-muted {
+            color: var(--text-muted);
+        }
+
+        .text-success {
+            color: var(--success);
+        }
+
+        .text-danger {
+            color: var(--danger);
+        }
+
+        .text-accent {
+            color: var(--accent-strong);
+        }
+
+        .text-warning {
+            color: var(--warning);
+        }
+
+        .text-small {
+            font-size: 0.9em;
+        }
+
+        .action-section {
+            margin: 25px 0 15px 0;
+            color: var(--text-primary);
+        }
+
+        .filter-panel {
+            margin: 20px 0;
+            padding: 20px;
+            background: var(--surface-inset);
+            border-radius: 16px;
+            box-shadow: var(--shadow-inset);
+        }
+
+        .filter-panel__title {
+            display: block;
+            margin-bottom: 15px;
+            font-weight: 700;
+            color: var(--text-primary);
+            font-size: 1.05em;
+        }
+
+        .filter-panel__note {
+            margin-top: 6px;
+            color: var(--text-muted);
+            font-size: 0.9em;
+        }
+
+        .filter-panel__actions {
+            margin-top: 10px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .neo-details {
+            margin-bottom: 15px;
+            border-radius: 12px;
+            background: var(--surface-raised);
+            box-shadow: var(--shadow-soft);
+        }
+
+        .neo-details summary {
+            padding: 12px 14px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            color: var(--text-primary);
+        }
+
+        .neo-details__body {
+            padding: 12px 14px;
+            border-top: 1px solid rgba(107, 91, 209, 0.18);
+            color: var(--text-muted);
+            font-size: 0.9em;
+        }
+
+        .neo-details:not([open]) {
+            background: var(--surface-inset);
+            box-shadow: var(--shadow-inset);
+        }
+
+        .meta-block {
+            margin-bottom: 12px;
+            color: var(--text-muted);
+            font-size: 0.95em;
+        }
+
+        .meta-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .meta-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .neo-select {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 10px;
+            background: var(--surface-inset);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-inset);
+        }
+
+        .status-meta {
+            margin-left: 15px;
+            color: var(--text-muted);
+            font-size: 0.9em;
+        }
+
+        .progress-meta {
+            margin: 10px 0 6px 0;
+            color: var(--text-muted);
+            font-size: 0.9em;
+        }
+
+        .notice-card {
+            margin-top: 15px;
+            padding: 12px 14px;
+            background: var(--surface-inset);
+            border-radius: 12px;
+            box-shadow: var(--shadow-inset);
+            color: var(--text-muted);
+        }
+
+        .rank-number {
+            font-weight: 800;
+            color: var(--text-muted);
+        }
+
+        .provider-name {
+            font-weight: 800;
+            color: var(--text-primary);
+        }
+
+        .history-context {
+            font-size: 0.85em;
+            color: var(--text-muted);
+        }
+
+        .history-context--small {
+            font-size: 0.75em;
+            color: rgba(107, 114, 128, 0.9);
         }
 
     </style>
@@ -988,57 +1214,56 @@
                 </div>
             </div>
 
-            <div id="refreshFilters" style="display: none; margin: 20px 0; padding: 20px; background: #fff5f0; border-radius: 8px; border-left: 4px solid #f97316;">
-                <label style="display: block; margin-bottom: 15px; font-weight: 600; color: #2d3748; font-size: 1.1em;">
+            <div id="refreshFilters" class="filter-panel" style="display: none;">
+                <label class="filter-panel__title">
                     🔍 Refresh Channel Streams
                 </label>
 
                 <div style="margin-bottom: 16px;">
-                    <label style="display: block; margin-bottom: 6px; color: #1f2937; font-weight: 700;">
+                    <label class="text-accent" style="display: block; margin-bottom: 6px; font-weight: 700;">
                         Stream selectors (up to 4)
                     </label>
                     <div id="refresh-selectors-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
-                    <div style="margin-top: 6px; color: #4b5563; font-size: 0.9em;">
+                    <div class="filter-panel__note">
                         Each selector is literal with <code>*</code> wildcards. Matching is case-insensitive.
                     </div>
-                    <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
+                    <div class="filter-panel__actions">
                         <button class="btn btn-next" id="refresh-selectors-confirm" type="button">Confirm changes</button>
                         <button class="btn btn-back" id="refresh-selectors-cancel" type="button">Cancel edits</button>
                     </div>
-                    <div id="refresh-selectors-status" style="margin-top: 6px; color: #6b7280; font-size: 0.9em;"></div>
+                    <div id="refresh-selectors-status" class="text-muted text-small" style="margin-top: 6px;"></div>
                 </div>
 
-                <details id="refresh-injected-includes" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
-                    <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
-                        <span style="font-weight: 700; color: #1f2937;">Show injected includes</span>
-                        <span style="color: #4b5563; font-size: 0.9em;">Exact stream names injected from the current channel.</span>
+                <details id="refresh-injected-includes" class="neo-details">
+                    <summary>
+                        <span style="font-weight: 700;">Show injected includes</span>
+                        <span class="text-muted text-small">Exact stream names injected from the current channel.</span>
                     </summary>
-                    <div id="refresh-injected-includes-list" style="padding: 12px 14px; border-top: 1px solid #e5e7eb; color: #4b5563; font-size: 0.9em;">
+                    <div id="refresh-injected-includes-list" class="neo-details__body">
                         No injected includes yet.
                     </div>
                 </details>
 
-                <details id="refresh-injected-excludes" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
-                    <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
-                        <span style="font-weight: 700; color: #1f2937;">Injected excludes</span>
-                        <span style="color: #4b5563; font-size: 0.9em;">Exact stream names excluded after selectors and includes.</span>
+                <details id="refresh-injected-excludes" class="neo-details">
+                    <summary>
+                        <span style="font-weight: 700;">Injected excludes</span>
+                        <span class="text-muted text-small">Exact stream names excluded after selectors and includes.</span>
                     </summary>
-                    <div id="refresh-injected-excludes-list" style="padding: 12px 14px; border-top: 1px solid #e5e7eb; color: #4b5563; font-size: 0.9em;">
+                    <div id="refresh-injected-excludes-list" class="neo-details__body">
                         No injected excludes.
                     </div>
                 </details>
 
             </div>
 
-            <div style="margin: 25px 0 15px 0; color: #2d3748;">
+            <div class="action-section">
                 <div class="action-section-title" style="margin-bottom: 10px;">
-                    <span style="color:#f97316;">1️⃣</span>
+                    <span class="text-warning">1️⃣</span>
                     <span>Refresh actions (run first)</span>
                 </div>
                 <div class="action-grid" style="margin: 12px 0 24px 0;">
                     <div class="action-panel">
-                        <button class="action-btn primary" onclick="startRefreshJob(event)"
-                                style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
+                        <button class="action-btn primary" onclick="startRefreshJob(event)">
                             <span>🔄</span>
                             <span>Refresh Channel Streams</span>
                         </button>
@@ -1049,13 +1274,12 @@
                 </div>
 
                 <div class="action-section-title" style="margin: 10px 0;">
-                    <span style="color:#6366f1;">2️⃣</span>
+                    <span class="text-accent">2️⃣</span>
                     <span>Quality Check actions (after refresh)</span>
                 </div>
                     <div class="action-grid" style="margin: 12px 0;">
                     <div class="action-stack">
-                        <button class="action-btn primary" onclick="startJob('full_cleanup', null, null, event)"
-                                style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
+                        <button class="action-btn primary" onclick="startJob('full_cleanup', null, null, event)">
                             <span>✅</span>
                             <span>Quality Check</span>
                         </button>
@@ -1101,12 +1325,12 @@
                 </div>
             </div>
             <div id="provider-ranking-container" class="hidden">
-                <div style="margin-bottom: 12px; color: #718096; font-size: 0.95em;">
-                    <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px;">
+                <div class="meta-block">
+                    <div class="meta-row">
                         <div id="provider-ranking-meta"></div>
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <label for="provider-ranking-window" style="font-weight:700; color:#4a5568;">Window</label>
-                            <select id="provider-ranking-window" style="padding:6px 10px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; color:#2d3748;">
+                        <div class="meta-control">
+                            <label for="provider-ranking-window" class="text-muted" style="font-weight:700;">Window</label>
+                            <select id="provider-ranking-window" class="neo-select">
                                 <option value="1">Last run</option>
                                 <option value="3">Last 3 runs</option>
                                 <option value="5">Last 5 runs</option>
@@ -1117,8 +1341,8 @@
                         </div>
                     </div>
                     <details style="margin-top: 8px;" class="provider-ranking-help">
-                        <summary style="cursor: pointer; font-weight: 700; color: #4a5568;">How scoring works</summary>
-                        <div style="margin-top: 8px; color: #4a5568; line-height: 1.45;">
+                        <summary style="cursor: pointer; font-weight: 700; color: var(--text-muted);">How scoring works</summary>
+                        <div style="margin-top: 8px; color: var(--text-muted); line-height: 1.45;">
                             <div><code>score = avg_quality × (success_rate/100)²</code></div>
                             <div style="margin-top: 6px;">
                                 This heavily favors providers that are both <strong>reliable</strong> and <strong>high quality</strong>.
@@ -1156,12 +1380,12 @@
             </div>
             <div class="modal-body">
                 <div style="margin-bottom: 16px;">
-                    <label style="font-weight: 700; color: #1f2937;">Selected Channel Groups</label>
-                    <div id="quality-schedule-groups" style="margin-top: 6px; color: #374151;"></div>
+                    <label class="text-accent" style="font-weight: 700;">Selected Channel Groups</label>
+                    <div id="quality-schedule-groups" class="text-muted" style="margin-top: 6px;"></div>
                 </div>
 
                 <div style="margin-bottom: 16px;">
-                    <label style="font-weight: 700; color: #1f2937;">Schedule type</label>
+                    <label class="text-accent" style="font-weight: 700;">Schedule type</label>
                     <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px;">
                         <label><input type="radio" name="schedule-type" value="once" checked> Run once</label>
                         <label><input type="radio" name="schedule-type" value="recurring"> Run on a schedule</label>
@@ -1169,7 +1393,7 @@
                 </div>
 
                 <div id="schedule-once-fields" style="margin-bottom: 16px;">
-                    <label style="font-weight: 700; color: #1f2937;">Run once</label>
+                    <label class="text-accent" style="font-weight: 700;">Run once</label>
                     <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px;">
                         <input type="date" id="schedule-once-date">
                         <input type="time" id="schedule-once-time">
@@ -1177,7 +1401,7 @@
                 </div>
 
                 <div id="schedule-recurring-fields" class="hidden" style="margin-bottom: 16px;">
-                    <label style="font-weight: 700; color: #1f2937;">Run on a schedule</label>
+                    <label class="text-accent" style="font-weight: 700;">Run on a schedule</label>
                     <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px;">
                         <label><input type="radio" name="schedule-frequency" value="daily" checked> Daily</label>
                         <label><input type="radio" name="schedule-frequency" value="weekly"> Weekly</label>
@@ -1186,7 +1410,7 @@
                         <input type="time" id="schedule-recurring-time">
                     </div>
                     <div id="schedule-weekly-days" class="hidden" style="margin-top: 10px;">
-                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">Days</div>
+                        <div class="text-accent" style="font-weight: 600; margin-bottom: 6px;">Days</div>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                             <label><input type="checkbox" value="0"> Sun</label>
                             <label><input type="checkbox" value="1"> Mon</label>
@@ -1201,7 +1425,7 @@
 
                 <div class="alert alert-info" style="margin-top: 6px;">
                     <strong>Scheduled Quality Checks will:</strong>
-                    <ul style="margin: 6px 0 0 18px; color: #374151;">
+                    <ul style="margin: 6px 0 0 18px; color: var(--text-muted);">
                         <li>Perform full quality checks.</li>
                         <li>Reorder streams automatically based on results.</li>
                     </ul>
@@ -1871,12 +2095,10 @@
             const slots = ensureSelectorSlots(refreshSelectorState.draftSelectors || []);
             list.innerHTML = slots.map((selector, idx) => {
                 const text = escapeHtml(selector?.text || '');
-                const inputStyle = 'border: 2px solid #e2e8f0;';
                 return `
                     <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
                         <input type="text" class="refresh-selector-input" data-index="${idx}"
-                               value="${text}" placeholder="*channel*5*"
-                               style="flex: 1 1 240px; padding: 8px 10px; border-radius: 6px; ${inputStyle}">
+                               value="${text}" placeholder="*channel*5*">
                     </div>
                 `;
             }).join('');
@@ -2301,7 +2523,7 @@
                     <span class="history-status ${statusClass}">
                         ${job.status.toUpperCase()}
                     </span>
-                    <span style="margin-left: 15px; color: #718096;">
+                    <span class="status-meta">
                         ${job.current_step}
                     </span>
                 </div>
@@ -2309,7 +2531,7 @@
 
             if (overall !== null && isActive) {
                 html += `
-                    <div style="margin: 10px 0 6px 0; color: #4a5568; font-size: 0.9em;">
+                    <div class="progress-meta">
                         <strong>Overall:</strong> ${overall.toFixed(1)}%${stageName ? ` • <strong>Stage:</strong> ${stageName}` : ''}
                     </div>
                     <div class="progress-container" style="margin-bottom: 12px;">
@@ -2343,7 +2565,7 @@
                         </div>
                         <div class="stat-box">
                             <div class="stat-label">Failed</div>
-                            <div class="stat-value" style="color: #e53e3e;">${failed.toLocaleString()}</div>
+                            <div class="stat-value text-danger">${failed.toLocaleString()}</div>
                         </div>
                         <div class="stat-box">
                             <div class="stat-label">Remaining</div>
@@ -2354,7 +2576,7 @@
             } else if (job.status === 'running' && total > 0) {
                 html += `
                     ${overall === null ? `
-                    <div style="margin: 10px 0 6px 0; color: #4a5568; font-size: 0.9em;">
+                    <div class="progress-meta">
                         ${stageName ? `<strong>Stage:</strong> ${stageName}` : ''}
                     </div>` : ''}
                     <div class="progress-container">
@@ -2374,7 +2596,7 @@
                         </div>
                         <div class="stat-box">
                             <div class="stat-label">Failed</div>
-                            <div class="stat-value" style="color: #e53e3e;">${failed.toLocaleString()}</div>
+                            <div class="stat-value text-danger">${failed.toLocaleString()}</div>
                         </div>
                         <div class="stat-box">
                             <div class="stat-label">Remaining</div>
@@ -2405,20 +2627,20 @@
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Streams Added</div>
-                                <div class="stat-value" style="color: #38a169;">${(job.result_summary.added || 0).toLocaleString()}</div>
+                                <div class="stat-value text-success">${(job.result_summary.added || 0).toLocaleString()}</div>
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Streams Removed</div>
-                                <div class="stat-value" style="color: #718096;">${(job.result_summary.removed || 0).toLocaleString()}</div>
+                                <div class="stat-value text-muted">${(job.result_summary.removed || 0).toLocaleString()}</div>
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Status</div>
-                                <div class="stat-value" style="color: #38a169;">Complete</div>
+                                <div class="stat-value text-success">Complete</div>
                             </div>
                         </div>
                     `;
                     if (job.result_summary.base_search_text) {
-                        html += `<div style="margin-top: 15px; padding: 10px; background: #f0f4ff; border-radius: 5px;">
+                        html += `<div class="notice-card">
                             <strong>Literal search text:</strong> ${job.result_summary.base_search_text}
                         </div>`;
                     }
@@ -2432,11 +2654,11 @@
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Successful</div>
-                                <div class="stat-value" style="color: #38a169;">${job.result_summary.successful.toLocaleString()}</div>
+                                <div class="stat-value text-success">${job.result_summary.successful.toLocaleString()}</div>
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Failed</div>
-                                <div class="stat-value" style="color: #e53e3e;">${job.result_summary.failed.toLocaleString()}</div>
+                                <div class="stat-value text-danger">${job.result_summary.failed.toLocaleString()}</div>
                             </div>
                             <div class="stat-box">
                                 <div class="stat-label">Success Rate</div>
@@ -2682,9 +2904,9 @@
 
                         return `
                             <tr>
-                                <td style="font-weight:800; color:#4a5568;">${escapeHtml(rank)}</td>
+                                <td class="rank-number">${escapeHtml(rank)}</td>
                                 <td>
-                                    <div style="font-weight:800; color:#2d3748;">${name}</div>
+                                    <div class="provider-name">${name}</div>
                                     ${pid ? `<span class="provider-subtle">ID ${pid}</span>` : ''}
                                     ${note ? `<div class="provider-note">${note}</div>` : ''}
                                 </td>
@@ -2789,8 +3011,8 @@
                     <div class="history-item clickable ${isHighlighted ? 'history-item--new' : ''}" data-job-id="${job.job_id}" onclick="viewJobResults('${job.job_id}')">
                         <div class="history-info">
                             <div class="history-type">${typeLabel}</div>
-                            <div class="history-time" style="font-size: 0.85em; color: #718096;">${context}</div>
-                            <div class="history-time" style="font-size: 0.75em; color: #a0aec0;">${timeStr}</div>
+                            <div class="history-context">${context}</div>
+                            <div class="history-context history-context--small">${timeStr}</div>
                         </div>
                         <div class="history-meta">
                             <span class="history-status ${statusClass}">
