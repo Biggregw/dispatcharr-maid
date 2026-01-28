@@ -2021,8 +2021,13 @@ def order_streams_for_channel(
             width, height = parsed
             if width < 1280 or height < 720:
                 return False
-            reject_count = _safe_float(record.get('reject_count'))
-            return reject_count == 0.0
+            reject = record.get('reject_count')
+            if reject is None:
+                return False
+            try:
+                return int(reject) == 0
+            except (ValueError, TypeError):
+                return False
 
         has_hd_reject_free = any(_is_hd_and_reject_free(item['record']) for item in ordered_records)
         if has_hd_reject_free and ordered_records:
