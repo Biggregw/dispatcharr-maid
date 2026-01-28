@@ -1159,26 +1159,6 @@
                     </div>
                 </div>
             </div>
-            <div style="margin: 20px 0; padding: 20px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
-                <label for="analysisProfile" style="display: block; margin-bottom: 8px; font-weight: 700; color: #1f2937; font-size: 1.05em;">
-                    🧮 Analysis Profile
-                </label>
-                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                    <select id="analysisProfile" style="padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em;">
-                        <option value="fast">Fast</option>
-                        <option value="balanced" selected>Balanced (default)</option>
-                        <option value="deep">Deep</option>
-                    </select>
-                    <span style="color:#4b5563; font-size:0.95em;">Choose how deep the analysis should probe. Balanced matches today’s defaults.</span>
-                </div>
-                <details style="margin-top: 12px; padding: 12px; background: #eef2ff; border-radius: 6px; border-left: 3px solid #6366f1;">
-                    <summary style="font-weight:600; color:#4338ca; cursor:pointer;">Advanced analysis settings</summary>
-                    <div style="margin-top:8px; color:#374151; font-size:0.95em; line-height:1.5;">
-                        Raw analysis parameters stay available for power users. Keep your YAML overrides as-is to fully control probes; this panel simply keeps the defaults grouped under named profiles.
-                    </div>
-                </details>
-            </div>
-
             <div class="nav-buttons">
                 <button class="btn btn-back" onclick="goToStep2()">
                     ← Back to Channels
@@ -2605,7 +2585,6 @@
                     channels: selectedChannels,
                     group_names: groupNames,
                     channel_names: channelNames,
-                    analysis_profile: document.getElementById('analysisProfile')?.value || 'balanced',
                     selected_stream_ids: selectedStreamIds,
                     excluded_stream_names: excludedStreamNames
                 };

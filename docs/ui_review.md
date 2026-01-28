@@ -15,7 +15,7 @@
    - Running a refresh opens a modal with preview list and “Add Selected Streams,” implying refresh is channel-scoped, but the stepper still highlights global phases, not per-channel context.
 
 4. **Quality Check step**
-   - Analysis profile selector (Fast/Balanced/Deep). Two primary buttons either apply changes immediately or compute the ordering read-only. The distinction is clearly labeled, but there is no secondary confirmation before applying changes.
+   - Two primary buttons either apply changes immediately or compute the ordering read-only. The distinction is clearly labeled, but there is no secondary confirmation before applying changes.
 
 5. **Results page (`/results`)**
    - Top bar provides back-to-control-panel, export CSV, and job picker (defaults to latest completed job). Tabs switch between Streams, Providers, Channels, and Errors. Helper copy explains ordering visibility and regex generation in the Streams tab.
