@@ -470,43 +470,6 @@
             100% { transform: translateX(60%); }
         }
 
-        #refresh-progress-container .progress-container {
-            background: #cfe8ff;
-            border-radius: 14px;
-            height: 26px;
-            box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.15);
-        }
-
-        #refresh-progress-container .progress-bar {
-            border-radius: 14px;
-            background: linear-gradient(90deg, #6d5bd0 0%, #7c4fd6 50%, #6d5bd0 100%);
-            overflow: hidden;
-        }
-
-        #refresh-progress-container .progress-bar.indeterminate {
-            width: 45%;
-            animation: refreshIndeterminate 1.6s ease-in-out infinite;
-        }
-
-        #refresh-progress-container .progress-bar.indeterminate::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
-            animation: refreshShimmer 1.2s linear infinite;
-        }
-
-        @keyframes refreshIndeterminate {
-            0% { transform: translateX(-120%); }
-            50% { transform: translateX(-10%); }
-            100% { transform: translateX(120%); }
-        }
-
-        @keyframes refreshShimmer {
-            0% { transform: translateX(-60%); }
-            100% { transform: translateX(60%); }
-        }
-        
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -749,7 +712,6 @@
             to { width: 1.5em; }
         }
 
-        /* Refresh preview modal */
         .modal-overlay {
             position: fixed;
             inset: 0;
@@ -791,35 +753,6 @@
             padding: 16px 20px;
             border-top: 1px solid #e5e7eb;
             background: #f9fafb;
-        }
-
-        .preview-list {
-            border: 1px solid #e5e7eb;
-            border-radius: 10px;
-            padding: 10px;
-            margin-top: 12px;
-        }
-
-        .preview-item {
-            display: flex;
-            gap: 12px;
-            align-items: flex-start;
-            padding: 10px;
-            border-bottom: 1px solid #e5e7eb;
-        }
-
-        .preview-item:last-child {
-            border-bottom: none;
-        }
-
-        .preview-name {
-            font-weight: 600;
-            color: #111827;
-        }
-
-        .preview-meta {
-            color: #6b7280;
-            font-size: 0.9em;
         }
 
         .modal-title {
@@ -865,21 +798,6 @@
             color: #2c5282;
         }
 
-        .preview-loading {
-            animation: preview-pulse 1.4s ease-in-out infinite;
-        }
-
-        @keyframes preview-pulse {
-            0%, 100% {
-                transform: translateY(0);
-                box-shadow: 0 0 0 rgba(49, 130, 206, 0.2);
-            }
-            50% {
-                transform: translateY(-2px);
-                box-shadow: 0 8px 18px rgba(49, 130, 206, 0.25);
-            }
-        }
-        
         .alert-success {
             background: #c6f6d5;
             color: #22543d;
@@ -1110,9 +1028,6 @@
                     </div>
                 </details>
 
-                <div style="margin-top: 10px; padding: 12px; background: #fef2f2; border-left: 3px solid #ef4444; border-radius: 4px; font-size: 0.9em; color: #991b1b;">
-                    <strong>⚠️ Note:</strong> Selectors only apply after confirming changes.
-                </div>
             </div>
 
             <div style="margin: 25px 0 15px 0; color: #2d3748;">
@@ -1122,13 +1037,13 @@
                 </div>
                 <div class="action-grid" style="margin: 12px 0 24px 0;">
                     <div class="action-panel">
-                        <button class="action-btn primary" onclick="showRefreshPreview()"
+                        <button class="action-btn primary" onclick="startRefreshJob(event)"
                                 style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);">
                             <span>🔄</span>
                             <span>Refresh Channel Streams</span>
                         </button>
                         <div class="action-help action-help--orange">
-                            Uses confirmed selectors and injected includes, then applies injected excludes.
+                            Uses selectors and injected includes, then applies injected excludes.
                         </div>
                     </div>
                 </div>
@@ -1139,16 +1054,11 @@
                 </div>
                     <div class="action-grid" style="margin: 12px 0;">
                     <div class="action-stack">
-                        <button class="action-btn primary" onclick="startApplyQualityJob(event)"
+                        <button class="action-btn primary" onclick="startJob('full_cleanup', null, null, event)"
                                 style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
                             <span>✅</span>
-                            <span>Quality Check (Apply Changes)</span>
+                            <span>Quality Check</span>
                         </button>
-
-                        <div class="action-help">
-                            <div style="font-weight: 700; color: #2d3748; margin-bottom: 6px;">Which one should I use?</div>
-                            <div><strong>Apply Changes</strong> will analyze + score, then <strong>order</strong> streams immediately (no streams are removed).</div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -1238,63 +1148,6 @@
         </div>
     </div>
 
-    <div id="refresh-preview-modal" class="modal-overlay hidden">
-        <div class="modal">
-            <div class="modal-header">
-                <div>
-                    <div class="modal-title">Preview matching streams</div>
-                    <div class="preview-meta" id="refresh-preview-summary"></div>
-                </div>
-                <button class="btn btn-back" onclick="closeRefreshPreview()">✖</button>
-            </div>
-            <div class="modal-body">
-                <div class="preview-meta" id="refresh-preview-description"></div>
-                <div style="display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0;">
-                    <button type="button" class="btn btn-back" id="refresh-select-all">Select all</button>
-                    <button type="button" class="btn btn-back" id="refresh-deselect-all">Deselect all</button>
-                </div>
-                <div id="refresh-preview-exclusions" class="preview-meta" style="margin-bottom: 6px;"></div>
-                <div id="refresh-preview-excluded-matches" class="preview-meta" style="margin-bottom: 10px;"></div>
-                <div class="preview-list" id="refresh-preview-list"></div>
-                <div id="refresh-progress-container" class="alert alert-info hidden" style="margin-top: 15px;">
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <span class="spinner"></span>
-                        <div>
-                            <div id="refresh-progress-message" style="font-weight: 600;">Preparing to add streams...</div>
-                            <div id="refresh-progress-detail" style="color: #4a5568; font-size: 0.9em;">This window will stay open until the channel is updated.</div>
-                        </div>
-                    </div>
-                    <div class="progress-container" style="margin-top: 12px; position: relative;">
-                        <div id="refresh-progress-bar" class="progress-bar indeterminate"></div>
-                        <div id="refresh-progress-percentage" style="position: relative; z-index: 1; text-align: center; font-weight: 700; color: #2d3748;">
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-back" onclick="closeRefreshPreview()">Cancel</button>
-                <button type="button" class="btn btn-next" id="refresh-submit-button" onclick="submitRefreshJob(event)">Apply Changes</button>
-            </div>
-        </div>
-
-    </div>
-
-    <div id="apply-confirm-modal" class="modal-overlay hidden">
-        <div class="modal">
-            <div class="modal-header">
-                <div class="modal-title">Run Apply Changes now?</div>
-                <button class="btn btn-back" onclick="closeApplyConfirmModal()">✖</button>
-            </div>
-            <div class="modal-body">
-                <p style="margin: 0; color: #374151;">Applying changes updates Dispatcharr immediately.</p>
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-back" onclick="closeApplyConfirmModal()">Cancel</button>
-                <button class="btn btn-next" onclick="confirmApplyWithoutPreview()">Proceed anyway</button>
-            </div>
-        </div>
-    </div>
-
     <div id="quality-schedule-modal" class="modal-overlay hidden">
         <div class="modal">
             <div class="modal-header">
@@ -1302,9 +1155,6 @@
                 <button class="btn btn-back" onclick="closeQualityScheduleModal()">✖</button>
             </div>
             <div class="modal-body">
-                <div class="alert alert-info" style="margin-bottom: 12px;">
-                    Selected groups are read-only here. Close this window to change the selection.
-                </div>
                 <div style="margin-bottom: 16px;">
                     <label style="font-weight: 700; color: #1f2937;">Selected Channel Groups</label>
                     <div id="quality-schedule-groups" style="margin-top: 6px; color: #374151;"></div>
@@ -1372,14 +1222,10 @@
         let allChannels = {};
         let currentJobId = null;
         let jobCheckInterval = null;
-        let refreshPreviewStreams = [];
-        let refreshPreviewMeta = null;
-        let refreshJobId = null;
         let lastTerminalJobId = null;
         const terminalStatuses = ['completed', 'failed', 'cancelled'];
         let pendingHistoryHighlightJobId = null;
         const lastRenderedStatuses = {};
-        let pendingApplyButton = null;
         let refreshSelectorState = {
             channelId: null,
             persistedSelectors: [],
@@ -1451,14 +1297,6 @@
             loadJobHistory();
             loadProviderRanking();
             loadQualitySchedules();
-            const selectAllBtn = document.getElementById('refresh-select-all');
-            const deselectAllBtn = document.getElementById('refresh-deselect-all');
-            if (selectAllBtn) {
-                selectAllBtn.addEventListener('click', () => setRefreshSelection(true));
-            }
-            if (deselectAllBtn) {
-                deselectAllBtn.addEventListener('click', () => setRefreshSelection(false));
-            }
             const confirmSelectorsBtn = document.getElementById('refresh-selectors-confirm');
             const cancelSelectorsBtn = document.getElementById('refresh-selectors-cancel');
             if (confirmSelectorsBtn) {
@@ -2031,31 +1869,14 @@
             const list = document.getElementById('refresh-selectors-list');
             if (!list) return;
             const slots = ensureSelectorSlots(refreshSelectorState.draftSelectors || []);
-            const committedSlots = ensureSelectorSlots(refreshSelectorState.persistedSelectors || []);
             list.innerHTML = slots.map((selector, idx) => {
                 const text = escapeHtml(selector?.text || '');
-                const committedText = committedSlots[idx]?.confirmed ? (committedSlots[idx]?.text || '') : '';
-                const isCommitted = committedText && committedText === (selector?.text || '');
-                const hasEdit = (selector?.text || '') !== committedText;
-                const statusLabel = isCommitted ? 'Committed' : hasEdit && (selector?.text || committedText) ? 'Uncommitted edit' : '';
-                const statusStyle = isCommitted
-                    ? 'background: #ecfdf5; color: #065f46; border: 1px solid #10b981;'
-                    : hasEdit && (selector?.text || committedText)
-                        ? 'background: #fff7ed; color: #9a3412; border: 1px solid #fb923c;'
-                        : 'background: #e5e7eb; color: #6b7280; border: 1px solid #e5e7eb;';
-                const inputStyle = isCommitted
-                    ? 'border: 2px solid #10b981; font-weight: 700; background: #ecfdf5;'
-                    : hasEdit && (selector?.text || committedText)
-                        ? 'border: 2px solid #fb923c; background: #fff7ed;'
-                        : 'border: 2px solid #e2e8f0;';
+                const inputStyle = 'border: 2px solid #e2e8f0;';
                 return `
                     <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
                         <input type="text" class="refresh-selector-input" data-index="${idx}"
                                value="${text}" placeholder="*channel*5*"
                                style="flex: 1 1 240px; padding: 8px 10px; border-radius: 6px; ${inputStyle}">
-                        ${statusLabel ? `<span style="padding: 4px 8px; border-radius: 999px; font-size: 0.8em; ${statusStyle}">
-                            ${statusLabel}
-                        </span>` : ''}
                     </div>
                 `;
             }).join('');
@@ -2115,7 +1936,7 @@
                 return;
             }
             if (refreshSelectorsDirty) {
-                status.textContent = 'Edits are not applied until you confirm changes.';
+                status.textContent = '';
             } else {
                 status.textContent = 'Selectors are up to date.';
             }
@@ -2185,113 +2006,6 @@
             }
         }
 
-        // Refresh preview helpers
-        function closeRefreshPreview() {
-            document.getElementById('refresh-preview-modal').classList.add('hidden');
-            refreshPreviewStreams = [];
-            refreshPreviewMeta = null;
-            refreshJobId = null;
-            resetRefreshProgress();
-        }
-
-        function renderRefreshPreview(preview) {
-            refreshPreviewStreams = preview.streams || [];
-            refreshPreviewMeta = preview;
-
-            const list = document.getElementById('refresh-preview-list');
-            const description = document.getElementById('refresh-preview-description');
-            const summary = document.getElementById('refresh-preview-summary');
-            const exclusionsContainer = document.getElementById('refresh-preview-exclusions');
-            const excludedMatchesContainer = document.getElementById('refresh-preview-excluded-matches');
-
-            const selectorCount = Number(preview.selector_count || 0);
-            const selectorLine = selectorCount
-                ? `${selectorCount} confirmed selector(s) applied. `
-                : 'No confirmed selectors. Only injected includes are applied. ';
-            description.textContent = (preview.channel_name
-                ? `Streams found for ${preview.channel_name}. Uncheck any stream to explicitly exclude it. `
-                : 'Streams found for the selected channel. ') + selectorLine;
-
-            if (preview.preview_truncated) {
-                const limit = preview.preview_limit || refreshPreviewStreams.length;
-                const shown = Math.min(limit, refreshPreviewStreams.length);
-                description.textContent += ` Showing first ${shown} result(s).`;
-            }
-
-            if (exclusionsContainer) {
-                const exclusions = Array.isArray(preview.injected_excludes) ? preview.injected_excludes.filter(Boolean) : [];
-                if (!exclusions.length) {
-                    exclusionsContainer.textContent = 'No exclusions are applied to this refresh.';
-                } else {
-                    const label = exclusions.length === 1 ? 'exclusion' : 'exclusions';
-                    exclusionsContainer.innerHTML = `<strong>${exclusions.length}</strong> ${label} applied (exact name match): ${exclusions.map(name => escapeHtml(name)).join(', ')}`;
-                }
-            }
-
-            if (excludedMatchesContainer) {
-                const excludedMatches = Array.isArray(preview.excluded_streams) ? preview.excluded_streams.filter(item => item && item.name) : [];
-                if (!excludedMatches.length) {
-                    excludedMatchesContainer.textContent = 'No matching streams were filtered out by exclusions.';
-                } else {
-                    const label = excludedMatches.length === 1 ? 'match' : 'matches';
-                    const rendered = excludedMatches.slice(0, 6).map(item => {
-                        const provider = item.provider_name || (item.provider_id ? `Provider ID ${item.provider_id}` : 'Unknown provider');
-                        return `${escapeHtml(item.name)} (${escapeHtml(provider)})`;
-                    });
-                    const remainder = excludedMatches.length > rendered.length
-                        ? ` +${excludedMatches.length - rendered.length} more`
-                        : '';
-                    excludedMatchesContainer.innerHTML = `<strong>${excludedMatches.length}</strong> ${label} excluded: ${rendered.join(', ')}${remainder}`;
-                }
-            }
-
-            if (!refreshPreviewStreams.length) {
-                list.innerHTML = '<div class="alert alert-warning">No streams matched. Proceeding will clear current streams for this channel.</div>';
-                updateInjectedIncludes(preview.injected_includes || []);
-                if (Array.isArray(preview.injected_excludes)) {
-                    refreshSelectorState.exclusions = preview.injected_excludes;
-                    renderRefreshExclusions();
-                }
-                updateRefreshSelectionState();
-                return;
-            }
-
-            list.innerHTML = refreshPreviewStreams.map(stream => `
-                <label class="preview-item">
-                    <input type="checkbox" class="refresh-stream-checkbox" value="${stream.id}" data-stream-name="${escapeHtml(stream.name)}" checked>
-                    <div>
-                        <div class="preview-name">${stream.name}</div>
-                        <div class="preview-meta">
-                            ${(() => {
-                                const metaParts = [];
-                                const hasProviderId = stream.provider_id !== undefined && stream.provider_id !== null && stream.provider_id !== '';
-                                if (stream.provider_name) {
-                                    metaParts.push(`Provider: ${stream.provider_name}`);
-                                } else if (hasProviderId) {
-                                    metaParts.push(`Provider ID: ${stream.provider_id}`);
-                                }
-                                metaParts.push(`ID: ${stream.id}`);
-                                if (stream.resolution) {
-                                    metaParts.push(stream.resolution);
-                                }
-                                return metaParts.join(' • ');
-                            })()}
-                        </div>
-                    </div>
-                </label>
-            `).join('');
-
-            updateInjectedIncludes(preview.injected_includes || []);
-            if (Array.isArray(preview.injected_excludes)) {
-                refreshSelectorState.exclusions = preview.injected_excludes;
-                renderRefreshExclusions();
-            }
-            document.querySelectorAll('.refresh-stream-checkbox').forEach(cb => {
-                cb.addEventListener('change', updateRefreshSelectionState);
-            });
-            updateRefreshSelectionState();
-        }
-
         function updateInjectedIncludes(injected) {
             const container = document.getElementById('refresh-injected-includes-list');
             if (!container) return;
@@ -2304,150 +2018,16 @@
             container.innerHTML = items;
         }
 
-        function setRefreshSelection(checked) {
-            document.querySelectorAll('.refresh-stream-checkbox').forEach(cb => {
-                cb.checked = checked;
-            });
-            updateRefreshSelectionState();
-        }
-
-        function updateRefreshSelectionState() {
-            const summary = document.getElementById('refresh-preview-summary');
-            const submitButton = document.getElementById('refresh-submit-button');
-            const checkboxes = Array.from(document.querySelectorAll('.refresh-stream-checkbox'));
-            const selectedCount = checkboxes.filter(cb => cb.checked).length;
-            const totalCount = checkboxes.length;
-            const noChange = !!refreshPreviewMeta?.no_change;
-
-            if (summary && refreshPreviewMeta) {
-                const newCount = Number(refreshPreviewMeta.new_count || 0).toLocaleString();
-                const addedCount = Number(refreshPreviewMeta.added || 0).toLocaleString();
-                const removedCount = Number(refreshPreviewMeta.removed || 0).toLocaleString();
-                if (noChange) {
-                    summary.textContent = `No changes detected. ${newCount} stream(s) already match.`;
-                } else {
-                    summary.textContent = `${newCount} matching stream(s). Added: ${addedCount}, removed: ${removedCount}.`;
-                }
-            }
-
-            if (!submitButton) return;
-            if (noChange && selectedCount === totalCount && totalCount > 0) {
-                submitButton.disabled = true;
-                submitButton.textContent = 'No Changes';
-                return;
-            }
-            submitButton.disabled = false;
-            submitButton.textContent = 'Apply Changes';
-        }
-
-        async function showRefreshPreview() {
-            if (!selectedChannels || selectedChannels.length !== 1) {
-                alert('Please select exactly 1 channel to refresh.');
-                return;
-            }
-
-            document.getElementById('refresh-preview-modal').classList.remove('hidden');
-            document.getElementById('refresh-preview-list').innerHTML = '<div class="alert alert-info preview-loading"><span class="loading-ellipsis">Searching for matching streams</span></div>';
-            resetRefreshProgress();
-            document.getElementById('refresh-preview-summary').textContent = 'Looking up matching streams...';
-            document.getElementById('refresh-preview-description').textContent = '';
-
-            try {
-                const payload = {
-                    channel_id: selectedChannels[0]
-                };
-
-                const response = await fetch('/api/refresh-preview', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(payload)
-                });
-
-                const data = await response.json();
-
-                if (data.success) {
-                    renderRefreshPreview(data.preview);
-                } else {
-                    document.getElementById('refresh-preview-list').innerHTML = `<div class="alert alert-error">${data.error || 'Unable to preview streams.'}</div>`;
-                    document.getElementById('refresh-preview-summary').textContent = '';
-                }
-            } catch (error) {
-                document.getElementById('refresh-preview-list').innerHTML = `<div class="alert alert-error">Failed to preview streams: ${error.message}</div>`;
-                document.getElementById('refresh-preview-summary').textContent = '';
-            }
-        }
-
-        function showRefreshProgress(message) {
-            const container = document.getElementById('refresh-progress-container');
-            const bar = document.getElementById('refresh-progress-bar');
-            container.classList.remove('hidden');
-            document.getElementById('refresh-progress-message').textContent = message;
-            document.getElementById('refresh-progress-detail').textContent = 'Please wait. This dialog will close once the refresh finishes.';
-            document.getElementById('refresh-progress-percentage').textContent = '';
-            bar.classList.add('indeterminate');
-            bar.style.width = '45%';
-        }
-
-        function resetRefreshProgress() {
-            const container = document.getElementById('refresh-progress-container');
-            const bar = document.getElementById('refresh-progress-bar');
-            const submitButton = document.getElementById('refresh-submit-button');
-
-            container.classList.add('hidden');
-            document.getElementById('refresh-progress-message').textContent = 'Preparing to apply refresh changes...';
-            document.getElementById('refresh-progress-detail').textContent = 'This window will stay open until the channel is updated.';
-            document.getElementById('refresh-progress-percentage').textContent = '';
-            bar.classList.add('indeterminate');
-            bar.style.width = '45%';
-
-            if (submitButton) {
-                submitButton.disabled = false;
-                submitButton.textContent = 'Apply Changes';
-            }
-        }
-
-        async function submitRefreshJob(event) {
+        function startRefreshJob(event) {
             if (event) {
                 event.preventDefault();
                 event.stopPropagation();
             }
-            const checkboxes = Array.from(document.querySelectorAll('.refresh-stream-checkbox'));
-            const selected = checkboxes.filter(cb => cb.checked).map(cb => parseInt(cb.value));
-            const excludedNames = checkboxes
-                .filter(cb => !cb.checked)
-                .map(cb => cb.dataset.streamName);
-            const submitButton = document.getElementById('refresh-submit-button');
-
-            if (refreshPreviewMeta?.no_change && checkboxes.length > 0 && selected.length === checkboxes.length) {
+            if (!selectedChannels || selectedChannels.length !== 1) {
+                alert('Please select exactly 1 channel to refresh.');
                 return;
             }
-
-            if (selected.length === 0) {
-                const warning = refreshPreviewMeta?.new_count
-                    ? 'You have deselected all streams. Proceeding will remove every stream from this channel. Continue?'
-                    : 'No streams matched. Proceeding will clear the channel. Continue?';
-                if (!confirm(warning)) {
-                    return;
-                }
-            }
-
-            submitButton.disabled = true;
-            submitButton.textContent = 'Applying...';
-            showRefreshProgress('Please wait while we apply refresh changes...');
-
-            const jobId = await startJob('refresh_optimize', selected, excludedNames);
-
-            if (!jobId) {
-                submitButton.disabled = false;
-                submitButton.textContent = 'Apply Changes';
-                document.getElementById('refresh-progress-message').textContent = 'Failed to start refresh job. Please try again.';
-                document.getElementById('refresh-progress-detail').textContent = '';
-                document.getElementById('refresh-progress-bar').classList.remove('indeterminate');
-                document.getElementById('refresh-progress-bar').style.width = '0%';
-                return;
-            }
-
-            refreshJobId = jobId;
+            return startJob('refresh_optimize', null, null, event);
         }
 
         // Start a job
@@ -2455,7 +2035,7 @@
             return {
                 refresh_optimize: 'Refresh Channel Streams',
                 pattern_refresh_full_cleanup: 'Refresh + QC',
-                full_cleanup: 'Quality Check (Apply Changes)',
+                full_cleanup: 'Quality Check',
                 full: 'Full Job',
                 fetch: 'Fetch Streams',
                 analyze: 'Analyze Streams',
@@ -2463,31 +2043,6 @@
                 reorder: 'Reorder Streams',
                 cleanup: 'Reorder Streams'
             }[jobType] || jobType;
-        }
-
-        function closeApplyConfirmModal() {
-            pendingApplyButton = null;
-            document.getElementById('apply-confirm-modal').classList.add('hidden');
-        }
-
-        function showApplyConfirmModal(clickedBtn) {
-            pendingApplyButton = clickedBtn || null;
-            document.getElementById('apply-confirm-modal').classList.remove('hidden');
-        }
-
-        function confirmApplyWithoutPreview() {
-            const clickedBtn = pendingApplyButton;
-            closeApplyConfirmModal();
-            return startJob('full_cleanup', null, null, clickedBtn ? { currentTarget: clickedBtn } : null);
-        }
-
-        function startApplyQualityJob(event) {
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
-            const clickedBtn = getClickedButton(event);
-            return showApplyConfirmModal(clickedBtn);
         }
 
         function renderOptimisticStartingJob(jobType, groupNames, channelNames) {
@@ -2606,7 +2161,6 @@
                     if (data.job) {
                         const reconciled = reconcileJobForRender(normalizeJobStatus(data.job));
                         renderCurrentJob(reconciled);
-                        updateRefreshProgress(reconciled);
                     }
                     maybeAutoScrollToCurrentJob(currentJobId);
                     
@@ -2697,7 +2251,6 @@
                     const reconciledJob = reconcileJobForRender(job);
 
                     renderCurrentJob(reconciledJob);
-                    updateRefreshProgress(reconciledJob);
                     handleJobStatusChange(job);
                     maybeAutoScrollToCurrentJob(job.job_id);
 
@@ -2715,64 +2268,6 @@
             }
         }
 
-        function updateRefreshProgress(job) {
-            resetRefreshProgress();
-            const container = document.getElementById('refresh-progress-container');
-            const messageEl = document.getElementById('refresh-progress-message');
-            const detailEl = document.getElementById('refresh-progress-detail');
-            const bar = document.getElementById('refresh-progress-bar');
-            const percentEl = document.getElementById('refresh-progress-percentage');
-            const submitButton = document.getElementById('refresh-submit-button');
-
-            if (!refreshJobId || job.job_id !== refreshJobId) {
-                return;
-            }
-
-            container.classList.remove('hidden');
-            if (submitButton) {
-                submitButton.disabled = true;
-                submitButton.textContent = 'Applying...';
-            }
-
-            messageEl.textContent = job.current_step || 'Applying refresh changes...';
-            detailEl.textContent = job.status === 'queued' ? 'Job queued and will start shortly.' : 'Updating your channel with the selected streams...';
-
-            if (job.total > 0) {
-                const percent = Math.min(100, (job.progress / job.total) * 100);
-                bar.classList.remove('indeterminate');
-                bar.style.width = `${percent}%`;
-                percentEl.textContent = `${percent.toFixed(1)}%`;
-            } else {
-                bar.classList.add('indeterminate');
-                bar.style.width = '45%';
-                percentEl.textContent = '';
-            }
-
-            if (['completed', 'failed', 'cancelled'].includes(job.status)) {
-                bar.classList.remove('indeterminate');
-                bar.style.width = '100%';
-                percentEl.textContent = job.status === 'completed' ? '100%' : '';
-
-                if (job.status === 'completed') {
-                    detailEl.textContent = 'Refresh applied successfully. You can close this window when you are ready.';
-                    messageEl.textContent = job.current_step || 'Refresh complete.';
-                    if (submitButton) {
-                        submitButton.textContent = 'Completed';
-                        submitButton.disabled = true;
-                    }
-                    refreshJobId = null;
-                    setTimeout(() => closeRefreshPreview(), 1000);
-                } else {
-                    detailEl.textContent = 'The refresh did not finish. Please review the current job for details.';
-                    if (submitButton) {
-                        submitButton.disabled = false;
-                        submitButton.textContent = 'Retry Apply Changes';
-                    }
-                    refreshJobId = null;
-                }
-            }
-        }
-        
         // Render current job
         function renderCurrentJob(job) {
             const container = document.getElementById('current-job-content');
@@ -3002,7 +2497,6 @@
                         document.getElementById('current-job-card').classList.remove('hidden');
                         const reconciledJob = reconcileJobForRender(normalizedJob);
                         renderCurrentJob(reconciledJob);
-                        updateRefreshProgress(reconciledJob);
                         handleJobStatusChange(normalizedJob);
 
                         if (terminalStatuses.includes(normalizedJob.status)) {
@@ -3263,7 +2757,7 @@
                 let typeLabel = {
                     'refresh_optimize': 'Refresh',
                     'pattern_refresh_full_cleanup': 'Refresh + QC',
-                    'full_cleanup': 'Quality Check (Apply Changes)',
+                    'full_cleanup': 'Quality Check',
                     'full': 'Full Job',
                     'fetch': 'Fetch',
                     'analyze': 'Analyze',
