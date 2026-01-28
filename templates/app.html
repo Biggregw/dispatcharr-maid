@@ -212,7 +212,7 @@
             padding: 8px;
             border-radius: 6px;
             transition: background 0.12s ease; 
-            color: #f8fafc;
+            color: var(--surface-soft);
             background: transparent;
         }
         
@@ -235,7 +235,7 @@
         }
         
         .channel-name {
-            color: #f8fafc;
+            color: var(--surface-soft);
             font-size: 0.95em;
         }
         
@@ -775,7 +775,7 @@
 
         .modal-header {
             padding: 16px 20px;
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid var(--border-muted);
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -799,7 +799,7 @@
         }
 
         .preview-list {
-            border: 1px solid #e5e7eb;
+            border: 1px solid var(--border-muted);
             border-radius: 10px;
             padding: 10px;
             margin-top: 12px;
@@ -810,7 +810,7 @@
             gap: 12px;
             align-items: flex-start;
             padding: 10px;
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid var(--border-muted);
         }
 
         .preview-item:last-child {
@@ -823,7 +823,7 @@
         }
 
         .preview-meta {
-            color: #6b7280;
+            color: var(--text-muted);
             font-size: 0.9em;
         }
 
@@ -913,7 +913,7 @@
         .schedule-panel {
             margin-top: 10px;
             padding: 12px;
-            background: #f8fafc;
+            background: var(--surface-soft);
             border: 1px solid #e2e8f0;
             border-radius: 8px;
             font-size: 0.9em;
@@ -950,7 +950,7 @@
         }
 
         .schedule-note {
-            color: #6b7280;
+            color: var(--text-muted);
             font-size: 0.85em;
             margin-top: 8px;
         }
@@ -1029,7 +1029,7 @@
 
         .step.active .step-number {
             background: var(--accent);
-            color: #f8fafc !important;
+            color: var(--surface-soft) !important;
         }
 
         .step.completed .step-number {
@@ -1098,7 +1098,7 @@
         .btn-primary,
         .btn-success,
         .btn-warning {
-            color: #f8fafc !important;
+            color: var(--surface-soft) !important;
         }
 
         .btn-primary {
@@ -1337,7 +1337,7 @@
             color: var(--warning-text) !important;
         }
 
-        #refresh-selectors-list span[style*="#e5e7eb"] {
+        #refresh-selectors-list span[style*="var(--border-muted)"] {
             background: var(--surface-soft) !important;
             border-color: var(--muted-border) !important;
             color: var(--muted-text) !important;
@@ -1350,6 +1350,22 @@
         a {
             color: var(--accent-strong) !important;
         }
+
+
+/* --- Dark theme modal text fix --- */
+.modal-body,
+.modal-body * {
+    color: var(--text-primary) !important;
+}
+
+.modal-body .text-muted {
+    color: var(--text-muted) !important;
+}
+
+.modal-actions {
+    background: var(--surface-elevated);
+    border-top-color: var(--border-muted);
+}
 
     </style>
 </head>
@@ -1471,7 +1487,7 @@
                 </div>
             </div>
 
-            <div id="refreshFilters" style="display: none; margin: 20px 0; padding: 20px; background: #fff5f0; border-radius: 8px; border-left: 4px solid #f97316;">
+            <div id="refreshFilters" style="display: none; margin: 20px 0; padding: 20px; background: var(--warning-bg); border-radius: 8px; border-left: 4px solid #f97316;">
                 <label style="display: block; margin-bottom: 15px; font-weight: 600; color: var(--text-primary); font-size: 1.1em;">
                     🔍 Refresh Channel Streams
                 </label>
@@ -1488,25 +1504,25 @@
                         <button class="btn btn-next" id="refresh-selectors-confirm" type="button">Confirm changes</button>
                         <button class="btn btn-back" id="refresh-selectors-cancel" type="button">Cancel edits</button>
                     </div>
-                    <div id="refresh-selectors-status" style="margin-top: 6px; color: #6b7280; font-size: 0.9em;"></div>
+                    <div id="refresh-selectors-status" style="margin-top: 6px; color: var(--text-muted); font-size: 0.9em;"></div>
                 </div>
 
-                <details id="refresh-injected-includes" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
+                <details id="refresh-injected-includes" style="margin-bottom: 15px; border: 1px solid var(--border-muted); border-radius: 8px; background: var(--surface-soft);">
                     <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
                         <span style="font-weight: 700; color: #1f2937;">Show injected includes</span>
                         <span style="color: var(--text-muted); font-size: 0.9em;">Exact stream names injected from the current channel.</span>
                     </summary>
-                    <div id="refresh-injected-includes-list" style="padding: 12px 14px; border-top: 1px solid #e5e7eb; color: var(--text-muted); font-size: 0.9em;">
+                    <div id="refresh-injected-includes-list" style="padding: 12px 14px; border-top: 1px solid var(--border-muted); color: var(--text-muted); font-size: 0.9em;">
                         No injected includes yet.
                     </div>
                 </details>
 
-                <details id="refresh-injected-excludes" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
+                <details id="refresh-injected-excludes" style="margin-bottom: 15px; border: 1px solid var(--border-muted); border-radius: 8px; background: var(--surface-soft);">
                     <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
                         <span style="font-weight: 700; color: #1f2937;">Injected excludes</span>
                         <span style="color: var(--text-muted); font-size: 0.9em;">Exact stream names excluded after selectors and includes.</span>
                     </summary>
-                    <div id="refresh-injected-excludes-list" style="padding: 12px 14px; border-top: 1px solid #e5e7eb; color: var(--text-muted); font-size: 0.9em;">
+                    <div id="refresh-injected-excludes-list" style="padding: 12px 14px; border-top: 1px solid var(--border-muted); color: var(--text-muted); font-size: 0.9em;">
                         No injected excludes.
                     </div>
                 </details>
@@ -2450,12 +2466,12 @@
                 const statusStyle = isCommitted
                     ? 'background: #ecfdf5; color: #065f46; border: 1px solid #10b981;'
                     : hasEdit && (selector?.text || committedText)
-                        ? 'background: #fff7ed; color: #9a3412; border: 1px solid #fb923c;'
-                        : 'background: #e5e7eb; color: #6b7280; border: 1px solid #e5e7eb;';
+                        ? 'background: var(--warning-bg); color: var(--warning-text); border: 1px solid #fb923c;'
+                        : 'background: var(--border-muted); color: var(--text-muted); border: 1px solid var(--border-muted);';
                 const inputStyle = isCommitted
                     ? 'border: 2px solid #10b981; font-weight: 700; background: #ecfdf5;'
                     : hasEdit && (selector?.text || committedText)
-                        ? 'border: 2px solid #fb923c; background: #fff7ed;'
+                        ? 'border: 2px solid #fb923c; background: var(--warning-bg);'
                         : 'border: 2px solid #e2e8f0;';
                 return `
                     <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
