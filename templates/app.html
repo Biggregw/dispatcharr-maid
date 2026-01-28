@@ -190,7 +190,7 @@
         .channel-group-title {
             font-weight: 600;
             font-size: 1.1em;
-            color: #2d3748;
+            color: var(--text-primary);
         }
         
         .channel-group-actions {
@@ -210,12 +210,14 @@
             display: flex;
             align-items: center;
             padding: 8px;
-            border-radius: 5px;
-            transition: background 0.2s;
+            border-radius: 6px;
+            transition: background 0.12s ease; 
+            color: #f8fafc;
+            background: transparent;
         }
         
         .channel-item:hover {
-            background: #f7fafc;
+            background: rgba(255, 255, 255, 0.08);
         }
         
         .channel-item input[type="checkbox"] {
@@ -233,7 +235,7 @@
         }
         
         .channel-name {
-            color: #2d3748;
+            color: #f8fafc;
             font-size: 0.95em;
         }
         
@@ -347,7 +349,7 @@
         
         .btn-back {
             background: #e2e8f0;
-            color: #2d3748;
+            color: var(--text-primary);
         }
         
         .btn-next {
@@ -530,7 +532,7 @@
         .stat-value {
             font-size: 1.8em;
             font-weight: bold;
-            color: #2d3748;
+            color: var(--text-primary);
         }
         
         /* Job history */
@@ -567,7 +569,7 @@
         
         .history-type {
             font-weight: 600;
-            color: #2d3748;
+            color: var(--text-primary);
             margin-bottom: 5px;
         }
         
@@ -699,7 +701,7 @@
             border: 1px solid #e2e8f0;
             border-radius: 8px;
             background: #fff;
-            color: #2d3748;
+            color: var(--text-primary);
         }
 
         .usage-pill {
@@ -753,7 +755,7 @@
         .modal-overlay {
             position: fixed;
             inset: 0;
-            background: rgba(0, 0, 0, 0.45);
+            background: rgba(0, 0, 0, 0.35);
             display: flex;
             justify-content: center;
             align-items: center;
@@ -762,7 +764,8 @@
         }
 
         .modal {
-            background: #fff;
+            background: var(--surface);
+            border: 1px solid var(--border-muted);
             border-radius: 12px;
             max-width: 700px;
             width: 100%;
@@ -782,6 +785,8 @@
             padding: 16px 20px;
             max-height: 60vh;
             overflow-y: auto;
+            background: var(--surface);
+            color: var(--text-primary);
         }
 
         .modal-actions {
@@ -789,8 +794,8 @@
             justify-content: flex-end;
             gap: 10px;
             padding: 16px 20px;
-            border-top: 1px solid #e5e7eb;
-            background: #f9fafb;
+            border-top: 1px solid var(--border-muted);
+            background: var(--surface);
         }
 
         .preview-list {
@@ -845,7 +850,7 @@
         
         .summary-label {
             font-weight: 600;
-            color: #2d3748;
+            color: var(--text-primary);
         }
         
         .summary-value {
@@ -941,7 +946,7 @@
             display: flex;
             flex-direction: column;
             gap: 4px;
-            color: #374151;
+            color: var(--text-muted);
         }
 
         .schedule-note {
@@ -957,9 +962,9 @@
             --surface-elevated: #1f2937;
             --surface-soft: #0f1a2b;
             --border-muted: #2a3446;
-            --text-primary: #e5e7eb;
-            --text-muted: #94a3b8;
-            --text-subtle: #64748b;
+            --text-primary: #f1f5f9;
+            --text-muted: #b3c0d4;
+            --text-subtle: #8fa1bd;
             --accent: #7c8cf5;
             --accent-strong: #a5b4fc;
             --success-bg: #0f2f24;
@@ -1467,7 +1472,7 @@
             </div>
 
             <div id="refreshFilters" style="display: none; margin: 20px 0; padding: 20px; background: #fff5f0; border-radius: 8px; border-left: 4px solid #f97316;">
-                <label style="display: block; margin-bottom: 15px; font-weight: 600; color: #2d3748; font-size: 1.1em;">
+                <label style="display: block; margin-bottom: 15px; font-weight: 600; color: var(--text-primary); font-size: 1.1em;">
                     🔍 Refresh Channel Streams
                 </label>
 
@@ -1476,7 +1481,7 @@
                         Stream selectors (up to 4)
                     </label>
                     <div id="refresh-selectors-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
-                    <div style="margin-top: 6px; color: #4b5563; font-size: 0.9em;">
+                    <div style="margin-top: 6px; color: var(--text-muted); font-size: 0.9em;">
                         Each selector is literal with <code>*</code> wildcards. Matching is case-insensitive.
                     </div>
                     <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
@@ -1489,9 +1494,9 @@
                 <details id="refresh-injected-includes" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
                     <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
                         <span style="font-weight: 700; color: #1f2937;">Show injected includes</span>
-                        <span style="color: #4b5563; font-size: 0.9em;">Exact stream names injected from the current channel.</span>
+                        <span style="color: var(--text-muted); font-size: 0.9em;">Exact stream names injected from the current channel.</span>
                     </summary>
-                    <div id="refresh-injected-includes-list" style="padding: 12px 14px; border-top: 1px solid #e5e7eb; color: #4b5563; font-size: 0.9em;">
+                    <div id="refresh-injected-includes-list" style="padding: 12px 14px; border-top: 1px solid #e5e7eb; color: var(--text-muted); font-size: 0.9em;">
                         No injected includes yet.
                     </div>
                 </details>
@@ -1499,9 +1504,9 @@
                 <details id="refresh-injected-excludes" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
                     <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
                         <span style="font-weight: 700; color: #1f2937;">Injected excludes</span>
-                        <span style="color: #4b5563; font-size: 0.9em;">Exact stream names excluded after selectors and includes.</span>
+                        <span style="color: var(--text-muted); font-size: 0.9em;">Exact stream names excluded after selectors and includes.</span>
                     </summary>
-                    <div id="refresh-injected-excludes-list" style="padding: 12px 14px; border-top: 1px solid #e5e7eb; color: #4b5563; font-size: 0.9em;">
+                    <div id="refresh-injected-excludes-list" style="padding: 12px 14px; border-top: 1px solid #e5e7eb; color: var(--text-muted); font-size: 0.9em;">
                         No injected excludes.
                     </div>
                 </details>
@@ -1511,7 +1516,7 @@
                 </div>
             </div>
 
-            <div style="margin: 25px 0 15px 0; color: #2d3748;">
+            <div style="margin: 25px 0 15px 0; color: var(--text-primary);">
                 <div class="action-section-title" style="margin-bottom: 10px;">
                     <span style="color:#f97316;">1️⃣</span>
                     <span>Refresh actions (run first)</span>
@@ -1548,7 +1553,7 @@
                         </button>
 
                         <div class="action-help">
-                            <div style="font-weight: 700; color: #2d3748; margin-bottom: 6px;">Which one should I use?</div>
+                            <div style="font-weight: 700; color: var(--text-primary); margin-bottom: 6px;">Which one should I use?</div>
                             <div><strong>Apply Changes</strong> will analyze + score, then <strong>order</strong> streams immediately (no streams are removed).</div>
                             <div style="margin-top: 6px;"><strong>Quality Check (Read-Only)</strong> computes the same ordering without applying any changes.</div>
                         </div>
@@ -1599,7 +1604,7 @@
                         <div id="provider-ranking-meta"></div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <label for="provider-ranking-window" style="font-weight:700; color:#4a5568;">Window</label>
-                            <select id="provider-ranking-window" style="padding:6px 10px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; color:#2d3748;">
+                            <select id="provider-ranking-window" style="padding:6px 10px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; color:var(--text-primary);">
                                 <option value="1">Last run</option>
                                 <option value="3">Last 3 runs</option>
                                 <option value="5">Last 5 runs</option>
@@ -1669,7 +1674,7 @@
                     </div>
                     <div class="progress-container" style="margin-top: 12px; position: relative;">
                         <div id="refresh-progress-bar" class="progress-bar indeterminate"></div>
-                        <div id="refresh-progress-percentage" style="position: relative; z-index: 1; text-align: center; font-weight: 700; color: #2d3748;">
+                        <div id="refresh-progress-percentage" style="position: relative; z-index: 1; text-align: center; font-weight: 700; color: var(--text-primary);">
                         </div>
                     </div>
                 </div>
@@ -1689,7 +1694,7 @@
                 <button class="btn btn-back" onclick="closeApplyConfirmModal()">✖</button>
             </div>
             <div class="modal-body">
-                <p style="margin: 0; color: #374151;">Applying changes updates Dispatcharr immediately.</p>
+                <p style="margin: 0; color: var(--text-muted);">Applying changes updates Dispatcharr immediately.</p>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-back" onclick="closeApplyConfirmModal()">Cancel</button>
@@ -1710,7 +1715,7 @@
                 </div>
                 <div style="margin-bottom: 16px;">
                     <label style="font-weight: 700; color: #1f2937;">Selected Channel Groups</label>
-                    <div id="quality-schedule-groups" style="margin-top: 6px; color: #374151;"></div>
+                    <div id="quality-schedule-groups" style="margin-top: 6px; color: var(--text-muted);"></div>
                 </div>
 
                 <div style="margin-bottom: 16px;">
@@ -1754,7 +1759,7 @@
 
                 <div class="alert alert-info" style="margin-top: 6px;">
                     <strong>Scheduled Quality Checks will:</strong>
-                    <ul style="margin: 6px 0 0 18px; color: #374151;">
+                    <ul style="margin: 6px 0 0 18px; color: var(--text-muted);">
                         <li>Perform full quality checks.</li>
                         <li>Reorder streams automatically based on results.</li>
                     </ul>
@@ -3612,7 +3617,7 @@
                             <tr>
                                 <td style="font-weight:800; color:#4a5568;">${escapeHtml(rank)}</td>
                                 <td>
-                                    <div style="font-weight:800; color:#2d3748;">${name}</div>
+                                    <div style="font-weight:800; color:var(--text-primary);">${name}</div>
                                     ${pid ? `<span class="provider-subtle">ID ${pid}</span>` : ''}
                                     ${note ? `<div class="provider-note">${note}</div>` : ''}
                                 </td>
