@@ -91,6 +91,74 @@
             font-size: 0.92em;
             line-height: 1.35;
         }
+
+        :root {
+            --app-bg: #0f172a;
+            --app-bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            --surface: #111827;
+            --surface-elevated: #1f2937;
+            --border-muted: #2a3446;
+            --text-primary: #e5e7eb;
+            --text-muted: #94a3b8;
+            --accent: #7c8cf5;
+            --accent-strong: #a5b4fc;
+            --danger-bg: #2b1115;
+            --danger-text: #fca5a5;
+        }
+
+        body {
+            background: var(--app-bg-gradient);
+            color: var(--text-primary);
+        }
+
+        body,
+        body * {
+            color: var(--text-primary) !important;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border-muted);
+            box-shadow: 0 24px 60px rgba(7, 10, 20, 0.55);
+        }
+
+        .title {
+            color: var(--text-primary) !important;
+        }
+
+        .error {
+            background: var(--danger-bg);
+            border-color: rgba(248, 113, 113, 0.4);
+            color: var(--danger-text) !important;
+        }
+
+        label {
+            color: var(--text-muted) !important;
+        }
+
+        input {
+            background: var(--surface-elevated);
+            border-color: var(--border-muted);
+            color: var(--text-primary) !important;
+        }
+
+        input::placeholder {
+            color: var(--text-muted);
+        }
+
+        input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px rgba(124, 140, 245, 0.28);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #4652b8 0%, #6d4ccf 100%);
+            color: #f8fafc !important;
+        }
+
+        .hint {
+            color: var(--text-muted) !important;
+        }
     </style>
 </head>
 <body>
