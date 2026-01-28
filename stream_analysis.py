@@ -210,12 +210,6 @@ class Config:
             'web': {
                 'results_retention_days': 0,
             },
-            'usage': {
-                'access_log_dir': '/app/npm_logs',
-                'access_log_glob': 'proxy-host-*_access.log*',
-                'lookback_days': 7,
-                'session_gap_seconds': 30,
-            },
         }
     
     def get(self, section, key=None, default=None):

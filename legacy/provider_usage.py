@@ -1,6 +1,8 @@
 """
 provider_usage.py
 
+Legacy/experimental module: not used by runtime code paths.
+
 Utilities to derive "viewing activity" (provider usage) from reverse-proxy access logs.
 
 Designed for Nginx Proxy Manager access logs like:
@@ -402,4 +404,3 @@ def compute_since(days: Optional[int]) -> Optional[datetime]:
     if d <= 0:
         return None
     return datetime.now(timezone.utc) - timedelta(days=d)
-

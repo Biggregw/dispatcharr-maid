@@ -1,3 +1,5 @@
+"""Legacy/experimental tests: not used by runtime code paths."""
+
 from datetime import timezone
 
 from provider_usage import (
@@ -87,4 +89,3 @@ def test_aggregate_provider_usage_detailed_sessions_and_unknown_diagnostics():
     assert usage["unknown"]["requests"] == 1
     assert diag["unmapped_stream_requests"] == 1
     assert any(int(x.get("stream_id")) == 999 for x in diag.get("unmapped_stream_ids_top", []))
-

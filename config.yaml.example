@@ -41,18 +41,3 @@ web:
   # Set to 0/blank to disable. If set (e.g. 30), jobs older than N days are pruned.
   # You can also set env DISPATCHARR_MAID_RESULTS_RETENTION_DAYS which takes precedence.
   results_retention_days: 0
-
-# Optional: derive "viewing activity" from reverse-proxy access logs (e.g. Nginx Proxy Manager).
-# This is ONLY relevant if your IPTV app streams via Dispatcharr (Xtream/M3U served by Dispatcharr),
-# so the proxy can see playback URLs like /live/<user>/<pass>/<stream_id>.ts.
-usage:
-  # Mount your proxy log directory into the Maid container, then point at it here.
-  # Example for NPM: mount the NPM /data/logs/ folder into Maid at /app/npm_logs
-  access_log_dir: "/app/npm_logs"
-  # Which files to parse (glob, non-recursive within access_log_dir)
-  access_log_glob: "proxy-host-*_access.log*"
-  # Default lookback for the API endpoint (days)
-  lookback_days: 7
-  # Approximate "sessions" by starting a new session when a client/stream has a gap > N seconds.
-  # This helps de-duplicate HLS segment requests into something closer to "plays".
-  session_gap_seconds: 30
