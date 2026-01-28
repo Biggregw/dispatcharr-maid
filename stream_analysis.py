@@ -2013,6 +2013,27 @@ def order_streams_for_channel(
         )
         ordered_records.extend(current_group)
 
+    if ordered_records:
+        def _is_hd_and_reject_free(record):
+            parsed = _parse_resolution(record.get('resolution'))
+            if not parsed:
+                return False
+            width, height = parsed
+            if width < 1280 or height < 720:
+                return False
+            reject_count = _safe_float(record.get('reject_count'))
+            return reject_count == 0.0
+
+        has_hd_reject_free = any(_is_hd_and_reject_free(item['record']) for item in ordered_records)
+        if has_hd_reject_free and ordered_records:
+            first_record = ordered_records[0]['record']
+            first_parsed = _parse_resolution(first_record.get('resolution'))
+            if first_parsed and (first_parsed[0] < 1280 or first_parsed[1] < 720):
+                for idx in range(1, len(ordered_records)):
+                    if _is_hd_and_reject_free(ordered_records[idx]['record']):
+                        ordered_records[0], ordered_records[idx] = ordered_records[idx], ordered_records[0]
+                        break
+
     return [item['record'].get('stream_id') for item in ordered_records]
 
 
