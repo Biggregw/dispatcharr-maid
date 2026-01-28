@@ -122,3 +122,26 @@ def test_provider_identity_does_not_exclude_streams():
     ordered = order_streams_for_channel(records)
 
     assert set(ordered) == {201, 202, 203}
+
+
+def test_hd_streams_block_sd_in_slot_one():
+    records = [
+        {"stream_id": 1, "score": 10, "resolution": "640x480", "reject_count": 0},
+        {"stream_id": 2, "score": 9, "resolution": "1280x720", "reject_count": 0},
+        {"stream_id": 3, "score": 8, "resolution": "1920x1080", "reject_count": 1},
+    ]
+
+    ordered = order_streams_for_channel(records)
+
+    assert ordered == [2, 1, 3]
+
+
+def test_sd_can_remain_first_when_no_accepted_hd_exists():
+    records = [
+        {"stream_id": 1, "score": 10, "resolution": "640x480", "reject_count": 0},
+        {"stream_id": 2, "score": 9, "resolution": "1280x720", "reject_count": 2},
+    ]
+
+    ordered = order_streams_for_channel(records)
+
+    assert ordered == [1, 2]
