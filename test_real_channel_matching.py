@@ -1,65 +1,10 @@
 #!/usr/bin/env python3
 """Test channel matching against real Dispatcharr data"""
 import os
-import re
 import pytest
 from api_utils import DispatcharrAPI
+from channel_matching import matches_channel
 
-def normalize(text):
-    """Remove spaces and lowercase"""
-    return text.replace(" ", "").lower()
-
-def strip_quality(text):
-    """Remove quality indicators"""
-    quality_terms = ['hd', 'sd', 'fhd', '4k', 'uhd', 'hevc', 'h264', 'h265']
-    result = text
-    for term in quality_terms:
-        result = re.sub(rf'\b{term}\b', '', result, flags=re.IGNORECASE)
-    return result.strip()
-
-def matches_channel(selected_channel, stream_name, regional_filter=None, exclude_filter=None):
-    """Check if stream matches selected channel"""
-    selected_base = strip_quality(selected_channel)
-    selected_normalized = normalize(selected_base)
-    stream_normalized = normalize(stream_name)
-    
-    if selected_normalized not in stream_normalized:
-        return False, "no substring match"
-    
-    selected_has_timeshift = re.search(r'\+\d', selected_channel)
-    stream_has_timeshift = re.search(r'\+\d', stream_name)
-    
-    if selected_has_timeshift and not stream_has_timeshift:
-        return False, "timeshift mismatch"
-    if not selected_has_timeshift and stream_has_timeshift:
-        return False, "timeshift mismatch"
-    
-    # Apply regional INCLUDE filter if provided
-    if regional_filter:
-        wildcards = [w.strip() for w in regional_filter.split(',')]
-        stream_lower = stream_name.lower()
-        
-        matched = False
-        for wildcard in wildcards:
-            pattern = wildcard.replace('*', '.*')
-            if re.search(pattern, stream_lower):
-                matched = True
-                break
-        
-        if not matched:
-            return False, "no regional match"
-    
-    # Apply EXCLUDE filter if provided
-    if exclude_filter:
-        excludes = [e.strip() for e in exclude_filter.split(',')]
-        stream_lower = stream_name.lower()
-        
-        for exclude in excludes:
-            pattern = exclude.replace('*', '.*')
-            if re.search(pattern, stream_lower):
-                return False, f"excluded by '{exclude}'"
-    
-    return True, "✓"
 
 def fetch_all_streams(api: DispatcharrAPI, limit: int = 100):
     """Fetch all streams (paginated) from Dispatcharr."""

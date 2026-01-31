@@ -246,7 +246,7 @@ def _get_provider_from_url(url):
     """Extract provider identifier from URL"""
     try:
         return urlparse(url).netloc
-    except:
+    except Exception:
         return "unknown_provider"
 
 
@@ -1173,11 +1173,11 @@ def _resolution_category(resolution_value):
         if len(numbers) >= 2:
             width, height = int(numbers[0]), int(numbers[1])
         else:
-            width, height = 0, int(numbers[0])
+            width, height = int(numbers[0]), 0
     except ValueError:
         return "unknown"
 
-    height_dim = height or max(width, height)
+    height_dim = height or width
     if width and height and width <= 720 and height <= 576:
         return "sd"
     if height_dim >= 1440:
@@ -2418,6 +2418,7 @@ def _ensure_refresh_learning_db(config):
 
 def _load_refresh_selectors(config, channel_id):
     selectors = []
+    conn = None
     try:
         conn = _ensure_refresh_learning_db(config)
         rows = conn.execute(
@@ -2438,10 +2439,11 @@ def _load_refresh_selectors(config, channel_id):
     except Exception as exc:
         logging.warning("Failed to load refresh selectors: %s", exc)
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
     return selectors
 
 
@@ -2489,17 +2491,19 @@ def _save_refresh_selectors(config, channel_id, selectors):
         conn.commit()
     except Exception as exc:
         if conn is not None:
-            conn.rollback()  # rollback only when the connection was created
+            conn.rollback()
         logging.warning("Failed to persist refresh selectors: %s", exc)
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _load_refresh_exclusions(config, channel_id):
     exclusions = []
+    conn = None
     try:
         conn = _ensure_refresh_learning_db(config)
         rows = conn.execute(
@@ -2515,10 +2519,11 @@ def _load_refresh_exclusions(config, channel_id):
     except Exception as exc:
         logging.warning("Failed to load refresh exclusions: %s", exc)
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
     return exclusions
 
 
@@ -2526,6 +2531,7 @@ def _add_refresh_exclusions(config, channel_id, stream_names):
     names = [name for name in (stream_names or []) if isinstance(name, str) and name.strip()]
     if not names:
         return
+    conn = None
     try:
         conn = _ensure_refresh_learning_db(config)
         now = datetime.now().isoformat()
@@ -2544,13 +2550,15 @@ def _add_refresh_exclusions(config, channel_id, stream_names):
             )
         conn.commit()
     except Exception as exc:
-        conn.rollback()
+        if conn is not None:
+            conn.rollback()
         logging.warning("Failed to persist refresh exclusions: %s", exc)
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _load_refresh_injected_state(config, channel_id):
@@ -2558,6 +2566,7 @@ def _load_refresh_injected_state(config, channel_id):
         'injected_includes': [],
         'injected_excludes': [],
     }
+    conn = None
     try:
         conn = _ensure_refresh_learning_db(config)
         row = conn.execute(
@@ -2581,10 +2590,11 @@ def _load_refresh_injected_state(config, channel_id):
     except Exception as exc:
         logging.warning("Failed to load refresh injected state: %s", exc)
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
     return payload
 
 
@@ -2627,15 +2637,17 @@ def _save_refresh_injected_state(config, channel_id, injected_includes=None, inj
             except Exception:
                 pass
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _remove_refresh_exclusion(config, channel_id, stream_name):
     if not isinstance(stream_name, str) or not stream_name.strip():
         return
+    conn = None
     try:
         conn = _ensure_refresh_learning_db(config)
         conn.execute(
@@ -2644,13 +2656,15 @@ def _remove_refresh_exclusion(config, channel_id, stream_name):
         )
         conn.commit()
     except Exception as exc:
-        conn.rollback()
+        if conn is not None:
+            conn.rollback()
         logging.warning("Failed to remove refresh exclusion: %s", exc)
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _load_refresh_learning_stats(config, channel_id):

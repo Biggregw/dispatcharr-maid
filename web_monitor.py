@@ -36,7 +36,7 @@ def get_current_progress():
             try:
                 df = pd.read_csv('csv/02_grouped_channel_streams.csv')
                 total = len(df)
-            except:
+            except Exception:
                 pass
         
         return {
@@ -136,7 +136,7 @@ def get_channel_groups():
             {'id': int(row['id']), 'name': row['name']}
             for _, row in df.iterrows()
         ]
-    except:
+    except Exception:
         return []
 
 
@@ -161,7 +161,7 @@ def get_config_info():
             'workers': analysis.get('workers', 8),
             'duration': analysis.get('duration', 10)
         }
-    except:
+    except Exception:
         return None
 
 
