@@ -1661,13 +1661,13 @@ def _audio_quality_score(codec_value):
 
 def _validation_penalty(validation_value):
     if validation_value is None:
-        return 0.9
+        return 0.7
     value = str(validation_value).strip().lower()
     if value == 'pass':
         return 1.0
     if value == 'fail':
-        return 0.75
-    return 0.85
+        return 0.4  # Aggressive penalty - reliability over quality
+    return 0.6
 
 
 def _continuous_ordering_score(record):
@@ -1687,11 +1687,16 @@ def _continuous_ordering_score(record):
     avg_bitrate_kbps = max(_normalize_numeric(record.get('avg_bitrate_kbps')), 0.0)
 
     # Diminishing returns via log1p normalization against practical ceilings.
-    # Resolution is slightly more influential to better separate 1080p from 720p.
+    # Resolution weight reduced - reliability matters more than pixels.
     resolution_score = math.log1p(total_pixels) / math.log1p(3840 * 2160)
     resolution_detail = math.sqrt(total_pixels) / math.sqrt(3840 * 2160) if total_pixels > 0 else 0.0
     fps_score = math.log1p(fps) / math.log1p(120)
-    bitrate_score = math.log1p(avg_bitrate_kbps) / math.log1p(20000)
+    # Invert bitrate scoring: lower bitrate = less buffering risk = higher score
+    # Streams under 5Mbps get full credit, higher bitrates get progressively less
+    if avg_bitrate_kbps <= 5000:
+        bitrate_score = 1.0
+    else:
+        bitrate_score = max(0.3, 1.0 - (avg_bitrate_kbps - 5000) / 15000)
     base_component = math.log1p(max(base_score, 0.0))
 
     codec_score = _codec_quality_score(record.get('video_codec'))
@@ -1796,13 +1801,13 @@ def _continuous_ordering_score(record):
             structure_penalty *= 0.995
 
     score = (
-        base_component * 1.55
-        + resolution_score * 2.2
-        + resolution_detail * 0.4
-        + fps_score * 0.55
-        + bitrate_score * 0.9
-        + codec_score * 0.32
-        + audio_score * 0.12
+        base_component * 2.5        # Increased: stability/startup score matters most
+        + resolution_score * 1.0    # Reduced: don't let resolution override reliability
+        + resolution_detail * 0.2   # Reduced
+        + fps_score * 0.3           # Reduced
+        + bitrate_score * 1.2       # Increased: lower bitrate = higher score now
+        + codec_score * 0.4         # Slight increase: HEVC efficiency helps
+        + audio_score * 0.1
     )
     score *= interlace_penalty * validation_penalty * metadata_penalty * structure_penalty
     return score
