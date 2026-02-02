@@ -1558,22 +1558,14 @@
                 </div>
                 <div class="action-grid" style="margin: 12px 0;">
                     <div class="action-stack">
-                        <button class="action-btn primary" onclick="startApplyQualityJob(event)"
+                        <button class="action-btn primary" onclick="startJob('full_cleanup', null, null, event)"
                                 style="background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);">
                             <span>✅</span>
                             <span>Quality Check (Apply Changes)</span>
                         </button>
 
-                        <button class="action-btn primary" onclick="startJob('full_cleanup_plan', null, null, event)"
-                                style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
-                            <span>🔎</span>
-                            <span>Quality Check (Read-Only)</span>
-                        </button>
-
                         <div class="action-help">
-                            <div style="font-weight: 700; color: var(--text-primary); margin-bottom: 6px;">Which one should I use?</div>
                             <div><strong>Apply Changes</strong> will analyze + score, then <strong>order</strong> streams immediately (no streams are removed).</div>
-                            <div style="margin-top: 6px;"><strong>Quality Check (Read-Only)</strong> computes the same ordering without applying any changes.</div>
                         </div>
                     </div>
                 </div>
@@ -1705,22 +1697,6 @@
 
     </div>
 
-    <div id="apply-confirm-modal" class="modal-overlay hidden">
-        <div class="modal">
-            <div class="modal-header">
-                <div class="modal-title">Run Apply Changes now?</div>
-                <button class="btn btn-back" onclick="closeApplyConfirmModal()">✖</button>
-            </div>
-            <div class="modal-body">
-                <p style="margin: 0; color: var(--text-muted);">Applying changes updates Dispatcharr immediately.</p>
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-back" onclick="closeApplyConfirmModal()">Cancel</button>
-                <button class="btn btn-next" onclick="confirmApplyWithoutPreview()">Proceed anyway</button>
-            </div>
-        </div>
-    </div>
-
     <div id="quality-schedule-modal" class="modal-overlay hidden">
         <div class="modal">
             <div class="modal-header">
@@ -1805,8 +1781,6 @@
         const terminalStatuses = ['completed', 'failed', 'cancelled'];
         let pendingHistoryHighlightJobId = null;
         const lastRenderedStatuses = {};
-        let hasRunPreviewPlan = false;
-        let pendingApplyButton = null;
         let refreshSelectorState = {
             channelId: null,
             persistedSelectors: [],
@@ -2882,7 +2856,6 @@
             return {
                 refresh_optimize: 'Refresh Channel Streams',
                 pattern_refresh_full_cleanup: 'Refresh + QC',
-                full_cleanup_plan: 'Quality Check (Read-Only)',
                 full_cleanup: 'Quality Check (Apply Changes)',
                 full: 'Full Job',
                 fetch: 'Fetch Streams',
@@ -2891,34 +2864,6 @@
                 reorder: 'Reorder Streams',
                 cleanup: 'Reorder Streams'
             }[jobType] || jobType;
-        }
-
-        function closeApplyConfirmModal() {
-            pendingApplyButton = null;
-            document.getElementById('apply-confirm-modal').classList.add('hidden');
-        }
-
-        function showApplyConfirmModal(clickedBtn) {
-            pendingApplyButton = clickedBtn || null;
-            document.getElementById('apply-confirm-modal').classList.remove('hidden');
-        }
-
-        function confirmApplyWithoutPreview() {
-            const clickedBtn = pendingApplyButton;
-            closeApplyConfirmModal();
-            return startJob('full_cleanup', null, null, clickedBtn ? { currentTarget: clickedBtn } : null);
-        }
-
-        function startApplyQualityJob(event) {
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
-            const clickedBtn = getClickedButton(event);
-            if (hasRunPreviewPlan) {
-                return startJob('full_cleanup', null, null, clickedBtn ? { currentTarget: clickedBtn } : event);
-            }
-            return showApplyConfirmModal(clickedBtn);
         }
 
         function renderOptimisticStartingJob(jobType, groupNames, channelNames) {
@@ -3216,12 +3161,6 @@
                 'queued': 'status-running'
             }[job.status] || '';
 
-            const planReminderStatuses = ['queued', 'running', 'completed'];
-            const showPlanReminder = job.job_type === 'full_cleanup_plan' && planReminderStatuses.includes(job.status);
-            const planReminderCopy = job.status === 'completed'
-                ? 'Read-Only Quality Check finished. Open Results to inspect the checks.'
-                : 'Read-Only Quality Check runs do not apply changes. Open Results to inspect the checks when it finishes.';
-            
             const processed = typeof job.stage_progress === 'number'
                 ? job.stage_progress
                 : (typeof job.progress === 'number' ? job.progress : 0);
@@ -3248,14 +3187,6 @@
                     </span>
                 </div>
             `;
-
-            if (showPlanReminder) {
-                html += `
-                    <div class="alert alert-info" style="margin-bottom: 12px;">
-                        ${planReminderCopy}
-                    </div>
-                `;
-            }
 
             if (overall !== null && isActive) {
                 html += `
@@ -3708,7 +3639,6 @@
                 let typeLabel = {
                     'refresh_optimize': 'Refresh',
                     'pattern_refresh_full_cleanup': 'Refresh + QC',
-                    'full_cleanup_plan': 'Quality Check (Read-Only)',
                     'full_cleanup': 'Quality Check (Apply Changes)',
                     'full': 'Full Job',
                     'fetch': 'Fetch',

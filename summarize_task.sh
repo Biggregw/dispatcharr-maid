@@ -7,9 +7,7 @@ Usage: ./summarize_task.sh "Task Name" container_name
 
 Task Name must be one of:
   - "Quality Check (Apply Changes)"
-  - "Quality Check (Preview Plan)"
   - "Quality Check & Cleanup"          (legacy)
-  - "Quality Check (Plan Only)"        (legacy)
   - "Refresh Channel Streams"
 
 Example:
@@ -29,10 +27,6 @@ case "$task_name" in
   "Quality Check (Apply Changes)"|"Quality Check & Cleanup")
     task_regex='Quality Check|Cleanup|full cleanup|cleanup only|quality check'
     action_regex='ffmpeg|ffprobe|probe|removed|remove|cleanup|duplicate|error|exception|failed'
-    ;;
-  "Quality Check (Preview Plan)"|"Quality Check (Plan Only)")
-    task_regex='Quality Check|Plan Only|plan-only|plan \(no updates\)|quality check'
-    action_regex='ffmpeg|ffprobe|probe|plan|dry_run|dry run|error|exception|failed'
     ;;
   "Refresh Channel Streams")
     task_regex='Refresh Channel Streams|refresh|stream refresh|refreshing'

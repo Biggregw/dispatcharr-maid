@@ -61,7 +61,6 @@ Dispatcharr-Maid assumes client-side decode (e.g., Firestick) with proxied playb
 Pick an **Analysis Profile** (Fast / **Balanced** (default) / Deep) to decide how deep the probe should go. Raw analysis parameters stay under **Advanced analysis settings**, and YAML imports remain supported if you want to override everything.
 
 - **Quality Check (Apply Changes)**: runs analysis + scoring, then updates Dispatcharr immediately with a deterministic ordering (no streams removed).
-- **Quality Check (Read-Only)**: makes **no changes** and computes the same ordering for inspection.
 
 ---
 

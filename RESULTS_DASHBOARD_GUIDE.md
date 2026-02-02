@@ -64,17 +64,7 @@ Loads stream rows for the run and includes a helper to **generate a minimal rege
 - Untick streams you want excluded
 - Click **Generate minimal regex**
 
-This is useful when you want a stable “keep these, exclude those” filter for refresh/enrichment.
-
-### Planned Changes (plan jobs)
-
-If you ran **Quality Check (Preview Plan)**, this tab shows an exact **before vs after** stream list per channel.
-
-From here you can:
-
-- Filter channels (client-side)
-- Select changed channels
-- Click **✅ Commit selected** to apply the plan back into Dispatcharr
+This is useful when you want a stable "keep these, exclude those" filter for refresh/enrichment.
 
 ---
 

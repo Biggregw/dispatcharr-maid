@@ -173,8 +173,6 @@ Leave the streams you want selected and click **"Add Selected Streams"**
 #### 7. Click "Quality Check (Apply Changes)" (Optional but Recommended)
 This performs a full probe of each stream and scores them, then **orders** your channel using a continuous, deterministic scoring model.
 
-Tip: If you want to review the ordering first, use **"Quality Check (Read-Only)"** to compute the same ordering without applying changes.
-
 Choose an **Analysis Profile** (Fast / Balanced / Deep) before running quality checks; advanced YAML parameters remain available for power users.
 
 Ordering is based on a continuous score (resolution, bitrate, FPS, codecs, validation confidence). Providers can influence position but never inclusion.
