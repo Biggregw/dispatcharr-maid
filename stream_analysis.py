@@ -342,30 +342,67 @@ def _check_interlaced_status(url, stream_name, idet_frames, timeout):
 
 
 def _get_bitrate_and_frame_stats(url, duration, timeout):
-    """Get bitrate and frame statistics using ffmpeg"""
+    """Get bitrate, frame statistics, and TTFF using ffmpeg"""
     command = [
         'ffmpeg', '-re', '-v', 'debug', '-user_agent', 'VLC/3.0.14',
         '-i', url, '-t', str(duration), '-f', 'null', '-'
     ]
-    
+
     bitrate = "N/A"
     frames_decoded = "N/A"
     frames_dropped = "N/A"
+    ttff_ms = None
     elapsed = 0
     status = "OK"
-    
+
     try:
         start = time.time()
-        result = subprocess.run(
-            command, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE, 
-            timeout=timeout, 
+
+        # Use Popen to read stderr in real-time for TTFF measurement
+        proc = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True
         )
+
+        stderr_lines = []
+        first_frame_detected = False
+
+        # Read stderr line by line to detect first frame
+        try:
+            while True:
+                line = proc.stderr.readline()
+                if not line:
+                    break
+                stderr_lines.append(line)
+
+                # Detect first frame - look for frame progress or decoded frame indicators
+                if not first_frame_detected:
+                    # Pattern 1: frame=N in progress output
+                    if re.search(r'frame=\s*[1-9]', line):
+                        ttff_ms = int((time.time() - start) * 1000)
+                        first_frame_detected = True
+                    # Pattern 2: "size=" with non-zero value indicates data flowing
+                    elif 'size=' in line and not 'size=       0' in line and not 'size=0' in line:
+                        if re.search(r'size=\s*[1-9]', line):
+                            ttff_ms = int((time.time() - start) * 1000)
+                            first_frame_detected = True
+
+                # Check timeout
+                if time.time() - start > timeout:
+                    proc.kill()
+                    status = "Timeout"
+                    break
+
+            proc.wait(timeout=5)  # Wait for process to finish
+        except Exception:
+            proc.kill()
+            proc.wait()
+
         elapsed = time.time() - start
-        output = result.stderr
-        
+        output = ''.join(stderr_lines)
+
         # Parse bitrate from statistics
         for line in output.splitlines():
             if "Statistics:" in line and "bytes read" in line:
@@ -377,21 +414,21 @@ def _get_bitrate_and_frame_stats(url, duration, timeout):
                         bitrate = (total_bytes * 8) / 1000 / duration
                 except ValueError:
                     pass
-            
+
             if "Input stream #" in line and "frames decoded;" in line:
                 decoded = re.search(r'(\d+)\s*frames decoded', line)
                 errors = re.search(r'(\d+)\s*decode errors', line)
                 if decoded: frames_decoded = int(decoded.group(1))
                 if errors: frames_dropped = int(errors.group(1))
-    
+
     except subprocess.TimeoutExpired:
         status = "Timeout"
         elapsed = timeout
     except Exception as e:
         logging.debug(f"Bitrate check failed: {e}")
         status = "Error"
-    
-    return bitrate, frames_decoded, frames_dropped, status, elapsed
+
+    return bitrate, frames_decoded, frames_dropped, ttff_ms, status, elapsed
 
 
 def _check_stream_for_critical_errors(url, timeout):
@@ -471,6 +508,7 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
             row['bitrate_kbps'] = 'N/A'
             row['frames_decoded'] = 'N/A'
             row['frames_dropped'] = 'N/A'
+            row['ttff_ms'] = 'N/A'
             row['video_stream_count'] = 'N/A'
             row['audio_stream_count'] = 'N/A'
             row['format_name'] = 'N/A'
@@ -528,12 +566,13 @@ def _analyze_stream_task(row, config, progress_tracker=None, force_full_analysis
                 row['declared_bitrate_kbps'] = round(declared_bitrate / 1000, 2)
             
             # 2. Get bitrate and frame stats
-            bitrate, frames_decoded, frames_dropped, status, elapsed = \
+            bitrate, frames_decoded, frames_dropped, ttff_ms, status, elapsed = \
                 _get_bitrate_and_frame_stats(url, duration, timeout)
-            
+
             row['bitrate_kbps'] = bitrate
             row['frames_decoded'] = frames_decoded
             row['frames_dropped'] = frames_dropped
+            row['ttff_ms'] = ttff_ms
             row['status'] = status
             
             # 3. Check interlacing if stream is OK
@@ -958,9 +997,9 @@ def analyze_streams(config, input_csv=None,
     final_columns += [
         'timestamp', 'video_codec', 'audio_codec', 'interlaced_status', 'status',
         'bitrate_kbps', 'fps', 'resolution', 'frames_decoded', 'frames_dropped',
-        'video_stream_count', 'audio_stream_count', 'format_name', 'video_profile',
-        'video_level', 'pixel_format', 'r_frame_rate', 'declared_bitrate_kbps',
-        'err_decode', 'err_discontinuity', 'err_timeout'
+        'ttff_ms', 'video_stream_count', 'audio_stream_count', 'format_name',
+        'video_profile', 'video_level', 'pixel_format', 'r_frame_rate',
+        'declared_bitrate_kbps', 'err_decode', 'err_discontinuity', 'err_timeout'
     ]
     
     output_exists = os.path.exists(output_csv)
@@ -1314,11 +1353,13 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
     df['frames_decoded'] = pd.to_numeric(df['frames_decoded'], errors='coerce')
     df['frames_dropped'] = pd.to_numeric(df['frames_dropped'], errors='coerce')
+    df['ttff_ms'] = pd.to_numeric(df['ttff_ms'], errors='coerce')
     # Group by stream and calculate averages
     summary = df.groupby('stream_id').agg(
         avg_bitrate_kbps=('bitrate_kbps', 'mean'),
         avg_frames_decoded=('frames_decoded', 'mean'),
-        avg_frames_dropped=('frames_dropped', 'mean')
+        avg_frames_dropped=('frames_dropped', 'mean'),
+        avg_ttff_ms=('ttff_ms', 'mean')
     ).reset_index()
 
     # Merge with latest metadata
@@ -1404,9 +1445,9 @@ def _score_streams_proxy_first(df, include_provider_name, output_csv, update_sta
         final_columns.append('m3u_account_name')
     final_columns += [
         'avg_bitrate_kbps', 'avg_frames_decoded',
-        'avg_frames_dropped', 'dropped_frame_percentage', 'fps', 'resolution',
-        'video_codec', 'audio_codec', 'interlaced_status', 'status', 'score',
-        'validation_result', 'validation_reason',
+        'avg_frames_dropped', 'avg_ttff_ms', 'dropped_frame_percentage', 'fps',
+        'resolution', 'video_codec', 'audio_codec', 'interlaced_status', 'status',
+        'score', 'validation_result', 'validation_reason',
         'startup_score', 'stability_score', 'ordering_score'
     ]
     for col in final_columns:
@@ -1448,11 +1489,13 @@ def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, up
     df['bitrate_kbps'] = pd.to_numeric(df['bitrate_kbps'], errors='coerce')
     df['frames_decoded'] = pd.to_numeric(df['frames_decoded'], errors='coerce')
     df['frames_dropped'] = pd.to_numeric(df['frames_dropped'], errors='coerce')
+    df['ttff_ms'] = pd.to_numeric(df['ttff_ms'], errors='coerce')
 
     summary = df.groupby('stream_id').agg(
         avg_bitrate_kbps=('bitrate_kbps', 'mean'),
         avg_frames_decoded=('frames_decoded', 'mean'),
-        avg_frames_dropped=('frames_dropped', 'mean')
+        avg_frames_dropped=('frames_dropped', 'mean'),
+        avg_ttff_ms=('ttff_ms', 'mean')
     ).reset_index()
 
     latest_meta = df.drop_duplicates(subset='stream_id', keep='last')
@@ -1493,7 +1536,7 @@ def _score_streams_legacy(df, scoring_cfg, include_provider_name, output_csv, up
     if include_provider_name:
         final_columns.append('m3u_account_name')
     final_columns += [
-        'avg_bitrate_kbps', 'avg_frames_decoded', 'avg_frames_dropped',
+        'avg_bitrate_kbps', 'avg_frames_decoded', 'avg_frames_dropped', 'avg_ttff_ms',
         'dropped_frame_percentage', 'fps', 'resolution', 'video_codec', 'audio_codec',
         'interlaced_status', 'status', 'score', 'ordering_score'
     ]
@@ -1699,6 +1742,19 @@ def _continuous_ordering_score(record):
         bitrate_score = max(0.3, 1.0 - (avg_bitrate_kbps - 5000) / 15000)
     base_component = math.log1p(max(base_score, 0.0))
 
+    # TTFF (time-to-first-frame) dominates scoring - fast startup is critical
+    ttff_ms = _normalize_numeric(record.get('ttff_ms') or record.get('avg_ttff_ms'))
+    if ttff_ms is None or ttff_ms <= 0:
+        ttff_score = 0.5  # Unknown = assume medium
+    elif ttff_ms <= 1500:
+        ttff_score = 1.0  # Fast - full credit (slot-1 eligible)
+    elif ttff_ms <= 2500:
+        ttff_score = 0.6  # Medium - reduced
+    elif ttff_ms <= 4000:
+        ttff_score = 0.3  # Slow - penalty
+    else:
+        ttff_score = 0.15  # Very slow - heavy penalty
+
     codec_score = _codec_quality_score(record.get('video_codec'))
     audio_score = _audio_quality_score(record.get('audio_codec'))
 
@@ -1801,12 +1857,13 @@ def _continuous_ordering_score(record):
             structure_penalty *= 0.995
 
     score = (
-        base_component * 2.5        # Increased: stability/startup score matters most
-        + resolution_score * 1.0    # Reduced: don't let resolution override reliability
-        + resolution_detail * 0.2   # Reduced
-        + fps_score * 0.3           # Reduced
-        + bitrate_score * 1.2       # Increased: lower bitrate = higher score now
-        + codec_score * 0.4         # Slight increase: HEVC efficiency helps
+        ttff_score * 4.0            # TTFF dominates - fast startup is critical
+        + base_component * 2.0      # Stability/startup score
+        + resolution_score * 0.8    # Resolution matters less than startup speed
+        + resolution_detail * 0.15
+        + fps_score * 0.2
+        + bitrate_score * 1.0       # Lower bitrate = higher score
+        + codec_score * 0.3
         + audio_score * 0.1
     )
     score *= interlace_penalty * validation_penalty * metadata_penalty * structure_penalty
@@ -2043,6 +2100,29 @@ def order_streams_for_channel(
                     if _is_hd_and_reject_free(ordered_records[idx]['record']):
                         ordered_records[0], ordered_records[idx] = ordered_records[idx], ordered_records[0]
                         break
+
+        # TTFF-based slot-1 protection: fast-starting HD stream should hold slot-1
+        # If slot-1 is slow (>1500ms), find a faster HD alternative
+        first_record = ordered_records[0]['record']
+        first_ttff = _normalize_numeric(
+            first_record.get('ttff_ms') or first_record.get('avg_ttff_ms')
+        )
+        if first_ttff and first_ttff > 1500:
+            for idx in range(1, len(ordered_records)):
+                candidate = ordered_records[idx]['record']
+                cand_ttff = _normalize_numeric(
+                    candidate.get('ttff_ms') or candidate.get('avg_ttff_ms')
+                )
+                # Skip if candidate is also slow
+                if not cand_ttff or cand_ttff > 1500:
+                    continue
+                # Skip if candidate is below 720p (non-HD)
+                cand_parsed = _parse_resolution(candidate.get('resolution'))
+                if cand_parsed and cand_parsed[1] < 720:
+                    continue
+                # Fast HD candidate found - swap to slot-1
+                ordered_records[0], ordered_records[idx] = ordered_records[idx], ordered_records[0]
+                break
 
     return [item['record'].get('stream_id') for item in ordered_records]
 
