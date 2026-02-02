@@ -261,9 +261,11 @@
                             <th>#</th>
                             <th>Stream</th>
                             <th>Provider</th>
+                            <th>TTFF</th>
                             <th>Resolution</th>
-                            <th>Codec</th>
                             <th>Bitrate</th>
+                            <th>FPS</th>
+                            <th>Codec</th>
                             <th>Validation</th>
                             <th>Final Score</th>
                         </tr>
@@ -661,18 +663,47 @@
             finalBody.innerHTML = sortedFinal.map((row) => {
                 const providerCell = providerLabelHtml(row?.provider_id) || escapeHtml(row?.provider_name || '');
                 const validation = row?.validation_result ? escapeHtml(String(row.validation_result)) : '—';
-                const score = row?.final_score;
-                const scoreText = score === null || score === undefined ? '—' : escapeHtml(Number(score).toFixed ? Number(score).toFixed(1) : String(score));
+                const bd = row?.score_breakdown || {};
+                const score = bd.final_score ?? row?.final_score;
+                const scoreText = score === null || score === undefined ? '—' : escapeHtml(Number(score).toFixed ? Number(score).toFixed(2) : String(score));
+                // Format TTFF with score
+                const ttffMs = bd.ttff_ms;
+                const ttffScore = bd.ttff_score;
+                const ttffText = ttffMs != null ? `${Math.round(ttffMs)}ms` : '—';
+                const ttffScoreText = ttffScore != null ? ` (${ttffScore})` : '';
+                // Format resolution with score
+                const resolution = bd.resolution || row?.resolution || '—';
+                const resScore = bd.resolution_score;
+                const resScoreText = resScore != null ? ` (${resScore})` : '';
+                // Format bitrate with score
+                const bitrateKbps = bd.bitrate_kbps ?? row?.bitrate_kbps;
+                const bitrateText = bitrateKbps != null ? `${Math.round(bitrateKbps)} kbps` : '—';
+                const bitrateScore = bd.bitrate_score;
+                const bitrateScoreText = bitrateScore != null ? ` (${bitrateScore})` : '';
+                // Format FPS with score
+                const fps = bd.fps;
+                const fpsScore = bd.fps_score;
+                const fpsText = fps != null ? fps.toFixed(1) : '—';
+                const fpsScoreText = fpsScore != null ? ` (${fpsScore})` : '';
+                // Format codec with score
+                const codec = bd.video_codec || row?.video_codec || '—';
+                const codecScore = bd.codec_score;
+                const codecScoreText = codecScore != null ? ` (${codecScore})` : '';
+                // Format validation with penalty
+                const valPenalty = bd.validation_penalty;
+                const valPenaltyText = valPenalty != null && valPenalty < 1.0 ? ` (${valPenalty})` : '';
                 return `
                     <tr>
                         <td>${channelLabelFrom(row)}</td>
                         <td class="mono">${escapeHtml(row?.order ?? '')}</td>
                         <td>${escapeHtml(row?.stream_name || `Stream ${row?.stream_id ?? ''}`)}</td>
                         <td>${providerCell}</td>
-                        <td>${escapeHtml(row?.resolution || '—')}</td>
-                        <td>${escapeHtml(row?.video_codec || '—')}</td>
-                        <td>${fmtBitrate(row?.bitrate_kbps)}</td>
-                        <td>${validation}</td>
+                        <td>${escapeHtml(ttffText)}${ttffScoreText}</td>
+                        <td>${escapeHtml(resolution)}${resScoreText}</td>
+                        <td>${escapeHtml(bitrateText)}${bitrateScoreText}</td>
+                        <td>${escapeHtml(fpsText)}${fpsScoreText}</td>
+                        <td>${escapeHtml(codec)}${codecScoreText}</td>
+                        <td>${escapeHtml(validation)}${valPenaltyText}</td>
                         <td>${scoreText}</td>
                     </tr>
                 `;

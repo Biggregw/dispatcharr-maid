@@ -1533,6 +1533,9 @@ def _build_ordering_visibility(results, config, provider_names=None):
                     'channel_number': channel_info.get('channel_number'),
                     'channel_name': channel_info.get('channel_name'),
                 })
+                # Preserve score breakdown for UI display
+                if row.get('score_breakdown'):
+                    merged['score_breakdown'] = row['score_breakdown']
                 final_orders.append(merged)
 
     return {

@@ -2443,9 +2443,12 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
             for idx, sid in enumerate(final_ids, start=1):
                 record = record_lookup.get(sid, {})
                 merged = _merge_entry(sid, record)
+                # Compute and store score breakdown for visibility in job history
+                _, breakdown = _continuous_ordering_score_breakdown(record)
                 merged.update({
                     'order': idx,
                     'quality_tier': 'ordered',
+                    'score_breakdown': breakdown,
                 })
                 channel_entry['final_order'].append(merged)
 
