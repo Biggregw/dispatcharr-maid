@@ -1870,6 +1870,87 @@ def _continuous_ordering_score(record):
     return score
 
 
+def _continuous_ordering_score_breakdown(record):
+    """
+    Compute score breakdown with all component scores for logging.
+    Returns (total_score, breakdown_dict).
+    """
+    base_score = _normalize_numeric(record.get('score'))
+    parsed = _parse_resolution(record.get('resolution'))
+    if parsed:
+        width, height = parsed
+        total_pixels = max(int(width) * int(height), 0)
+    else:
+        total_pixels = 0
+
+    fps = max(_normalize_numeric(record.get('fps')), 0.0)
+    avg_bitrate_kbps = max(_normalize_numeric(record.get('avg_bitrate_kbps')), 0.0)
+
+    resolution_score = math.log1p(total_pixels) / math.log1p(3840 * 2160)
+    resolution_detail = math.sqrt(total_pixels) / math.sqrt(3840 * 2160) if total_pixels > 0 else 0.0
+    fps_score = math.log1p(fps) / math.log1p(120)
+
+    if avg_bitrate_kbps <= 5000:
+        bitrate_score = 1.0
+    else:
+        bitrate_score = max(0.3, 1.0 - (avg_bitrate_kbps - 5000) / 15000)
+    base_component = math.log1p(max(base_score or 0.0, 0.0))
+
+    ttff_ms = _normalize_numeric(record.get('ttff_ms') or record.get('avg_ttff_ms'))
+    if ttff_ms is None or ttff_ms <= 0:
+        ttff_score = 0.5
+    elif ttff_ms <= 1500:
+        ttff_score = 1.0
+    elif ttff_ms <= 2500:
+        ttff_score = 0.6
+    elif ttff_ms <= 4000:
+        ttff_score = 0.3
+    else:
+        ttff_score = 0.15
+
+    codec_score = _codec_quality_score(record.get('video_codec'))
+    audio_score = _audio_quality_score(record.get('audio_codec'))
+
+    interlaced_status = str(record.get('interlaced_status') or '').lower()
+    interlace_penalty = 0.95 if 'interlaced' in interlaced_status else 1.0
+    validation_penalty = _validation_penalty(record.get('validation_result') or record.get('status'))
+
+    raw_score = (
+        ttff_score * 4.0
+        + base_component * 2.0
+        + resolution_score * 0.8
+        + resolution_detail * 0.15
+        + fps_score * 0.2
+        + bitrate_score * 1.0
+        + codec_score * 0.3
+        + audio_score * 0.1
+    )
+    final_score = raw_score * interlace_penalty * validation_penalty
+
+    breakdown = {
+        'ttff_ms': ttff_ms,
+        'ttff_score': round(ttff_score, 3),
+        'bitrate_kbps': round(avg_bitrate_kbps, 1) if avg_bitrate_kbps else None,
+        'bitrate_score': round(bitrate_score, 3),
+        'resolution': record.get('resolution'),
+        'resolution_score': round(resolution_score, 3),
+        'fps': round(fps, 1) if fps else None,
+        'fps_score': round(fps_score, 3),
+        'video_codec': record.get('video_codec'),
+        'codec_score': round(codec_score, 3),
+        'audio_codec': record.get('audio_codec'),
+        'audio_score': round(audio_score, 3),
+        'base_score': round(base_score, 3) if base_score else None,
+        'base_component': round(base_component, 3),
+        'interlace_penalty': round(interlace_penalty, 3),
+        'validation_penalty': round(validation_penalty, 3),
+        'validation_result': record.get('validation_result') or record.get('status'),
+        'raw_score': round(raw_score, 3),
+        'final_score': round(final_score, 3),
+    }
+    return final_score, breakdown
+
+
 def order_streams_for_channel(
     records,
     resilience_mode=False,
@@ -2260,6 +2341,43 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
             provider_fn=_provider,
         )
         final_ids = [sid for sid in ordered_stream_ids if sid in current_ids_set]
+
+        # Log detailed score breakdown for each stream in final order
+        if final_ids and logging.getLogger().isEnabledFor(logging.INFO):
+            id_to_record = {r.get('stream_id'): r for r in records_for_ordering}
+            channel_name = None
+            channel_number = None
+            if channel_lookup:
+                ch_meta = channel_lookup.get(_safe_int(channel_id), {})
+                channel_name = ch_meta.get('name')
+                channel_number = ch_meta.get('channel_number')
+            # Fall back to getting channel info from records if not in lookup
+            if not channel_name and records_for_ordering:
+                channel_name = records_for_ordering[0].get('channel_name')
+            if not channel_number and records_for_ordering:
+                channel_number = records_for_ordering[0].get('channel_number')
+            header = f"Channel {channel_number or channel_id}"
+            if channel_name:
+                header += f" ({channel_name})"
+            logging.info(f"{header} - Stream scores after reorder:")
+            for slot, sid in enumerate(final_ids, start=1):
+                rec = id_to_record.get(sid, {})
+                _, breakdown = _continuous_ordering_score_breakdown(rec)
+                stream_name = rec.get('stream_name') or 'Unknown'
+                provider = rec.get('m3u_account_name') or rec.get('m3u_account') or 'unknown'
+                ttff_str = f"{int(breakdown['ttff_ms'])}ms" if breakdown['ttff_ms'] else 'N/A'
+                bitrate_str = f"{int(breakdown['bitrate_kbps'])}kbps" if breakdown['bitrate_kbps'] else 'N/A'
+                logging.info(
+                    f"  #{slot}: {stream_name} [{provider}] "
+                    f"| Score: {breakdown['final_score']:.2f} "
+                    f"| TTFF: {ttff_str} ({breakdown['ttff_score']}) "
+                    f"| Bitrate: {bitrate_str} ({breakdown['bitrate_score']}) "
+                    f"| Res: {breakdown['resolution'] or 'N/A'} ({breakdown['resolution_score']}) "
+                    f"| FPS: {breakdown['fps'] or 'N/A'} ({breakdown['fps_score']}) "
+                    f"| Codec: {breakdown['video_codec'] or 'N/A'} ({breakdown['codec_score']}) "
+                    f"| Audio: {breakdown['audio_codec'] or 'N/A'} ({breakdown['audio_score']}) "
+                    f"| Validation: {breakdown['validation_result'] or 'N/A'} ({breakdown['validation_penalty']})"
+                )
 
         channel_entry = None
         if collect_summary:
