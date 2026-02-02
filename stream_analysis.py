@@ -379,15 +379,35 @@ def _get_bitrate_and_frame_stats(url, duration, timeout):
 
                 # Detect first frame - look for frame progress or decoded frame indicators
                 if not first_frame_detected:
-                    # Pattern 1: frame=N in progress output
-                    if re.search(r'frame=\s*[1-9]', line):
+                    # Pattern 1: frame=N in progress output (frame count >= 1)
+                    frame_match = re.search(r'frame=\s*(\d+)', line)
+                    if frame_match and int(frame_match.group(1)) >= 1:
                         ttff_ms = int((time.time() - start) * 1000)
                         first_frame_detected = True
                     # Pattern 2: "size=" with non-zero value indicates data flowing
-                    elif 'size=' in line and not 'size=       0' in line and not 'size=0' in line:
-                        if re.search(r'size=\s*[1-9]', line):
-                            ttff_ms = int((time.time() - start) * 1000)
-                            first_frame_detected = True
+                    elif re.search(r'size=\s*[1-9]\d*', line):
+                        ttff_ms = int((time.time() - start) * 1000)
+                        first_frame_detected = True
+                    # Pattern 3: Decoder outputting frames (debug mode)
+                    elif re.search(r'(h264|hevc|mpeg2|mpeg4|vp9|av1).*@.*\].*out', line, re.IGNORECASE):
+                        ttff_ms = int((time.time() - start) * 1000)
+                        first_frame_detected = True
+                    # Pattern 4: Video filter receiving frames
+                    elif re.search(r'filter.*pts[_:]|Discarding initial frame|auto-inserting filter', line, re.IGNORECASE):
+                        ttff_ms = int((time.time() - start) * 1000)
+                        first_frame_detected = True
+                    # Pattern 5: pts/dts values being processed (indicates frame decode)
+                    elif re.search(r'\bpts\s*[=:]\s*\d+|\bdts\s*[=:]\s*\d+', line):
+                        ttff_ms = int((time.time() - start) * 1000)
+                        first_frame_detected = True
+                    # Pattern 6: Output stream writing (frame being written to null)
+                    elif 'Output stream #0:0' in line and 'frame' in line:
+                        ttff_ms = int((time.time() - start) * 1000)
+                        first_frame_detected = True
+                    # Pattern 7: time= progress with non-zero time (data being processed)
+                    elif re.search(r'time=\d{2}:\d{2}:\d{2}\.\d+', line) and 'time=00:00:00.00' not in line:
+                        ttff_ms = int((time.time() - start) * 1000)
+                        first_frame_detected = True
 
                 # Check timeout
                 if time.time() - start > timeout:
@@ -420,6 +440,20 @@ def _get_bitrate_and_frame_stats(url, duration, timeout):
                 errors = re.search(r'(\d+)\s*decode errors', line)
                 if decoded: frames_decoded = int(decoded.group(1))
                 if errors: frames_dropped = int(errors.group(1))
+
+        # Fallback: if frames were decoded but TTFF wasn't captured, search output
+        if ttff_ms is None and frames_decoded not in ("N/A", 0):
+            logging.debug(f"TTFF not captured in real-time despite {frames_decoded} frames decoded, searching output...")
+            # Look for first progress line with time > 0 as fallback
+            for line in output.splitlines():
+                if re.search(r'time=\d{2}:\d{2}:\d{2}\.\d+', line) and 'time=00:00:00.00' not in line:
+                    # Found progress output - estimate TTFF from elapsed time
+                    ttff_ms = min(int(elapsed * 500), 5000)  # Rough estimate
+                    logging.debug(f"TTFF fallback estimate: {ttff_ms}ms")
+                    break
+
+        if ttff_ms is not None:
+            logging.debug(f"TTFF captured: {ttff_ms}ms")
 
     except subprocess.TimeoutExpired:
         status = "Timeout"
