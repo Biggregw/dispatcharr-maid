@@ -2365,8 +2365,10 @@ def reorder_streams(api, config, input_csv=None, collect_summary=False, apply_ch
                 _, breakdown = _continuous_ordering_score_breakdown(rec)
                 stream_name = rec.get('stream_name') or 'Unknown'
                 provider = rec.get('m3u_account_name') or rec.get('m3u_account') or 'unknown'
-                ttff_str = f"{int(breakdown['ttff_ms'])}ms" if breakdown['ttff_ms'] else 'N/A'
-                bitrate_str = f"{int(breakdown['bitrate_kbps'])}kbps" if breakdown['bitrate_kbps'] else 'N/A'
+                ttff_val = breakdown['ttff_ms']
+                ttff_str = f"{int(ttff_val)}ms" if ttff_val and not math.isnan(ttff_val) else 'N/A'
+                bitrate_val = breakdown['bitrate_kbps']
+                bitrate_str = f"{int(bitrate_val)}kbps" if bitrate_val and not math.isnan(bitrate_val) else 'N/A'
                 logging.info(
                     f"  #{slot}: {stream_name} [{provider}] "
                     f"| Score: {breakdown['final_score']:.2f} "
