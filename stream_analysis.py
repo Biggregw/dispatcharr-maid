@@ -2674,6 +2674,18 @@ def _ensure_refresh_learning_db(config):
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS refresh_exclude_selectors (
+                channel_id TEXT NOT NULL,
+                selector_index INTEGER NOT NULL,
+                selector_text TEXT NOT NULL,
+                confirmed INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (channel_id, selector_index)
+            )
+            """
+        )
         conn.commit()
         return conn
     except Exception:
@@ -2767,72 +2779,109 @@ def _save_refresh_selectors(config, channel_id, selectors):
 
 
 def _load_refresh_exclude_selector(config, channel_id):
-    """Load the exclude selector pattern for a channel."""
-    result = {'text': '', 'confirmed': False}
+    """Load the exclude selector patterns for a channel (up to 4)."""
+    selectors = []
     conn = None
     try:
         conn = _ensure_refresh_learning_db(config)
-        row = conn.execute(
+        # First try the new multi-selector table
+        rows = conn.execute(
             """
-            SELECT selector_text, confirmed
-            FROM refresh_exclude_selector
+            SELECT selector_index, selector_text, confirmed
+            FROM refresh_exclude_selectors
             WHERE channel_id = ?
+            ORDER BY selector_index ASC
             """,
             (str(channel_id),)
-        ).fetchone()
-        if row:
-            result = {
-                'text': row[0] if isinstance(row[0], str) else '',
-                'confirmed': bool(row[1]),
-            }
+        ).fetchall()
+        if rows:
+            for row in rows:
+                selectors.append({
+                    'text': row[1] if isinstance(row[1], str) else '',
+                    'confirmed': bool(row[2]),
+                })
+        else:
+            # Fall back to legacy single-selector table for migration
+            row = conn.execute(
+                """
+                SELECT selector_text, confirmed
+                FROM refresh_exclude_selector
+                WHERE channel_id = ?
+                """,
+                (str(channel_id),)
+            ).fetchone()
+            if row:
+                selectors.append({
+                    'text': row[0] if isinstance(row[0], str) else '',
+                    'confirmed': bool(row[1]),
+                })
     except Exception as exc:
-        logging.warning("Failed to load refresh exclude selector: %s", exc)
+        logging.warning("Failed to load refresh exclude selectors: %s", exc)
     finally:
         if conn is not None:
             try:
                 conn.close()
             except Exception:
                 pass
-    return result
+    return selectors
 
 
-def _save_refresh_exclude_selector(config, channel_id, selector):
-    """Save the exclude selector pattern for a channel."""
-    text = ''
-    confirmed = False
-    if isinstance(selector, dict):
+def _save_refresh_exclude_selector(config, channel_id, selectors):
+    """Save the exclude selector patterns for a channel (up to 4)."""
+    if not isinstance(selectors, list):
+        # Handle legacy single-selector format
+        selectors = [selectors] if isinstance(selectors, dict) else []
+
+    cleaned = []
+    for selector in selectors:
+        if not isinstance(selector, dict):
+            continue
         text = selector.get('text', '')
         if not isinstance(text, str):
             text = ''
         text = text.strip()
         confirmed = bool(selector.get('confirmed'))
+        cleaned.append({
+            'text': text,
+            'confirmed': confirmed,
+        })
+        if len(cleaned) >= 4:
+            break
 
     conn = None
     try:
         conn = _ensure_refresh_learning_db(config)
+        conn.execute(
+            "DELETE FROM refresh_exclude_selectors WHERE channel_id = ?",
+            (str(channel_id),)
+        )
+        # Also clean up legacy table
+        conn.execute(
+            "DELETE FROM refresh_exclude_selector WHERE channel_id = ?",
+            (str(channel_id),)
+        )
         now = datetime.now().isoformat()
-        if text:
-            conn.execute(
-                """
-                INSERT INTO refresh_exclude_selector (channel_id, selector_text, confirmed, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(channel_id) DO UPDATE SET
-                    selector_text = excluded.selector_text,
-                    confirmed = excluded.confirmed,
-                    updated_at = excluded.updated_at
-                """,
-                (str(channel_id), text, 1 if confirmed else 0, now)
-            )
-        else:
-            conn.execute(
-                "DELETE FROM refresh_exclude_selector WHERE channel_id = ?",
-                (str(channel_id),)
-            )
+        for idx, selector in enumerate(cleaned):
+            if selector['text']:
+                conn.execute(
+                    """
+                    INSERT INTO refresh_exclude_selectors (
+                        channel_id, selector_index, selector_text, confirmed, updated_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(channel_id),
+                        idx,
+                        selector['text'],
+                        1 if selector['confirmed'] else 0,
+                        now
+                    )
+                )
         conn.commit()
     except Exception as exc:
         if conn is not None:
             conn.rollback()
-        logging.warning("Failed to persist refresh exclude selector: %s", exc)
+        logging.warning("Failed to persist refresh exclude selectors: %s", exc)
     finally:
         if conn is not None:
             try:
@@ -3487,13 +3536,14 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         and selector.get('text').strip()
     ]
     exclude_selector_data = _load_refresh_exclude_selector(refresh_settings_config, channel_id)
-    exclude_selector_pattern = None
-    if (
-        exclude_selector_data.get('confirmed')
-        and isinstance(exclude_selector_data.get('text'), str)
-        and exclude_selector_data.get('text').strip()
-    ):
-        exclude_selector_pattern = exclude_selector_data.get('text').strip()
+    exclude_selector_patterns = [
+        selector.get('text').strip()
+        for selector in exclude_selector_data
+        if isinstance(selector, dict)
+        and selector.get('confirmed')
+        and isinstance(selector.get('text'), str)
+        and selector.get('text').strip()
+    ]
     injected_excludes = _load_refresh_exclusions(refresh_settings_config, channel_id)
     has_explicit_excluded = isinstance(excluded_stream_names, list) and len(excluded_stream_names) > 0
     if has_explicit_excluded:
@@ -3718,9 +3768,9 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         return any(_wildcard_match(stream_name, selector) for selector in selector_values)
 
     def _matches_exclude_selector(stream_name):
-        if not exclude_selector_pattern:
+        if not exclude_selector_patterns:
             return False
-        return _wildcard_match(stream_name, exclude_selector_pattern)
+        return any(_wildcard_match(stream_name, pattern) for pattern in exclude_selector_patterns)
 
     # PHASE 1: SELECTOR MATCHES
     for stream in all_streams:
@@ -3875,7 +3925,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         'no_change': no_change,
         'injected_includes': injected_includes if preview else None,
         'injected_excludes': injected_excludes if preview else None,
-        'exclude_selector_pattern': exclude_selector_pattern if preview else None,
+        'exclude_selector_patterns': exclude_selector_patterns if preview else None,
         'selector_count': selector_count if preview else None,
         'excluded_streams': excluded_streams if preview else None
     }
