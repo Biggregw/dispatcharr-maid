@@ -1763,10 +1763,23 @@ def _continuous_ordering_score(record):
     fps = max(_normalize_numeric(record.get('fps')), 0.0)
     avg_bitrate_kbps = max(_normalize_numeric(record.get('avg_bitrate_kbps')), 0.0)
 
-    # Diminishing returns via log1p normalization against practical ceilings.
-    # Resolution weight reduced - reliability matters more than pixels.
-    resolution_score = math.log1p(total_pixels) / math.log1p(3840 * 2160)
-    resolution_detail = math.sqrt(total_pixels) / math.sqrt(3840 * 2160) if total_pixels > 0 else 0.0
+    # Resolution acts as a quality gate: sub-HD is heavily penalized, but
+    # 720p+ is nearly flat. Speed, stability, and FPS matter more than
+    # marginal sharpness gains from 1080p vs 720p.
+    HD_THRESHOLD_PIXELS = 1280 * 720  # 921,600 pixels - 720p quality gate
+    if total_pixels < HD_THRESHOLD_PIXELS:
+        # Below 720p: heavy penalty as quality gate
+        gate_ratio = total_pixels / HD_THRESHOLD_PIXELS if total_pixels > 0 else 0.0
+        resolution_score = 0.3 * gate_ratio
+        resolution_detail = 0.3 * gate_ratio
+    else:
+        # 720p and above: nearly flat (0.95-1.0)
+        # Marginal resolution gains shouldn't outweigh speed/stability/fps
+        pixels_above = total_pixels - HD_THRESHOLD_PIXELS
+        max_above = (3840 * 2160) - HD_THRESHOLD_PIXELS
+        hd_bonus = min(1.0, pixels_above / max_above)
+        resolution_score = 0.95 + 0.05 * hd_bonus
+        resolution_detail = 0.95 + 0.05 * hd_bonus
     fps_score = math.log1p(fps) / math.log1p(120)
     # Invert bitrate scoring: lower bitrate = less buffering risk = higher score
     # Streams under 5Mbps get full credit, higher bitrates get progressively less
@@ -1920,8 +1933,18 @@ def _continuous_ordering_score_breakdown(record):
     fps = max(_normalize_numeric(record.get('fps')), 0.0)
     avg_bitrate_kbps = max(_normalize_numeric(record.get('avg_bitrate_kbps')), 0.0)
 
-    resolution_score = math.log1p(total_pixels) / math.log1p(3840 * 2160)
-    resolution_detail = math.sqrt(total_pixels) / math.sqrt(3840 * 2160) if total_pixels > 0 else 0.0
+    # Resolution quality gate: sub-HD penalized, 720p+ nearly flat
+    HD_THRESHOLD_PIXELS = 1280 * 720
+    if total_pixels < HD_THRESHOLD_PIXELS:
+        gate_ratio = total_pixels / HD_THRESHOLD_PIXELS if total_pixels > 0 else 0.0
+        resolution_score = 0.3 * gate_ratio
+        resolution_detail = 0.3 * gate_ratio
+    else:
+        pixels_above = total_pixels - HD_THRESHOLD_PIXELS
+        max_above = (3840 * 2160) - HD_THRESHOLD_PIXELS
+        hd_bonus = min(1.0, pixels_above / max_above)
+        resolution_score = 0.95 + 0.05 * hd_bonus
+        resolution_detail = 0.95 + 0.05 * hd_bonus
     fps_score = math.log1p(fps) / math.log1p(120)
 
     if avg_bitrate_kbps <= 5000:
