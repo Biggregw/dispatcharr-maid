@@ -2768,7 +2768,7 @@ def _save_refresh_selectors(config, channel_id, selectors):
             'source': source,
             'confirmed': confirmed,
         })
-        if len(cleaned) >= 4:
+        if len(cleaned) >= 10:
             break
     conn = None
     try:
@@ -2808,7 +2808,7 @@ def _save_refresh_selectors(config, channel_id, selectors):
 
 
 def _load_refresh_exclude_selector(config, channel_id):
-    """Load the exclude selector patterns for a channel (up to 4)."""
+    """Load the exclude selector patterns for a channel (up to 10)."""
     selectors = []
     conn = None
     try:
@@ -2856,7 +2856,7 @@ def _load_refresh_exclude_selector(config, channel_id):
 
 
 def _save_refresh_exclude_selector(config, channel_id, selectors):
-    """Save the exclude selector patterns for a channel (up to 4)."""
+    """Save the exclude selector patterns for a channel (up to 10)."""
     if not isinstance(selectors, list):
         # Handle legacy single-selector format
         selectors = [selectors] if isinstance(selectors, dict) else []
@@ -2874,7 +2874,7 @@ def _save_refresh_exclude_selector(config, channel_id, selectors):
             'text': text,
             'confirmed': confirmed,
         })
-        if len(cleaned) >= 4:
+        if len(cleaned) >= 10:
             break
 
     conn = None

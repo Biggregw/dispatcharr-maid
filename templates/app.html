@@ -1532,9 +1532,10 @@
 
                 <div style="margin-bottom: 16px;">
                     <label style="display: block; margin-bottom: 6px; color: #1f2937; font-weight: 700;">
-                        Stream selectors (up to 4)
+                        Stream selectors (up to 10)
                     </label>
                     <div id="refresh-selectors-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+                    <button type="button" id="add-include-selector-btn" class="btn btn-back" style="margin-top: 8px; display: none;">+ Add selector</button>
                     <div style="margin-top: 6px; color: var(--text-muted); font-size: 0.9em;">
                         Each selector is literal with <code>*</code> wildcards. Matching is case-insensitive.
                     </div>
@@ -1542,9 +1543,10 @@
 
                 <div style="margin-bottom: 16px;">
                     <label style="display: block; margin-bottom: 6px; color: #1f2937; font-weight: 700;">
-                        Exclude selectors (up to 4)
+                        Exclude selectors (up to 10)
                     </label>
                     <div id="refresh-exclude-selectors-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+                    <button type="button" id="add-exclude-selector-btn" class="btn btn-back" style="margin-top: 8px; display: none;">+ Add selector</button>
                     <div style="margin-top: 6px; color: var(--text-muted); font-size: 0.9em;">
                         Streams matching any of these patterns are excluded. Literal with <code>*</code> wildcards. Case-insensitive.
                     </div>
@@ -1834,7 +1836,9 @@
             persistedExcludeSelectors: [],
             draftExcludeSelectors: [],
             exclusions: [],
-            injectedIncludes: []
+            injectedIncludes: [],
+            includeSlotCount: 1,
+            excludeSlotCount: 1
         };
         let refreshSelectorsDirty = false;
         let qualitySchedules = [];
@@ -1915,6 +1919,24 @@
             }
             if (cancelSelectorsBtn) {
                 cancelSelectorsBtn.addEventListener('click', resetRefreshSelectors);
+            }
+            const addIncludeSelectorBtn = document.getElementById('add-include-selector-btn');
+            if (addIncludeSelectorBtn) {
+                addIncludeSelectorBtn.addEventListener('click', () => {
+                    if (refreshSelectorState.includeSlotCount < 10) {
+                        refreshSelectorState.includeSlotCount++;
+                        renderRefreshSelectors();
+                    }
+                });
+            }
+            const addExcludeSelectorBtn = document.getElementById('add-exclude-selector-btn');
+            if (addExcludeSelectorBtn) {
+                addExcludeSelectorBtn.addEventListener('click', () => {
+                    if (refreshSelectorState.excludeSlotCount < 10) {
+                        refreshSelectorState.excludeSlotCount++;
+                        renderExcludeSelectors();
+                    }
+                });
             }
             document.querySelectorAll('input[name="schedule-type"]').forEach(radio => {
                 radio.addEventListener('change', updateQualityScheduleFields);
@@ -2449,6 +2471,11 @@
                 refreshSelectorState.draftExcludeSelectors = refreshSelectorState.persistedExcludeSelectors.map(sel => ({ ...sel }));
                 refreshSelectorState.exclusions = Array.isArray(data.exclusions) ? data.exclusions : [];
                 refreshSelectorState.injectedIncludes = Array.isArray(data.injected_includes) ? data.injected_includes : [];
+                // Initialize slot counts: show persisted selectors + 1 empty slot (min 1, max 10)
+                const filledIncludes = refreshSelectorState.persistedSelectors.filter(s => s && s.text && String(s.text).trim()).length;
+                const filledExcludes = refreshSelectorState.persistedExcludeSelectors.filter(s => s && s.text && String(s.text).trim()).length;
+                refreshSelectorState.includeSlotCount = Math.min(Math.max(filledIncludes, 1), 10);
+                refreshSelectorState.excludeSlotCount = Math.min(Math.max(filledExcludes, 1), 10);
                 refreshSelectorsDirty = false;
                 renderRefreshSelectors();
                 renderExcludeSelectors();
@@ -2466,6 +2493,11 @@
         function resetRefreshSelectors() {
             refreshSelectorState.draftSelectors = refreshSelectorState.persistedSelectors.map(sel => ({ ...sel }));
             refreshSelectorState.draftExcludeSelectors = refreshSelectorState.persistedExcludeSelectors.map(sel => ({ ...sel }));
+            // Reset slot counts to match persisted data
+            const filledIncludes = refreshSelectorState.persistedSelectors.filter(s => s && s.text && String(s.text).trim()).length;
+            const filledExcludes = refreshSelectorState.persistedExcludeSelectors.filter(s => s && s.text && String(s.text).trim()).length;
+            refreshSelectorState.includeSlotCount = Math.min(Math.max(filledIncludes, 1), 10);
+            refreshSelectorState.excludeSlotCount = Math.min(Math.max(filledExcludes, 1), 10);
             refreshSelectorsDirty = false;
             renderRefreshSelectors();
             renderExcludeSelectors();
@@ -2473,19 +2505,21 @@
             updateInjectedIncludes(refreshSelectorState.injectedIncludes);
         }
 
-        function ensureSelectorSlots(selectors) {
+        function ensureSelectorSlots(selectors, count) {
+            const targetCount = Math.min(Math.max(count || 1, 1), 10);
             const slots = selectors.map(sel => ({ ...sel }));
-            while (slots.length < 4) {
+            while (slots.length < targetCount) {
                 slots.push({ text: '', source: 'user', confirmed: false });
             }
-            return slots.slice(0, 4);
+            return slots.slice(0, targetCount);
         }
 
         function renderRefreshSelectors() {
             const list = document.getElementById('refresh-selectors-list');
             if (!list) return;
-            const slots = ensureSelectorSlots(refreshSelectorState.draftSelectors || []);
-            const committedSlots = ensureSelectorSlots(refreshSelectorState.persistedSelectors || []);
+            const slotCount = refreshSelectorState.includeSlotCount || 1;
+            const slots = ensureSelectorSlots(refreshSelectorState.draftSelectors || [], slotCount);
+            const committedSlots = ensureSelectorSlots(refreshSelectorState.persistedSelectors || [], slotCount);
             list.innerHTML = slots.map((selector, idx) => {
                 const text = escapeHtml(selector?.text || '');
                 const committedText = committedSlots[idx]?.confirmed ? (committedSlots[idx]?.text || '') : '';
@@ -2518,7 +2552,7 @@
                 input.addEventListener('input', (event) => {
                     const index = parseInt(event.target.dataset.index, 10);
                     const text = event.target.value;
-                    const slotsNow = ensureSelectorSlots(refreshSelectorState.draftSelectors || []);
+                    const slotsNow = ensureSelectorSlots(refreshSelectorState.draftSelectors || [], refreshSelectorState.includeSlotCount || 1);
                     if (!slotsNow[index]) return;
                     if (slotsNow[index].source === 'system' && slotsNow[index].text !== text) {
                         slotsNow[index].source = 'user';
@@ -2529,22 +2563,30 @@
                 });
             });
 
+            // Update + Add selector button visibility
+            const addBtn = document.getElementById('add-include-selector-btn');
+            if (addBtn) {
+                addBtn.style.display = slotCount < 10 ? 'inline-block' : 'none';
+            }
+
             updateRefreshSelectorStatus();
         }
 
-        function ensureExcludeSelectorSlots(selectors) {
+        function ensureExcludeSelectorSlots(selectors, count) {
+            const targetCount = Math.min(Math.max(count || 1, 1), 10);
             const slots = selectors.map(sel => ({ ...sel }));
-            while (slots.length < 4) {
+            while (slots.length < targetCount) {
                 slots.push({ text: '', confirmed: false });
             }
-            return slots.slice(0, 4);
+            return slots.slice(0, targetCount);
         }
 
         function renderExcludeSelectors() {
             const list = document.getElementById('refresh-exclude-selectors-list');
             if (!list) return;
-            const slots = ensureExcludeSelectorSlots(refreshSelectorState.draftExcludeSelectors || []);
-            const committedSlots = ensureExcludeSelectorSlots(refreshSelectorState.persistedExcludeSelectors || []);
+            const slotCount = refreshSelectorState.excludeSlotCount || 1;
+            const slots = ensureExcludeSelectorSlots(refreshSelectorState.draftExcludeSelectors || [], slotCount);
+            const committedSlots = ensureExcludeSelectorSlots(refreshSelectorState.persistedExcludeSelectors || [], slotCount);
             list.innerHTML = slots.map((selector, idx) => {
                 const text = escapeHtml(selector?.text || '');
                 const committedText = committedSlots[idx]?.confirmed ? (committedSlots[idx]?.text || '') : '';
@@ -2577,13 +2619,19 @@
                 input.addEventListener('input', (event) => {
                     const index = parseInt(event.target.dataset.index, 10);
                     const text = event.target.value;
-                    const slotsNow = ensureExcludeSelectorSlots(refreshSelectorState.draftExcludeSelectors || []);
+                    const slotsNow = ensureExcludeSelectorSlots(refreshSelectorState.draftExcludeSelectors || [], refreshSelectorState.excludeSlotCount || 1);
                     if (!slotsNow[index]) return;
                     slotsNow[index].text = text;
                     refreshSelectorState.draftExcludeSelectors = slotsNow;
                     markRefreshSelectorsDirty();
                 });
             });
+
+            // Update + Add selector button visibility
+            const addBtn = document.getElementById('add-exclude-selector-btn');
+            if (addBtn) {
+                addBtn.style.display = slotCount < 10 ? 'inline-block' : 'none';
+            }
 
             updateRefreshSelectorStatus();
         }
@@ -2635,7 +2683,7 @@
             if (!refreshSelectorState.channelId) return;
             const selectors = (refreshSelectorState.draftSelectors || [])
                 .filter(sel => sel && sel.text && String(sel.text).trim())
-                .slice(0, 4)
+                .slice(0, 10)
                 .map(sel => ({
                     text: sel.text,
                     source: sel.source === 'system' ? 'system' : 'user',
@@ -2643,7 +2691,7 @@
                 }));
             const excludeSelectors = (refreshSelectorState.draftExcludeSelectors || [])
                 .filter(sel => sel && sel.text && String(sel.text).trim())
-                .slice(0, 4)
+                .slice(0, 10)
                 .map(sel => ({
                     text: sel.text,
                     confirmed: true
@@ -2670,6 +2718,11 @@
                 refreshSelectorState.injectedIncludes = Array.isArray(data.injected_includes)
                     ? data.injected_includes
                     : refreshSelectorState.injectedIncludes;
+                // Update slot counts to match saved data
+                const filledIncludes = refreshSelectorState.persistedSelectors.filter(s => s && s.text && String(s.text).trim()).length;
+                const filledExcludes = refreshSelectorState.persistedExcludeSelectors.filter(s => s && s.text && String(s.text).trim()).length;
+                refreshSelectorState.includeSlotCount = Math.min(Math.max(filledIncludes, 1), 10);
+                refreshSelectorState.excludeSlotCount = Math.min(Math.max(filledExcludes, 1), 10);
                 refreshSelectorsDirty = false;
                 renderRefreshSelectors();
                 renderExcludeSelectors();
