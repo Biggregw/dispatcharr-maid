@@ -50,6 +50,8 @@ from stream_analysis import (
     refresh_channel_streams,
     _load_refresh_selectors,
     _save_refresh_selectors,
+    _load_refresh_exclude_selector,
+    _save_refresh_exclude_selector,
     _load_refresh_exclusions,
     _load_refresh_injected_state,
     _save_refresh_injected_state,
@@ -3759,10 +3761,16 @@ def api_refresh_settings():
                 if len(selectors) > 4:
                     return jsonify({'success': False, 'error': 'At most 4 selectors are allowed'}), 400
                 _save_refresh_selectors(config, channel_id, selectors)
-            elif 'remove_exclusion' in data:
+            if 'exclude_selector' in data:
+                exclude_selector = data.get('exclude_selector') or {}
+                if not isinstance(exclude_selector, dict):
+                    return jsonify({'success': False, 'error': '"exclude_selector" must be an object'}), 400
+                _save_refresh_exclude_selector(config, channel_id, exclude_selector)
+            if 'remove_exclusion' in data:
                 _remove_refresh_exclusion(config, channel_id, data.get('remove_exclusion'))
 
         selectors = _load_refresh_selectors(config, channel_id)
+        exclude_selector = _load_refresh_exclude_selector(config, channel_id)
         exclusions = _load_refresh_exclusions(config, channel_id)
         injected_includes = _get_refresh_injected_includes(
             channel_id,
@@ -3772,6 +3780,7 @@ def api_refresh_settings():
         return jsonify({
             'success': True,
             'selectors': selectors,
+            'exclude_selector': exclude_selector,
             'exclusions': exclusions,
             'injected_includes': injected_includes
         })

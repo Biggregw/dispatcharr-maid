@@ -2664,6 +2664,16 @@ def _ensure_refresh_learning_db(config):
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS refresh_exclude_selector (
+                channel_id TEXT NOT NULL PRIMARY KEY,
+                selector_text TEXT NOT NULL,
+                confirmed INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
         return conn
     except Exception:
@@ -2748,6 +2758,81 @@ def _save_refresh_selectors(config, channel_id, selectors):
         if conn is not None:
             conn.rollback()
         logging.warning("Failed to persist refresh selectors: %s", exc)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _load_refresh_exclude_selector(config, channel_id):
+    """Load the exclude selector pattern for a channel."""
+    result = {'text': '', 'confirmed': False}
+    conn = None
+    try:
+        conn = _ensure_refresh_learning_db(config)
+        row = conn.execute(
+            """
+            SELECT selector_text, confirmed
+            FROM refresh_exclude_selector
+            WHERE channel_id = ?
+            """,
+            (str(channel_id),)
+        ).fetchone()
+        if row:
+            result = {
+                'text': row[0] if isinstance(row[0], str) else '',
+                'confirmed': bool(row[1]),
+            }
+    except Exception as exc:
+        logging.warning("Failed to load refresh exclude selector: %s", exc)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return result
+
+
+def _save_refresh_exclude_selector(config, channel_id, selector):
+    """Save the exclude selector pattern for a channel."""
+    text = ''
+    confirmed = False
+    if isinstance(selector, dict):
+        text = selector.get('text', '')
+        if not isinstance(text, str):
+            text = ''
+        text = text.strip()
+        confirmed = bool(selector.get('confirmed'))
+
+    conn = None
+    try:
+        conn = _ensure_refresh_learning_db(config)
+        now = datetime.now().isoformat()
+        if text:
+            conn.execute(
+                """
+                INSERT INTO refresh_exclude_selector (channel_id, selector_text, confirmed, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    selector_text = excluded.selector_text,
+                    confirmed = excluded.confirmed,
+                    updated_at = excluded.updated_at
+                """,
+                (str(channel_id), text, 1 if confirmed else 0, now)
+            )
+        else:
+            conn.execute(
+                "DELETE FROM refresh_exclude_selector WHERE channel_id = ?",
+                (str(channel_id),)
+            )
+        conn.commit()
+    except Exception as exc:
+        if conn is not None:
+            conn.rollback()
+        logging.warning("Failed to persist refresh exclude selector: %s", exc)
     finally:
         if conn is not None:
             try:
@@ -3401,6 +3486,14 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         and isinstance(selector.get('text'), str)
         and selector.get('text').strip()
     ]
+    exclude_selector_data = _load_refresh_exclude_selector(refresh_settings_config, channel_id)
+    exclude_selector_pattern = None
+    if (
+        exclude_selector_data.get('confirmed')
+        and isinstance(exclude_selector_data.get('text'), str)
+        and exclude_selector_data.get('text').strip()
+    ):
+        exclude_selector_pattern = exclude_selector_data.get('text').strip()
     injected_excludes = _load_refresh_exclusions(refresh_settings_config, channel_id)
     has_explicit_excluded = isinstance(excluded_stream_names, list) and len(excluded_stream_names) > 0
     if has_explicit_excluded:
@@ -3624,6 +3717,11 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
             return False
         return any(_wildcard_match(stream_name, selector) for selector in selector_values)
 
+    def _matches_exclude_selector(stream_name):
+        if not exclude_selector_pattern:
+            return False
+        return _wildcard_match(stream_name, exclude_selector_pattern)
+
     # PHASE 1: SELECTOR MATCHES
     for stream in all_streams:
         stream_name = stream.get('name', '')
@@ -3650,7 +3748,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
 
         if not match_source:
             continue
-        if stream_name in injected_exclude_set:
+        # Check injected exclusions (exact match)
+        is_excluded = stream_name in injected_exclude_set
+        # Check exclude selector (wildcard pattern)
+        if not is_excluded and _matches_exclude_selector(stream_name):
+            is_excluded = True
+        if is_excluded:
             if allowed_set is not None:
                 if stream_id_key is not None and stream_id_key in allowed_set:
                     pass
@@ -3701,7 +3804,12 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
                     continue
             if stream_name.casefold() not in injected_include_set:
                 continue
-            if stream_name in injected_exclude_set:
+            # Check injected exclusions (exact match)
+            is_excluded = stream_name in injected_exclude_set
+            # Check exclude selector (wildcard pattern)
+            if not is_excluded and _matches_exclude_selector(stream_name):
+                is_excluded = True
+            if is_excluded:
                 if allowed_set is not None:
                     if stream_id_key is not None and stream_id_key in allowed_set:
                         pass
@@ -3767,6 +3875,7 @@ def refresh_channel_streams(api, config, channel_id, base_search_text=None, incl
         'no_change': no_change,
         'injected_includes': injected_includes if preview else None,
         'injected_excludes': injected_excludes if preview else None,
+        'exclude_selector_pattern': exclude_selector_pattern if preview else None,
         'selector_count': selector_count if preview else None,
         'excluded_streams': excluded_streams if preview else None
     }

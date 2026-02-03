@@ -1509,6 +1509,16 @@
                     <div id="refresh-selectors-status" style="margin-top: 6px; color: var(--text-muted); font-size: 0.9em;"></div>
                 </div>
 
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 6px; color: #1f2937; font-weight: 700;">
+                        Exclude selector
+                    </label>
+                    <div id="refresh-exclude-selector-input-wrap" style="display: flex; flex-direction: column; gap: 10px;"></div>
+                    <div style="margin-top: 6px; color: var(--text-muted); font-size: 0.9em;">
+                        Streams matching this pattern are excluded. Literal with <code>*</code> wildcards. Case-insensitive.
+                    </div>
+                </div>
+
                 <details id="refresh-injected-includes" style="margin-bottom: 15px; border: 1px solid var(--border-muted); border-radius: 8px; background: var(--surface-soft);">
                     <summary style="padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;">
                         <span style="font-weight: 700; color: #1f2937;">Show injected includes</span>
@@ -1785,6 +1795,8 @@
             channelId: null,
             persistedSelectors: [],
             draftSelectors: [],
+            persistedExcludeSelector: { text: '', confirmed: false },
+            draftExcludeSelector: { text: '', confirmed: false },
             exclusions: [],
             injectedIncludes: []
         };
@@ -2397,10 +2409,14 @@
                 refreshSelectorState.channelId = channelId;
                 refreshSelectorState.persistedSelectors = Array.isArray(data.selectors) ? data.selectors : [];
                 refreshSelectorState.draftSelectors = refreshSelectorState.persistedSelectors.map(sel => ({ ...sel }));
+                const excSel = data.exclude_selector && typeof data.exclude_selector === 'object' ? data.exclude_selector : {};
+                refreshSelectorState.persistedExcludeSelector = { text: excSel.text || '', confirmed: !!excSel.confirmed };
+                refreshSelectorState.draftExcludeSelector = { ...refreshSelectorState.persistedExcludeSelector };
                 refreshSelectorState.exclusions = Array.isArray(data.exclusions) ? data.exclusions : [];
                 refreshSelectorState.injectedIncludes = Array.isArray(data.injected_includes) ? data.injected_includes : [];
                 refreshSelectorsDirty = false;
                 renderRefreshSelectors();
+                renderExcludeSelector();
                 renderRefreshExclusions();
                 updateInjectedIncludes(refreshSelectorState.injectedIncludes);
             } catch (error) {
@@ -2414,8 +2430,10 @@
 
         function resetRefreshSelectors() {
             refreshSelectorState.draftSelectors = refreshSelectorState.persistedSelectors.map(sel => ({ ...sel }));
+            refreshSelectorState.draftExcludeSelector = { ...refreshSelectorState.persistedExcludeSelector };
             refreshSelectorsDirty = false;
             renderRefreshSelectors();
+            renderExcludeSelector();
             renderRefreshExclusions();
             updateInjectedIncludes(refreshSelectorState.injectedIncludes);
         }
@@ -2479,6 +2497,48 @@
             updateRefreshSelectorStatus();
         }
 
+        function renderExcludeSelector() {
+            const wrap = document.getElementById('refresh-exclude-selector-input-wrap');
+            if (!wrap) return;
+            const draft = refreshSelectorState.draftExcludeSelector || { text: '', confirmed: false };
+            const persisted = refreshSelectorState.persistedExcludeSelector || { text: '', confirmed: false };
+            const text = escapeHtml(draft.text || '');
+            const persistedText = persisted.confirmed ? (persisted.text || '') : '';
+            const isCommitted = persistedText && persistedText === (draft.text || '');
+            const hasEdit = (draft.text || '') !== persistedText;
+            const statusLabel = isCommitted ? 'Committed' : hasEdit && (draft.text || persistedText) ? 'Uncommitted edit' : '';
+            const statusStyle = isCommitted
+                ? 'background: #ecfdf5; color: #065f46; border: 1px solid #10b981;'
+                : hasEdit && (draft.text || persistedText)
+                    ? 'background: var(--warning-bg); color: var(--warning-text); border: 1px solid #fb923c;'
+                    : 'background: var(--border-muted); color: var(--text-muted); border: 1px solid var(--border-muted);';
+            const inputStyle = isCommitted
+                ? 'border: 2px solid #10b981; font-weight: 700; background: #ecfdf5;'
+                : hasEdit && (draft.text || persistedText)
+                    ? 'border: 2px solid #fb923c; background: var(--warning-bg);'
+                    : 'border: 2px solid #e2e8f0;';
+            wrap.innerHTML = `
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+                    <input type="text" id="refresh-exclude-selector-input"
+                           value="${text}" placeholder="*exclude*pattern*"
+                           style="flex: 1 1 240px; padding: 8px 10px; border-radius: 6px; ${inputStyle}">
+                    ${statusLabel ? `<span style="padding: 4px 8px; border-radius: 999px; font-size: 0.8em; ${statusStyle}">
+                        ${statusLabel}
+                    </span>` : ''}
+                </div>
+            `;
+            const input = document.getElementById('refresh-exclude-selector-input');
+            if (input) {
+                input.addEventListener('input', (event) => {
+                    refreshSelectorState.draftExcludeSelector = {
+                        text: event.target.value,
+                        confirmed: false
+                    };
+                    markRefreshSelectorsDirty();
+                });
+            }
+        }
+
         function renderRefreshExclusions() {
             const container = document.getElementById('refresh-injected-excludes-list');
             if (!container) return;
@@ -2532,13 +2592,19 @@
                     source: sel.source === 'system' ? 'system' : 'user',
                     confirmed: true
                 }));
+            const draftExclude = refreshSelectorState.draftExcludeSelector || { text: '', confirmed: false };
+            const excludeSelector = {
+                text: (draftExclude.text || '').trim(),
+                confirmed: true
+            };
             try {
                 const response = await fetch('/api/refresh-settings', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         channel_id: refreshSelectorState.channelId,
-                        selectors
+                        selectors,
+                        exclude_selector: excludeSelector
                     })
                 });
                 const data = await response.json();
@@ -2547,12 +2613,16 @@
                 }
                 refreshSelectorState.persistedSelectors = selectors.map(sel => ({ ...sel }));
                 refreshSelectorState.draftSelectors = selectors.map(sel => ({ ...sel }));
+                const savedExclude = data.exclude_selector && typeof data.exclude_selector === 'object' ? data.exclude_selector : {};
+                refreshSelectorState.persistedExcludeSelector = { text: savedExclude.text || '', confirmed: !!savedExclude.confirmed };
+                refreshSelectorState.draftExcludeSelector = { ...refreshSelectorState.persistedExcludeSelector };
                 refreshSelectorState.exclusions = Array.isArray(data.exclusions) ? data.exclusions : refreshSelectorState.exclusions;
                 refreshSelectorState.injectedIncludes = Array.isArray(data.injected_includes)
                     ? data.injected_includes
                     : refreshSelectorState.injectedIncludes;
                 refreshSelectorsDirty = false;
                 renderRefreshSelectors();
+                renderExcludeSelector();
                 renderRefreshExclusions();
                 updateInjectedIncludes(refreshSelectorState.injectedIncludes);
                 updateRefreshSelectorStatus();
