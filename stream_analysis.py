@@ -1790,17 +1790,12 @@ def _continuous_ordering_score(record):
     base_component = math.log1p(max(base_score, 0.0))
 
     # TTFF (time-to-first-frame) dominates scoring - fast startup is critical
+    # Exponential decay: fast stream differences matter more than slow ones
     ttff_ms = _normalize_numeric(record.get('ttff_ms') or record.get('avg_ttff_ms'))
     if ttff_ms is None or ttff_ms <= 0:
         ttff_score = 0.5  # Unknown = assume medium
-    elif ttff_ms <= 1500:
-        ttff_score = 1.0  # Fast - full credit (slot-1 eligible)
-    elif ttff_ms <= 2500:
-        ttff_score = 0.6  # Medium - reduced
-    elif ttff_ms <= 4000:
-        ttff_score = 0.3  # Slow - penalty
     else:
-        ttff_score = 0.15  # Very slow - heavy penalty
+        ttff_score = max(0.1, math.exp(-ttff_ms / 1500))
 
     codec_score = _codec_quality_score(record.get('video_codec'))
     audio_score = _audio_quality_score(record.get('audio_codec'))
@@ -1953,17 +1948,12 @@ def _continuous_ordering_score_breakdown(record):
         bitrate_score = max(0.3, 1.0 - (avg_bitrate_kbps - 5000) / 15000)
     base_component = math.log1p(max(base_score or 0.0, 0.0))
 
+    # Exponential decay: fast stream differences matter more than slow ones
     ttff_ms = _normalize_numeric(record.get('ttff_ms') or record.get('avg_ttff_ms'))
     if ttff_ms is None or ttff_ms <= 0:
-        ttff_score = 0.5
-    elif ttff_ms <= 1500:
-        ttff_score = 1.0
-    elif ttff_ms <= 2500:
-        ttff_score = 0.6
-    elif ttff_ms <= 4000:
-        ttff_score = 0.3
+        ttff_score = 0.5  # Unknown = assume medium
     else:
-        ttff_score = 0.15
+        ttff_score = max(0.1, math.exp(-ttff_ms / 1500))
 
     codec_score = _codec_quality_score(record.get('video_codec'))
     audio_score = _audio_quality_score(record.get('audio_codec'))
