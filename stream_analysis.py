@@ -1781,12 +1781,29 @@ def _continuous_ordering_score(record):
         resolution_score = 0.95 + 0.05 * hd_bonus
         resolution_detail = 0.95 + 0.05 * hd_bonus
     fps_score = math.log1p(fps) / math.log1p(120)
-    # Invert bitrate scoring: lower bitrate = less buffering risk = higher score
-    # Streams under 5Mbps get full credit, higher bitrates get progressively less
-    if avg_bitrate_kbps <= 5000:
+    # Bitrate scoring with ideal "sweet spot" zone
+    # Too low = poor quality, too high = buffering risk
+    if avg_bitrate_kbps < 3500:
+        # Hard penalty for too-low bitrate (likely poor quality)
+        bitrate_score = 0.3
+    elif avg_bitrate_kbps < 4500:
+        # Ramp up to ideal zone
+        bitrate_score = 0.3 + 0.7 * (avg_bitrate_kbps - 3500) / 1000
+    elif avg_bitrate_kbps <= 6000:
+        # Ideal zone
         bitrate_score = 1.0
+    elif avg_bitrate_kbps <= 7000:
+        # Neutral zone - minimal penalty
+        bitrate_score = 1.0 - 0.05 * (avg_bitrate_kbps - 6000) / 1000
+    elif avg_bitrate_kbps <= 9000:
+        # Very small penalty
+        bitrate_score = 0.95 - 0.1 * (avg_bitrate_kbps - 7000) / 2000
+    elif avg_bitrate_kbps <= 10000:
+        # Stronger penalty
+        bitrate_score = 0.85 - 0.2 * (avg_bitrate_kbps - 9000) / 1000
     else:
-        bitrate_score = max(0.3, 1.0 - (avg_bitrate_kbps - 5000) / 15000)
+        # Beyond 10 Mbps - continue declining with floor
+        bitrate_score = max(0.3, 0.65 - (avg_bitrate_kbps - 10000) / 20000)
     base_component = math.log1p(max(base_score, 0.0))
 
     # TTFF (time-to-first-frame) dominates scoring - fast startup is critical
@@ -1942,10 +1959,22 @@ def _continuous_ordering_score_breakdown(record):
         resolution_detail = 0.95 + 0.05 * hd_bonus
     fps_score = math.log1p(fps) / math.log1p(120)
 
-    if avg_bitrate_kbps <= 5000:
+    # Bitrate scoring with ideal "sweet spot" zone
+    # Too low = poor quality, too high = buffering risk
+    if avg_bitrate_kbps < 3500:
+        bitrate_score = 0.3
+    elif avg_bitrate_kbps < 4500:
+        bitrate_score = 0.3 + 0.7 * (avg_bitrate_kbps - 3500) / 1000
+    elif avg_bitrate_kbps <= 6000:
         bitrate_score = 1.0
+    elif avg_bitrate_kbps <= 7000:
+        bitrate_score = 1.0 - 0.05 * (avg_bitrate_kbps - 6000) / 1000
+    elif avg_bitrate_kbps <= 9000:
+        bitrate_score = 0.95 - 0.1 * (avg_bitrate_kbps - 7000) / 2000
+    elif avg_bitrate_kbps <= 10000:
+        bitrate_score = 0.85 - 0.2 * (avg_bitrate_kbps - 9000) / 1000
     else:
-        bitrate_score = max(0.3, 1.0 - (avg_bitrate_kbps - 5000) / 15000)
+        bitrate_score = max(0.3, 0.65 - (avg_bitrate_kbps - 10000) / 20000)
     base_component = math.log1p(max(base_score or 0.0, 0.0))
 
     # Exponential decay: fast stream differences matter more than slow ones
