@@ -3758,15 +3758,15 @@ def api_refresh_settings():
                 selectors = data.get('selectors') or []
                 if not isinstance(selectors, list):
                     return jsonify({'success': False, 'error': '"selectors" must be a list'}), 400
-                if len(selectors) > 4:
-                    return jsonify({'success': False, 'error': 'At most 4 selectors are allowed'}), 400
+                if len(selectors) > 10:
+                    return jsonify({'success': False, 'error': 'At most 10 selectors are allowed'}), 400
                 _save_refresh_selectors(config, channel_id, selectors)
             if 'exclude_selectors' in data:
                 exclude_selectors = data.get('exclude_selectors') or []
                 if not isinstance(exclude_selectors, list):
                     return jsonify({'success': False, 'error': '"exclude_selectors" must be a list'}), 400
-                if len(exclude_selectors) > 4:
-                    return jsonify({'success': False, 'error': 'At most 4 exclude selectors are allowed'}), 400
+                if len(exclude_selectors) > 10:
+                    return jsonify({'success': False, 'error': 'At most 10 exclude selectors are allowed'}), 400
                 _save_refresh_exclude_selector(config, channel_id, exclude_selectors)
             if 'remove_exclusion' in data:
                 _remove_refresh_exclusion(config, channel_id, data.get('remove_exclusion'))
