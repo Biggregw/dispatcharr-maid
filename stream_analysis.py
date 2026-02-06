@@ -1802,6 +1802,19 @@ def _continuous_ordering_score(record):
     else:
         # Beyond 10 Mbps - continue declining with floor
         bitrate_score = max(0.3, 0.7 - (avg_bitrate_kbps - 10000) / 20000)
+
+    # FHD-specific penalty for borderline bitrate (sports safety margin).
+    # FHD streams need higher bitrate headroom to avoid mid-play buffering.
+    # Graduated penalty: streams remain usable as fallback but rank lower.
+    FHD_PIXEL_MIN = 1_900_000  # ~1920x1000, catch FHD variants
+    FHD_PIXEL_MAX = 2_500_000  # Stay below 1440p (3.69M pixels)
+    FHD_BITRATE_THRESHOLD = 5500  # kbps - sport-safe minimum for FHD
+    if FHD_PIXEL_MIN <= total_pixels < FHD_PIXEL_MAX and avg_bitrate_kbps < FHD_BITRATE_THRESHOLD:
+        headroom_deficit = FHD_BITRATE_THRESHOLD - avg_bitrate_kbps
+        max_deficit = FHD_BITRATE_THRESHOLD - 3500  # 2000 kbps penalty range
+        fhd_bitrate_penalty = 0.2 * min(1.0, headroom_deficit / max_deficit)
+        bitrate_score = max(0.1, bitrate_score - fhd_bitrate_penalty)
+
     base_component = math.log1p(max(base_score, 0.0))
 
     # TTFF (time-to-first-frame) dominates scoring - fast startup is critical
